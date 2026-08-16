@@ -471,6 +471,7 @@ HELP_SECTIONS = [
     ("Pomodoro", [
         ("p", "Start/pause the pomodoro timer"),
         ("x", "Reset the pomodoro timer"),
+        ("t", "Edit the pomodoro work/break length (e.g. 25/5)"),
     ]),
     ("Spotify", [
         ("m", "Play/pause"),
@@ -860,7 +861,7 @@ class PomodoroPanel(Static):
             Text(f"{state_label}  ({self.work_minutes}/{self.break_minutes})", style=f"bold {color}", justify="center"),
             Text(f"Sessions today: {sessions_today}", style="dim", justify="center"),
             Text(""),
-            Text("p: start/pause   x: reset", style="dim italic", justify="center"),
+            Text("p: start/pause   x: reset   t: edit", style="dim italic", justify="center"),
         )
         self.update(Panel(body, title="Pomodoro", border_style="orange3", box=box.ROUNDED))
 
@@ -960,6 +961,7 @@ class TodoApp(App):
         ("q", "quit", "Quit"),
         ("p", "toggle_pomodoro", "Start/Pause Pomodoro"),
         ("x", "reset_pomodoro", "Reset Pomodoro"),
+        ("t", "edit_pomodoro", "Edit Pomodoro"),
         ("r", "refresh_all", "Refresh"),
         ("f", "toggle_focus_mode", "Focus Mode"),
         ("c", "open_career", "Career"),
@@ -1057,6 +1059,26 @@ class TodoApp(App):
             self.pomo_panel.on_break = False
             self.pomo_panel.remaining = work_minutes * 60
         self.pomo_panel.render_panel(tc.get_pomodoro_count(self.state, self.today))
+
+    def action_edit_pomodoro(self):
+        def on_result(value):
+            if not value:
+                return
+            work_str, _, break_str = value.partition("/")
+            try:
+                work_minutes = int(work_str.strip())
+                break_minutes = int(break_str.strip()) if break_str.strip() else self.pomo_panel.break_minutes
+            except ValueError:
+                self.toast("Invalid format -- use e.g. 25/5", style="bold yellow")
+                return
+            if work_minutes <= 0 or break_minutes <= 0:
+                self.toast("Minutes must be positive", style="bold yellow")
+                return
+            self._set_pomodoro_length(work_minutes, break_minutes)
+            self.toast(f"Pomodoro set to {work_minutes}/{break_minutes}", style="bold green")
+
+        current = f"{self.pomo_panel.work_minutes}/{self.pomo_panel.break_minutes}"
+        self.push_screen(TextPromptScreen("Work/break minutes (e.g. 25/5)", current), on_result)
 
     def action_toggle_focus_mode(self):
         self.focus_mode = not self.focus_mode
