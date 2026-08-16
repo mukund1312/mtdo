@@ -1,4 +1,4 @@
-# mukund-os
+# TO-DO
 
 A terminal task board built around a 4-column Kanban (Backlog / Todo / In Progress / Done),
 with a Pomodoro timer, streaks + a GitHub-style heatmap, a Focus Mode, a Career CRM for job
