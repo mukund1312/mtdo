@@ -1,10 +1,10 @@
 # Demo config -- a working example plan (DSA/backend/system-design/job-search prep), shipped
 # so you can see the app working immediately. On first run this gets copied to
-# ~/.mukund-os/config.yaml. Edit it, delete categories you don't want, add your own -- it's
-# yours from that point on. Run `mukund-os init --fresh` instead of a normal first run if
+# ~/.mtdo/config.yaml. Edit it, delete categories you don't want, add your own -- it's
+# yours from that point on. Run `mtdo init --fresh` instead of a normal first run if
 # you'd rather start from an empty template.
 
-app_name: "MUKUND OS"
+app_name: "MTDO"
 goal_line: "Backend Engineer -> Senior Product Engineer, Backend/Python"
 
 # Leave plan_start unset (null) and it auto-locks to the first day you actually use the app --

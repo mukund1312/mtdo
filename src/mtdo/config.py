@@ -5,7 +5,7 @@ import shutil
 
 import yaml
 
-APP_DIR = os.path.expanduser("~/.mukund-os")
+APP_DIR = os.path.expanduser("~/.mtdo")
 CONFIG_PATH = os.path.join(APP_DIR, "config.yaml")
 STATE_PATH = os.path.join(APP_DIR, "state.json")
 REPORTS_DIR = os.path.join(APP_DIR, "reports")
@@ -27,7 +27,7 @@ def config_exists():
 
 
 def init_config(fresh=False):
-    """Creates ~/.mukund-os/config.yaml from the demo (default) or fresh template.
+    """Creates ~/.mtdo/config.yaml from the demo (default) or fresh template.
     Refuses to overwrite an existing config -- caller should confirm with the user first."""
     os.makedirs(APP_DIR, exist_ok=True)
     source = FRESH_CONFIG_PATH if fresh else DEMO_CONFIG_PATH
@@ -38,7 +38,7 @@ def init_config(fresh=False):
 def load_config():
     if not config_exists():
         raise FileNotFoundError(
-            f"No config at {CONFIG_PATH}. Run `mukund-os init` first."
+            f"No config at {CONFIG_PATH}. Run `mtdo init` first."
         )
     with open(CONFIG_PATH) as f:
         return yaml.safe_load(f)

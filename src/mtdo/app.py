@@ -4,7 +4,7 @@ of today's cards, vim-navigable (h/l columns, j/k cards, space to advance, u to 
 back, t/n/a/d to edit/note/add/delete), plus live 12h clock, calendar, streaks,
 standalone pomodoro timer, and a Spotify now-playing panel. Categories, curriculum,
 and goal all come from the user's config -- see config.py.
-Run via the `mukund-os` command (see cli.py), or `python3 -m mukund_os.app` directly.
+Run via the `mtdo` command (see cli.py), or `python3 -m mtdo.app` directly.
 """
 import datetime
 import math

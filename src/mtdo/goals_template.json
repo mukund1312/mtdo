@@ -1,5 +1,5 @@
 {
-  "_instructions": "Fill this in yourself, or hand it to an AI assistant with your goals and let it fill this in for you. Then run: mukund-os import goals.json -- it builds/updates your config from this. Delete this _instructions key, it's ignored either way.",
+  "_instructions": "Fill this in yourself, or hand it to an AI assistant with your goals and let it fill this in for you. Then run: mtdo import goals.json -- it builds/updates your config from this. Delete this _instructions key, it's ignored either way.",
   "app_name": "MY OS",
   "goal_line": "One sentence describing what you're working toward.",
   "categories": [

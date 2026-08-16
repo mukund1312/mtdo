@@ -1,4 +1,4 @@
-# mukund-os
+# mtdo
 
 A terminal task board built around a 4-column Kanban (Backlog / Todo / In Progress / Done),
 with a Pomodoro timer, streaks + a GitHub-style heatmap, a Focus Mode, a Career CRM for job
@@ -18,7 +18,7 @@ pip install -e .          # from a clone of this repo
 ## Quickstart
 
 ```bash
-mukund-os          # first run auto-creates ~/.mukund-os/config.yaml from the demo plan
+mtdo          # first run auto-creates ~/.mtdo/config.yaml from the demo plan
 ```
 
 Press `?` inside the app any time for the full keybindings cheat sheet.
@@ -26,8 +26,8 @@ Press `?` inside the app any time for the full keybindings cheat sheet.
 Want to start from an empty template instead of the demo plan?
 
 ```bash
-mukund-os init --fresh
-mukund-os
+mtdo init --fresh
+mtdo
 ```
 
 ## Personalizing it -- the easy way
@@ -36,9 +36,9 @@ You don't have to hand-write YAML. Generate a goals JSON, fill it in yourself or
 AI assistant along with a description of your goals, then import it:
 
 ```bash
-mukund-os template goals.json     # writes a filled-out example schema
+mtdo template goals.json     # writes a filled-out example schema
 # ... edit goals.json yourself, or paste it + your goals to an AI assistant and ask it to fill it in ...
-mukund-os import goals.json       # builds/updates config.yaml from it
+mtdo import goals.json       # builds/updates config.yaml from it
 ```
 
 `import` is safe to run repeatedly and safe to run after you've already been using the app for
@@ -53,7 +53,7 @@ weeks:
 
 ## Personalizing it -- by hand
 
-Edit `~/.mukund-os/config.yaml` directly instead, if you'd rather. Each category looks like:
+Edit `~/.mtdo/config.yaml` directly instead, if you'd rather. Each category looks like:
 
 ```yaml
 categories:
@@ -104,11 +104,11 @@ that's already been registered. You can still edit that day's text yourself by h
 
 | File | What it is | Editing/replacing it |
 |---|---|---|
-| `~/.mukund-os/config.yaml` | The plan: categories, curriculum, goal, weights | Always safe. This is "what future days look like," never your history. |
-| `~/.mukund-os/state.json` | Your actual history: every day's cards and their status, streaks, focus time, Career CRM, Knowledge Vault notes | This *is* your tracked progress. Back it up before hand-editing it; nothing else in this app writes to it except through the normal task actions. |
-| `~/.mukund-os/reports/` | Auto-saved daily text reports | Just an export, safe to delete/ignore. |
+| `~/.mtdo/config.yaml` | The plan: categories, curriculum, goal, weights | Always safe. This is "what future days look like," never your history. |
+| `~/.mtdo/state.json` | Your actual history: every day's cards and their status, streaks, focus time, Career CRM, Knowledge Vault notes | This *is* your tracked progress. Back it up before hand-editing it; nothing else in this app writes to it except through the normal task actions. |
+| `~/.mtdo/reports/` | Auto-saved daily text reports | Just an export, safe to delete/ignore. |
 
-`mukund-os import` and hand-editing `config.yaml` only ever touch the config file. Neither one
+`mtdo import` and hand-editing `config.yaml` only ever touch the config file. Neither one
 opens, reads, or writes `state.json` -- so your streaks, done/in-progress cards, Career CRM
 pipeline, and notes are never at risk from changing your plan. The only category-deletion
 caveat: if you remove a category from config.yaml that has history in `state.json`, that old
@@ -118,12 +118,12 @@ Add the category name back and it reappears.
 ## Command line
 
 ```bash
-mukund-os init [--fresh] [--force]   # (re)create the config
-mukund-os template [goals.json]       # write a goals JSON template to fill in (by hand or via AI)
-mukund-os import <goals.json>         # build/update config.yaml from a filled-in goals JSON
-mukund-os status                      # print today's basket as markdown -- for scripting or
+mtdo init [--fresh] [--force]   # (re)create the config
+mtdo template [goals.json]       # write a goals JSON template to fill in (by hand or via AI)
+mtdo import <goals.json>         # build/update config.yaml from a filled-in goals JSON
+mtdo status                      # print today's basket as markdown -- for scripting or
                                        # wiring into an AI assistant's tool-use
-mukund-os done <task_id> [date]       # mark a task done by ID (IDs come from `status`)
+mtdo done <task_id> [date]       # mark a task done by ID (IDs come from `status`)
 ```
 
 ## Platform notes
@@ -134,5 +134,5 @@ Spotify desktop app only** -- they no-op safely everywhere else.
 
 ## Data
 
-State lives in `~/.mukund-os/state.json`, config in `~/.mukund-os/config.yaml`, daily reports in
-`~/.mukund-os/reports/`. Nothing leaves your machine.
+State lives in `~/.mtdo/state.json`, config in `~/.mtdo/config.yaml`, daily reports in
+`~/.mtdo/reports/`. Nothing leaves your machine.

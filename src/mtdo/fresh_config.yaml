@@ -2,7 +2,7 @@
 # Edit this file (or use `a` inside each category's Todo column) to make it yours.
 
 app_name: "TASK OS"
-goal_line: "Set your goal here -- edit ~/.mukund-os/config.yaml"
+goal_line: "Set your goal here -- edit ~/.mtdo/config.yaml"
 
 plan_start: null
 plan_end: null

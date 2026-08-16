@@ -3,7 +3,7 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "mukund-os"
+name = "mtdo"
 version = "0.1.0"
 description = "A config-driven terminal task board: Kanban tasks, focus/pomodoro, streaks, career CRM, notes vault, and Spotify controls, all keyboard-first."
 readme = "README.md"
@@ -19,10 +19,10 @@ dependencies = [
 spotify = []  # Spotify controls use AppleScript on macOS -- no extra package needed, just macOS + Spotify.app
 
 [project.scripts]
-mukund-os = "mukund_os.cli:main"
+mtdo = "mtdo.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
 
 [tool.setuptools.package-data]
-mukund_os = ["*.yaml"]
+mtdo = ["*.yaml"]

@@ -1,4 +1,4 @@
-"""CLI entry point for the `mukund-os` command: run the TUI, or manage config/tasks from
+"""CLI entry point for the `mtdo` command: run the TUI, or manage config/tasks from
 the shell (handy for scripting or wiring into an AI assistant's tool-use, the way the
 original build wired into Claude Code's /todo skill)."""
 import argparse
@@ -14,7 +14,7 @@ def cmd_init(args):
     path = appconfig.init_config(fresh=args.fresh)
     kind = "empty template" if args.fresh else "demo plan (a real working example, not empty)"
     print(f"Created {path} from the {kind}.")
-    print("Edit that file to make it yours, then run `mukund-os` to start.")
+    print("Edit that file to make it yours, then run `mtdo` to start.")
 
 
 def cmd_template(args):
@@ -23,7 +23,7 @@ def cmd_template(args):
     shutil.copy(appconfig.GOALS_TEMPLATE_PATH, dest)
     print(f"Wrote {dest}.")
     print("Fill it in yourself, or hand it to an AI assistant along with your goals and let it fill it in.")
-    print(f"Then run: mukund-os import {dest}")
+    print(f"Then run: mtdo import {dest}")
 
 
 def cmd_import(args):
@@ -42,7 +42,7 @@ def cmd_run(_args):
         print("First time here -- setting you up with a demo config so you can see it working.")
         appconfig.init_config(fresh=False)
         print(f"Created {appconfig.CONFIG_PATH} (a real example plan).")
-        print("Edit that file anytime to make it yours, or run `mukund-os init --fresh` to start over empty.\n")
+        print("Edit that file anytime to make it yours, or run `mtdo init --fresh` to start over empty.\n")
     cfg = appconfig.load_config()
     from . import app as todo_app
     todo_app.run_app(cfg)
@@ -87,7 +87,7 @@ def cmd_status(_args):
     out.append("")
     if task_ids:
         out.append(f"Task IDs for ticking: {', '.join(task_ids)}")
-        out.append("Run `mukund-os done <id>` to mark one done (add a date for a backlog item from an earlier day).")
+        out.append("Run `mtdo done <id>` to mark one done (add a date for a backlog item from an earlier day).")
 
     if tc.PLAN_END and today > tc.PLAN_END:
         out.append("")
@@ -124,10 +124,10 @@ def cmd_done(args):
 
 
 def main():
-    parser = argparse.ArgumentParser(prog="mukund-os", description="A config-driven terminal task/focus/career board.")
+    parser = argparse.ArgumentParser(prog="mtdo", description="A config-driven terminal task/focus/career board.")
     sub = parser.add_subparsers(dest="command")
 
-    p_init = sub.add_parser("init", help="Create ~/.mukund-os/config.yaml")
+    p_init = sub.add_parser("init", help="Create ~/.mtdo/config.yaml")
     p_init.add_argument("--fresh", action="store_true", help="Start from an empty template instead of the demo plan")
     p_init.add_argument("--force", action="store_true", help="Overwrite an existing config")
     p_init.set_defaults(func=cmd_init)
