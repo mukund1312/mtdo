@@ -1,0 +1,36 @@
+{
+  "_instructions": "Fill this in yourself, or hand it to an AI assistant with your goals and let it fill this in for you. Then run: mukund-os import goals.json -- it builds/updates your config from this. Delete this _instructions key, it's ignored either way.",
+  "app_name": "MY OS",
+  "goal_line": "One sentence describing what you're working toward.",
+  "categories": [
+    {
+      "name": "example_category",
+      "label": "Human-readable name shown in the app",
+      "days": [0, 1, 2, 3, 4],
+      "_days_note": "0=Monday .. 6=Sunday. [0,1,2,3,4,5,6] = every day.",
+      "min_blocks": 2,
+      "addable": true,
+      "deletable": true,
+      "notes": true,
+      "score_weight": 25,
+      "curriculum": [
+        ["First day's task", "Second task for the first day"],
+        ["Second day's task"],
+        ["Third day's task"]
+      ],
+      "_curriculum_note": "One list per scheduled day, consumed in order starting your first day using the app. Omit entirely for a category with no set curriculum -- you'll just add tasks yourself each day."
+    },
+    {
+      "name": "example_fixed_checkin",
+      "label": "A daily checkbox instead of a curriculum",
+      "days": [0, 1, 2, 3, 4, 5, 6],
+      "min_blocks": 1,
+      "addable": false,
+      "deletable": false,
+      "notes": false,
+      "score_weight": 10,
+      "fixed_labels": ["The one thing you check off every day"],
+      "_fixed_labels_note": "Use this instead of curriculum for a repeated daily item (e.g. a workout check-in). Don't set both on the same category."
+    }
+  ]
+}

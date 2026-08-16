@@ -1,0 +1,123 @@
+# Demo config -- a working example plan (DSA/backend/system-design/job-search prep), shipped
+# so you can see the app working immediately. On first run this gets copied to
+# ~/.mukund-os/config.yaml. Edit it, delete categories you don't want, add your own -- it's
+# yours from that point on. Run `mukund-os init --fresh` instead of a normal first run if
+# you'd rather start from an empty template.
+
+app_name: "MUKUND OS"
+goal_line: "Backend Engineer -> Senior Product Engineer, Backend/Python"
+
+# Leave plan_start unset (null) and it auto-locks to the first day you actually use the app --
+# that's what makes this shareable: everyone's curriculum sequencing starts from THEIR day 1,
+# not a date baked into a demo file.
+plan_start: null
+plan_end: null
+
+backlog_lookback_days: 3
+streak_warning: 3
+
+category_order: [dsa, backend, sysdesign, interview_defense, jobs, sunday_review, gym]
+streak_categories: [dsa, backend, sysdesign, jobs]
+
+categories:
+  dsa:
+    label: "DSA / Problem Solving"
+    days: [0, 1, 2, 3, 4, 5]
+    min_blocks: 4
+    addable: true
+    deletable: true
+    notes: true
+    score_weight: 25
+    curriculum:
+      - ["Two Sum", "Contains Duplicate", "Valid Anagram"]
+      - ["Group Anagrams", "Top K Frequent Elements"]
+      - ["Product of Array Except Self", "Valid Sudoku"]
+      - ["Encode and Decode Strings", "Longest Consecutive Sequence"]
+      - ["Review day -- redo your 2 weakest problems, untimed then timed"]
+      - ["Extended practice -- pick 4 from Arrays & Hashmaps you haven't done yet"]
+      - ["Valid Palindrome", "Two Sum II (sorted array)"]
+      - ["3Sum"]
+      - ["Container With Most Water"]
+      - ["Trapping Rain Water"]
+      - ["Review day -- redo your 2 weakest problems, untimed then timed"]
+      - ["Extended practice -- pick 4 from Two-Pointer you haven't done yet"]
+      - ["Best Time to Buy and Sell Stock"]
+      - ["Longest Substring Without Repeating Characters"]
+      - ["Longest Repeating Character Replacement"]
+      - ["Permutation in String"]
+      - ["Review day -- redo your 2 weakest problems, untimed then timed"]
+      - ["Extended practice -- pick 4 from Sliding Window you haven't done yet"]
+
+  backend:
+    label: "Backend (FastAPI)"
+    days: [0, 1, 2, 3, 4, 5]
+    min_blocks: 0
+    addable: true
+    deletable: true
+    notes: true
+    score_weight: 20
+    curriculum:
+      - ["Project setup: FastAPI init, folder structure, first GET/POST endpoint"]
+      - ["Connect PostgreSQL: async SQLAlchemy engine, first model + migration"]
+      - ["CRUD endpoints: full create/read/update/delete for your main resource"]
+      - ["Proper async: async/await, find and fix any accidental blocking calls"]
+      - ["Pydantic validation + error handling: schemas, custom exception handlers"]
+      - ["First pytest tests: unit tests for 3+ endpoints incl. one failure case"]
+      - ["Add Redis caching to your busiest read endpoint"]
+      - ["Dockerize: Dockerfile + docker-compose with Postgres + Redis"]
+      - ["CI pipeline: GitHub Actions running pytest on push + polish README"]
+
+  sysdesign:
+    label: "System Design"
+    days: [0, 1, 2, 3, 4, 5]
+    min_blocks: 0
+    addable: true
+    deletable: true
+    notes: true
+    score_weight: 20
+    curriculum:
+      - ["Client-server basics: HTTP methods & status codes, REST fundamentals"]
+      - ["Scaling basics: vertical vs horizontal, what a load balancer routes on"]
+      - ["Caching: cache-aside pattern, TTL, invalidation -- where it helps vs hurts"]
+      - ["Databases: SQL vs NoSQL trade-offs, indexing basics"]
+      - ["Async processing: message queues, why Kafka/SQS exist"]
+      - ["Applied design: design a Rate Limiter end-to-end"]
+
+  jobs:
+    label: "Job Search"
+    days: [0, 1, 2, 3, 4, 5, 6]
+    min_blocks: 5
+    addable: true
+    deletable: true
+    notes: true
+    score_weight: 20
+
+  interview_defense:
+    label: "Interview Defensibility"
+    days: [5]
+    min_blocks: 4
+    addable: false
+    deletable: false
+    notes: true
+    score_weight: 15
+    fixed_labels: ["Python", "PySpark", "AWS", "Spring Boot"]
+
+  sunday_review:
+    label: "Sunday Review"
+    days: [6]
+    min_blocks: 4
+    addable: false
+    deletable: false
+    notes: true
+    score_weight: 15
+    fixed_labels: ["System design recap", "DSA review", "Applications review", "Backend review"]
+
+  gym:
+    label: "Gym"
+    days: [0, 1, 2, 3, 4]
+    min_blocks: 1
+    addable: false
+    deletable: false
+    notes: false
+    score_weight: 10
+    fixed_labels: ["Cardio + gym"]

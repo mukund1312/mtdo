@@ -1,0 +1,28 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "mukund-os"
+version = "0.1.0"
+description = "A config-driven terminal task board: Kanban tasks, focus/pomodoro, streaks, career CRM, notes vault, and Spotify controls, all keyboard-first."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+dependencies = [
+    "textual>=0.60",
+    "rich>=13.0",
+    "pyyaml>=6.0",
+]
+
+[project.optional-dependencies]
+spotify = []  # Spotify controls use AppleScript on macOS -- no extra package needed, just macOS + Spotify.app
+
+[project.scripts]
+mukund-os = "mukund_os.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+mukund_os = ["*.yaml"]

@@ -1,0 +1,43 @@
+# Fresh start -- three generic categories to get you going, no baked-in curriculum.
+# Edit this file (or use `a` inside each category's Todo column) to make it yours.
+
+app_name: "TASK OS"
+goal_line: "Set your goal here -- edit ~/.mukund-os/config.yaml"
+
+plan_start: null
+plan_end: null
+
+backlog_lookback_days: 3
+streak_warning: 3
+
+category_order: [work, personal, health]
+streak_categories: [work, personal]
+
+categories:
+  work:
+    label: "Work"
+    days: [0, 1, 2, 3, 4]
+    min_blocks: 0
+    addable: true
+    deletable: true
+    notes: true
+    score_weight: 40
+
+  personal:
+    label: "Personal"
+    days: [0, 1, 2, 3, 4, 5, 6]
+    min_blocks: 0
+    addable: true
+    deletable: true
+    notes: true
+    score_weight: 30
+
+  health:
+    label: "Health"
+    days: [0, 1, 2, 3, 4, 5, 6]
+    min_blocks: 1
+    addable: false
+    deletable: false
+    notes: false
+    score_weight: 30
+    fixed_labels: ["Move your body today"]
