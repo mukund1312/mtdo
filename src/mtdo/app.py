@@ -1287,7 +1287,17 @@ class TodoApp(App):
                 self.toast("Invalid field name.", style="bold red")
                 return
             if slug in tc.CATEGORY_META:
-                self.toast(f"Field '{slug}' already exists.", style="bold yellow")
+                meta = tc.CATEGORY_META[slug]
+                today_wd = self.today.weekday()
+                if today_wd in meta["days"]:
+                    self.toast(f"Field '{slug}' already exists ({meta['label']}) -- "
+                               f"look for it on the board.", style="bold yellow")
+                else:
+                    scheduled = ", ".join(tc.DAY_NAMES[d][:3] for d in sorted(meta["days"])) or "no days"
+                    self.toast(f"Field '{slug}' already exists ({meta['label']}) but isn't "
+                               f"scheduled today ({tc.DAY_NAMES[today_wd][:3]}) -- only shows up on "
+                               f"{scheduled}. Edit goals.json's 'days' for it to change that.",
+                               style="bold yellow")
                 return
 
             def on_label(label):
