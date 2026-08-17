@@ -528,25 +528,38 @@ class VaultScreen(Screen):
         self.rebuild()
         self.list_view.focus()
 
-    def rebuild(self, query=""):
+    def rebuild(self, query="", select_index=None):
+        """select_index picks where the cursor lands after rebuilding -- defaults to
+        staying near wherever it was (clamped to the new, possibly-shorter list). Always
+        computed from `items` (our own just-built data), never from
+        self.list_view.children -- that count doesn't reliably reflect clear()/extend()
+        yet at this point (they're processed on Textual's message queue, not
+        synchronously), so indexing off it can desync the ListView's cursor from its
+        actual node list and crash on the next navigation."""
         state = self.app_ref.state
         prev_index = self.list_view.index if self.list_view.index is not None else 0
+        target = prev_index if select_index is None else select_index
         self.list_view.clear()
         results = tc.search_notes(state, query)
         items = [NoteItem(i, n) for i, n in results]
         if items:
             self.list_view.extend(items)
-            self.list_view.index = min(prev_index, len(items) - 1)
+            self.list_view.index = min(max(target, 0), len(items) - 1)
             self._load_editor(items[self.list_view.index].idx)
         else:
             self._load_editor(None)
 
     def _load_editor(self, idx):
-        self.current_idx = idx
-        if idx is None:
+        notes = tc.list_notes(self.app_ref.state)
+        if idx is None or idx >= len(notes):
+            # Defensive: idx can go stale (e.g. a NoteItem holding an index from before
+            # a note was deleted elsewhere) -- never crash the whole app over a display
+            # desync, just show nothing rather than raise.
+            self.current_idx = None
             self.editor.load_text("")
             return
-        self.editor.load_text(tc.list_notes(self.app_ref.state)[idx]["body"])
+        self.current_idx = idx
+        self.editor.load_text(notes[idx]["body"])
 
     def on_list_view_highlighted(self, message: ListView.Highlighted):
         item = message.item
@@ -581,8 +594,10 @@ class VaultScreen(Screen):
                 return
             tc.add_note(self.app_ref.state, value)
             tc.save_state(self.app_ref.state)
-            self.rebuild()
-            self.list_view.index = len(self.list_view.children) - 1
+            # Jump to the new (last) note -- computed from our own data length via
+            # rebuild()'s select_index, not from list_view.children (see rebuild()'s
+            # docstring for why that's unsafe).
+            self.rebuild(select_index=len(tc.list_notes(self.app_ref.state)))
 
         self.app.push_screen(TextPromptScreen("New note title", ""), on_result)
 
