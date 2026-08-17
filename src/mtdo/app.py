@@ -244,9 +244,13 @@ class TextPromptScreen(ModalScreen):
 
 
 class CategoryPickScreen(ModalScreen):
-    """Modal: pick which category a new card belongs to, when there's no highlighted
-    card to infer it from (e.g. an empty column). Returns the category name, or None
-    on Escape."""
+    """Modal: pick which field (category) a new card belongs to -- shown every time you
+    press 'a', never inferred from whatever happens to be highlighted, so you always
+    explicitly choose (or create) the target instead of silently landing on the wrong
+    field. Includes a "+ New field..." row that creates a whole new category on the spot.
+    Dismisses with the category name, ADD_NEW, or None on Escape."""
+
+    ADD_NEW = "__add_new_field__"
 
     CSS = """
     CategoryPickScreen { align: center middle; }
@@ -261,10 +265,17 @@ class CategoryPickScreen(ModalScreen):
         with Center():
             with Middle():
                 with Vertical(id="pick-box"):
-                    yield Static("Add card to which category?")
-                    yield VimListView(*[
-                        ListItem(Label(tc.CATEGORY_META[c]["label"]), name=c) for c in self.categories
-                    ])
+                    yield Static("Add a card to which field?")
+                    items = [
+                        ListItem(Label(Text.assemble(
+                            (" " + tc.CATEGORY_META[c]["label"].split(" ")[0].split("/")[0] + " ",
+                             f"bold white on {CATEGORY_COLORS.get(c, 'white')}"),
+                            ("  " + tc.CATEGORY_META[c]["label"], ""),
+                        )), name=c)
+                        for c in self.categories
+                    ]
+                    items.append(ListItem(Label("+ New field..."), name=self.ADD_NEW))
+                    yield VimListView(*items)
                     yield Static("Enter to pick, Escape to cancel", classes="dim")
 
     def on_mount(self):
@@ -595,7 +606,7 @@ HELP_SECTIONS = [
         ("u", "Send the highlighted card back one column"),
         ("t", "Edit a card's text (locked on fixed-label categories)"),
         ("n", "Edit a card's notes"),
-        ("a", "Add a new card (same category as highlighted card, or asks which field if none)"),
+        ("a", "Add a new card -- always asks which field, with a \"+ New field...\" option to create one on the spot"),
         ("d", "Delete the highlighted card"),
     ]),
     ("Career CRM (press c to open)", [
@@ -689,7 +700,7 @@ class CardItem(ListItem):
     def _render_card(self, block):
         color = CATEGORY_COLORS.get(self.category, "white")
         tag = tc.CATEGORY_META[self.category]["label"].split(" ")[0].split("/")[0]
-        header = Text(tag, style=f"bold {color}")
+        header = Text(f" {tag} ", style=f"bold white on {color}")
         if self.carried:
             header.append(f"  ↩ {self.origin_date.strftime('%a %d')}", style="dim italic")
         note_flag = "  \U0001F4DD" if block.get("notes") else ""
@@ -831,23 +842,24 @@ class KanbanBoard(Horizontal):
         self.app.push_screen(TextPromptScreen("Notes", current), on_result)
 
     def action_add_card(self):
-        item = self.current_card()
-        if item is not None:
-            self._add_card_to_category(item.category)
-            return
+        """Always asks which field the new card belongs to -- never silently inferred
+        from whatever card happens to be highlighted, so 'a' never surprises you by
+        landing on the wrong field. Picking "+ New field..." creates a field on the spot
+        and immediately asks for its first card, so DSA-style "create field, then add
+        sub-cards to it" is a single flow."""
         categories = tc.categories_for_day(self.app_ref.today)
-        if not categories:
-            self.app_ref.toast("No categories scheduled today.", style="bold yellow")
-            return
-        if len(categories) == 1:
-            self._add_card_to_category(categories[0])
-            return
 
         def on_pick(category):
             if category is None:
                 return
+            if category == CategoryPickScreen.ADD_NEW:
+                self.app_ref.create_field(on_created=self._add_card_to_category)
+                return
             self._add_card_to_category(category)
 
+        if not categories:
+            self.app_ref.create_field(on_created=self._add_card_to_category)
+            return
         self.app.push_screen(CategoryPickScreen(categories), on_pick)
 
     def _add_card_to_category(self, category):
@@ -1256,8 +1268,16 @@ class TodoApp(App):
 
     def action_add_field(self):
         """Create a brand new top-level category (e.g. a new subject/track) from inside
-        the app. Writes it to goals.json (the source of truth) then reloads from it, so
-        the new field shows up immediately and survives a restart."""
+        the app, with no follow-up card prompt. See create_field() for the shared flow --
+        the 'a' add-card picker's "+ New field..." option uses the same flow but chains
+        into immediately adding the field's first card."""
+        self.create_field()
+
+    def create_field(self, on_created=None):
+        """Prompts for a new field's name + label, writes it to goals.json (the source of
+        truth) and reloads from it so the field shows up immediately and survives a
+        restart. If on_created is given, it's called with the new field's slug afterward
+        (used to chain straight into adding that field's first card)."""
 
         def on_name(name):
             if not name:
@@ -1290,6 +1310,8 @@ class TodoApp(App):
                     return
                 self.reload_from_goals()
                 self.toast(f"Added field: {label}", style="bold green")
+                if on_created:
+                    on_created(slug)
 
             self.push_screen(TextPromptScreen("Display label for this field", name), on_label)
 
