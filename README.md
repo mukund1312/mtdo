@@ -126,15 +126,28 @@ mtdo status                      # print today's basket as markdown -- for scrip
 mtdo done <task_id> [date]       # mark a task done by ID (IDs come from `status`)
 ```
 
-## Animation panel
+## Spotify + animation panel
 
-A small panel under the Spotify box (and visible in Focus Mode) plays a looping terminal
-animation rendered from any video/gif you give it -- adapted from
-[anifetch](https://github.com/Notenlish/anifetch)'s ffmpeg + chafa pipeline.
+The Spotify panel is a display-first now-playing box -- song, artist, progress bar -- with
+a looping terminal animation (adapted from [anifetch](https://github.com/Notenlish/anifetch)'s
+ffmpeg + chafa pipeline) filling the rest of the panel below the progress bar. No icon
+buttons or volume bar clutter the display; playback keys still work, they're just not
+drawn as a row of icons anymore:
 
+- `m` play/pause, `[` / `]` prev/next, `+` / `-` volume, `P` paste a link and play it
 - `g` -- start/stop the animation (plays a default clip on first use if one's set up, see below)
-- `G` -- pick a different clip, or add a new one by pasting a file path
+- `G` -- pick a different clip, or add a new one from a file path (optionally set its
+  framerate and chafa symbol style, e.g. `-r 20 -ca "--symbols wide --fg-only"` --
+  anifetch-style flags. `-W`/`-H`/`-s`/`--sound` are recognized but ignored: render size
+  always fits the live panel rather than a fixed resolution, and audio always comes from
+  Spotify itself, never extracted from the clip)
 - Entering Focus Mode (`f`) auto-starts the animation if nothing's already playing
+
+The animation re-renders itself (from cache when possible) whenever the panel resizes, so
+it keeps filling the available space as the terminal grows or shrinks. In Focus Mode the
+kanban board, Stats, and Calendar all hide, so Spotify gets the whole right column. In the
+normal view, Stats and Calendar are capped to a scrollable ~8 rows each (scroll to see the
+rest) so Spotify still gets real room instead of being squeezed to nothing.
 
 This repo doesn't ship a default clip (the original example video's license/source is
 unclear, so it stays out of version control). First time you clone: press `G`, choose

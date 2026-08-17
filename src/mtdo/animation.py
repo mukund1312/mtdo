@@ -17,6 +17,7 @@ re-playing the same clip at the same size is instant after the first render.
 import hashlib
 import json
 import os
+import shlex
 import shutil
 import subprocess
 import tempfile
@@ -75,16 +76,19 @@ def add_animation_file(src_path):
     return dest_name
 
 
-def _cache_key(path, width, height, fps):
+def _cache_key(path, width, height, fps, chafa_args):
     stat = os.stat(path)
-    raw = f"{path}|{stat.st_mtime}|{stat.st_size}|{width}|{height}|{fps}"
+    raw = f"{path}|{stat.st_mtime}|{stat.st_size}|{width}|{height}|{fps}|{chafa_args}"
     return hashlib.sha256(raw.encode()).hexdigest()[:24]
 
 
-def _render_frame(image_path, width, height):
+def _render_frame(image_path, width, height, chafa_args=""):
+    # User-supplied chafa args come first, then our own forced flags override them --
+    # mirrors anifetch's own render_frame() ordering. --format symbols is forced because
+    # other chafa formats (kitty, iterm, sixel) aren't supported inside a Textual widget.
+    cmd = ["chafa", *shlex.split(chafa_args), "--format", "symbols", f"--size={width}x{height}", image_path]
     p = subprocess.run(
-        ["chafa", "--format", "symbols", f"--size={width}x{height}", image_path],
-        text=True, encoding="utf-8", errors="replace",
+        cmd, text=True, encoding="utf-8", errors="replace",
         stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
     )
     if p.returncode != 0:
@@ -92,16 +96,19 @@ def _render_frame(image_path, width, height):
     return p.stdout
 
 
-def get_frames(name, width=28, height=12, fps=8, quality=6):
+def get_frames(name, width=28, height=12, fps=8, quality=6, chafa_args=""):
     """Returns a cached list of rendered ANSI frame strings for the given clip
     (a filename inside ANIM_DIR), rendering + caching them first if needed.
     Safe to call from a background thread -- does real subprocess work, never touches
-    Textual widgets directly."""
+    Textual widgets directly. width/height are always the caller's live panel size (see
+    app.py's SpotifyPanel.animation_target_size) -- there's deliberately no way to pin
+    a fixed render size here, so the clip always fits whatever space is actually available."""
     path = os.path.join(ANIM_DIR, name)
     if not os.path.isfile(path):
         raise FileNotFoundError(f"No animation named '{name}' in {ANIM_DIR}")
 
-    key = _cache_key(path, width, height, fps)
+    chafa_args = chafa_args or ""
+    key = _cache_key(path, width, height, fps, chafa_args)
     cache_file = os.path.join(CACHE_DIR, f"{key}.json")
     if os.path.exists(cache_file):
         with open(cache_file) as f:
@@ -129,7 +136,7 @@ def get_frames(name, width=28, height=12, fps=8, quality=6):
         max_workers = max(1, min(8, os.cpu_count() or 2))
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
             frames = list(executor.map(
-                lambda f: _render_frame(os.path.join(tmp, f), width, height), frame_files
+                lambda f: _render_frame(os.path.join(tmp, f), width, height, chafa_args), frame_files
             ))
 
     os.makedirs(CACHE_DIR, exist_ok=True)

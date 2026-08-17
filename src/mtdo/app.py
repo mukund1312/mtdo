@@ -7,9 +7,9 @@ and goal all come from the user's config -- see config.py.
 Run via the `mtdo` command (see cli.py), or `python3 -m mtdo.app` directly.
 """
 import datetime
-import math
 import os
 import re
+import shlex
 import subprocess
 
 from . import core as tc
@@ -17,7 +17,7 @@ from . import config as appconfig
 from . import animation as anim
 
 from textual.app import App, ComposeResult
-from textual.containers import Horizontal, Vertical, Center, Middle
+from textual.containers import Horizontal, Vertical, VerticalScroll, Center, Middle
 from textual.widgets import Static, ListView, ListItem, Label, Input, Footer, TextArea
 from textual.screen import ModalScreen, Screen
 from textual.reactive import reactive
@@ -144,8 +144,38 @@ def _progress_bar(position, duration, width=18):
     return _block_bar(frac, width)
 
 
-def _volume_bar(volume, width=10):
-    return _block_bar((volume or 0) / 100, width)
+def _parse_anim_options(text):
+    """Parses a subset of anifetch's own CLI flags for the 'G' -> add-clip flow:
+    -r/--framerate and -ca/-c/--chafa-arguments (e.g. '-r 20 -ca "--symbols wide --fg-only"').
+    -W/--width and -H/--height are recognized but ignored -- animation render size always
+    comes from the live SpotifyPanel size (see animation_target_size), never a fixed value,
+    so the clip keeps fitting as the terminal is resized. -s/--sound is recognized but
+    ignored too -- audio always comes from Spotify itself, never extracted from the clip.
+    Returns (fps_or_None, chafa_args_or_None)."""
+    fps, chafa_args = None, None
+    try:
+        tokens = shlex.split(text or "")
+    except ValueError:
+        tokens = (text or "").split()
+    i = 0
+    while i < len(tokens):
+        tok = tokens[i]
+        if tok in ("-r", "--framerate") and i + 1 < len(tokens):
+            try:
+                fps = int(tokens[i + 1])
+            except ValueError:
+                pass
+            i += 2
+        elif tok in ("-ca", "-c", "--chafa-arguments") and i + 1 < len(tokens):
+            chafa_args = tokens[i + 1]
+            i += 2
+        elif tok in ("-W", "--width", "-H", "--height") and i + 1 < len(tokens):
+            i += 2
+        elif tok in ("-s", "--sound"):
+            i += 1
+        else:
+            i += 1
+    return fps, chafa_args
 
 
 def spotify_play_pause():
@@ -962,76 +992,33 @@ class PomodoroPanel(Static):
         self.update(Panel(body, title="Pomodoro", border_style="orange3", box=box.ROUNDED))
 
 
-FLUID_WIDTH = 20
-FLUID_HEIGHT = 5
+DEFAULT_ANIM_FPS = 8
 
 
 class SpotifyPanel(Static):
-    frame = 0
-
-    def _generate_fluid(self):
-        chars = ["░", "▒", "▓", "█"]
-        cx, cy = (FLUID_WIDTH - 1) / 2, (FLUID_HEIGHT - 1) / 2
-        pulse = 0.5 + 0.5 * math.sin(self.frame * 0.3)
-        rows = []
-        for y in range(FLUID_HEIGHT):
-            line = ""
-            for x in range(FLUID_WIDTH):
-                dx, dy = (x - cx) / cx, (y - cy) / cy
-                dist = math.sqrt(dx * dx + dy * dy) - pulse * 0.3
-                line += chars[3 if dist < 0.25 else 2 if dist < 0.5 else 1 if dist < 0.75 else 0]
-            rows.append(line)
-        self.frame += 1
-        return Text("\n".join(rows), style="bright_blue", justify="center")
-
-    def update_content(self):
-        info = spotify_track()
-        icon = "⏸" if info["state"] == "playing" else "▶"
-        controls = Text.assemble(("[⏮] ", "bold white"), (f"[{icon}] ", "bold bright_green"), ("[⏭]", "bold white"))
-        controls.justify = "center"
-
-        rows = [
-            Text("NOW PLAYING", style="bold dim", justify="center"),
-            Text(""),
-            Text(info["song"], style="bold bright_white", justify="center", no_wrap=True, overflow="ellipsis"),
-            Text(info["artist"], style="bold grey70", justify="center", no_wrap=True, overflow="ellipsis"),
-            Text(""),
-        ]
-        if info["duration"] > 0:
-            prog = _progress_bar(info["position"], info["duration"])
-            rows.append(Text(f"{prog} {_fmt_mmss(info['position'])} / {_fmt_mmss(info['duration'])}",
-                              style="cyan", justify="center"))
-            rows.append(Text(""))
-        if info["volume"] is not None:
-            vol = _volume_bar(info["volume"])
-            rows.append(Text(f"\U0001F50A {vol} {info['volume']}%", style="dim", justify="center"))
-            rows.append(Text(""))
-        rows.append(self._generate_fluid())
-        rows.append(Text(""))
-        rows.append(controls)
-        rows.append(Text(""))
-        rows.append(Text("[ prev    m play/pause    ] next    P: play a link", style="dim italic", justify="center"))
-        rows.append(Text("-  vol down    +  vol up", style="dim italic", justify="center"))
-        self.update(Panel(Group(*rows), title="Spotify", border_style="green", box=box.ROUNDED))
-
-
-ANIM_WIDTH = 26
-ANIM_HEIGHT = 11
-ANIM_FPS = 8
-
-
-class AnimationPanel(Static):
-    """Plays a chafa-rendered video/gif clip (see animation.py) under the Spotify box.
-    Rendering happens off-thread (see TodoApp.start_animation) -- this widget only ever
-    deals with already-rendered frame strings via load()/stop()/tick()."""
+    """Now-playing display (song/artist/progress) merged with the chafa-rendered
+    animation (see animation.py) into one panel, no controls/volume clutter -- Spotify
+    playback keys (m/[/]/+/-/P) still work, they just aren't drawn as an icon row
+    anymore. The animation fills all space below the progress bar and re-renders itself
+    (via TodoApp.maybe_rerender_for_resize) whenever the panel is resized, so it always
+    fits the actual terminal size instead of being pinned to a fixed resolution."""
 
     def __init__(self):
         super().__init__()
+        self.last_info = dict(_SPOTIFY_EMPTY)
         self.frames = []
         self.frame_idx = 0
         self.running = False
         self.loading = False
         self.current_name = None
+        self.rendered_size = None
+        self._resize_timer = None
+        self.render_panel()
+
+    def refresh_spotify_info(self):
+        """Cheap 1Hz refresh of song metadata -- deliberately separate from tick() so the
+        (much faster) animation frame loop never shells out to osascript on every frame."""
+        self.last_info = spotify_track()
         self.render_panel()
 
     def load(self, name, frames):
@@ -1047,25 +1034,73 @@ class AnimationPanel(Static):
         self.render_panel()
 
     def tick(self):
-        if not self.running or not self.frames:
-            return
-        self.frame_idx = (self.frame_idx + 1) % len(self.frames)
+        if self.running and self.frames:
+            self.frame_idx = (self.frame_idx + 1) % len(self.frames)
         self.render_panel()
 
+    def on_resize(self, event):
+        if self._resize_timer is not None:
+            self._resize_timer.stop()
+        self._resize_timer = self.set_timer(0.6, self._resize_settled)
+
+    def _resize_settled(self):
+        if self.current_name:
+            self.app.maybe_rerender_for_resize(self.current_name)
+
+    def animation_target_size(self):
+        """Character-cell size available for the animation right now, based on the
+        panel's live size minus the fixed header/footer rows and Panel border+padding.
+        Rounded to an even number to keep the on-disk render cache from growing one
+        entry per single-pixel resize."""
+        width = max(10, self.size.width - 4)
+        height = max(3, self.size.height - 12)
+        width -= width % 2
+        height -= height % 2
+        return max(10, width), max(3, height)
+
     def render_panel(self):
+        self.update(self._build_panel())
+
+    def _build_panel(self):
+        info = self.last_info
+        header = [
+            Text("NOW PLAYING", style="bold dim", justify="center"),
+            Text(""),
+            Text(info["song"], style="bold bright_white", justify="center", no_wrap=True, overflow="ellipsis"),
+            Text(info["artist"], style="bold grey70", justify="center", no_wrap=True, overflow="ellipsis"),
+            Text(""),
+        ]
+        if info["duration"] > 0:
+            prog = _progress_bar(info["position"], info["duration"])
+            header.append(Text(f"{prog} {_fmt_mmss(info['position'])} / {_fmt_mmss(info['duration'])}",
+                                style="cyan", justify="center"))
+            header.append(Text(""))
+
+        footer = [
+            Text(""),
+            Text("m play/pause  [ prev  ] next  +/- volume  P play url", style="dim italic", justify="center"),
+            Text("g start/stop animation    G pick/add clip", style="dim italic", justify="center"),
+        ]
+
+        avail_h = max(1, self.size.height - 2 - len(header) - len(footer))
+
         if self.loading:
-            body = Text("Rendering animation...", style="dim italic", justify="center")
-            title, color = "Animation", "grey50"
+            lines = [Text("Rendering animation...", style="dim italic", justify="center")]
         elif self.frames:
-            body = Text.from_ansi(self.frames[self.frame_idx])
-            playing = self.running
-            title = f"Animation -- {self.current_name}" + ("" if playing else " (stopped)")
-            color = "magenta" if playing else "grey50"
+            frame_text = Text.from_ansi(self.frames[self.frame_idx])
+            lines = list(frame_text.split("\n", allow_blank=True))
+            for line in lines:
+                line.justify = "center"
+            if not self.running:
+                lines.append(Text(f"({self.current_name} -- stopped)", style="dim italic", justify="center"))
         else:
-            body = Text("g: start   G: pick clip", style="dim italic", justify="center")
-            title, color = "Animation", "grey50"
-        footer = Text("g: start/stop    G: pick/add clip", style="dim italic", justify="center")
-        self.update(Panel(Group(body, Text(""), footer), title=title, border_style=color, box=box.ROUNDED))
+            lines = [Text("g: start animation    G: pick/add a clip", style="dim italic", justify="center")]
+
+        pad = max(0, avail_h - len(lines))
+        top_pad, bottom_pad = pad // 2, pad - pad // 2
+        lines = [Text("")] * top_pad + lines + [Text("")] * bottom_pad
+
+        return Panel(Group(*header, *lines, *footer), title="Spotify", border_style="green", box=box.ROUNDED)
 
 
 class ClockHeader(Static):
@@ -1099,8 +1134,10 @@ class TodoApp(App):
     #kanban-list-in_progress { border: round gold; }
     #kanban-list-done { border: round green; }
     KanbanColumnList { height: 1fr; padding: 0 1; }
-    #right-col { width: 1fr; }
-    StatsPanel, CalendarPanel, PomodoroPanel, ActiveTaskPanel, AnimationPanel { height: auto; }
+    #right-col { width: 1fr; overflow-y: auto; }
+    PomodoroPanel, ActiveTaskPanel { height: auto; }
+    StatsPanel, CalendarPanel { height: auto; }
+    #stats-scroll, #calendar-scroll { height: auto; max-height: 8; }
     SpotifyPanel { height: 1fr; }
     ClockHeader { height: 1; dock: top; }
     ToastLine { height: 1; dock: top; padding: 0 1; }
@@ -1133,6 +1170,9 @@ class TodoApp(App):
         self.state = tc.load_state()
         self.state = tc.ensure_day_registered(self.state, self.today)
         self.focus_mode = False
+        self.anim_fps = DEFAULT_ANIM_FPS
+        self.anim_chafa_args = ""
+        self._anim_timer = None
         try:
             self._goals_mtime = os.path.getmtime(appconfig.GOALS_PATH)
         except OSError:
@@ -1145,18 +1185,20 @@ class TodoApp(App):
             self.kanban = KanbanBoard(self)
             yield self.kanban
             with Vertical(id="right-col"):
-                self.stats_panel = StatsPanel()
-                yield self.stats_panel
-                self.calendar_panel = CalendarPanel()
-                yield self.calendar_panel
+                self.stats_scroll = VerticalScroll(id="stats-scroll")
+                with self.stats_scroll:
+                    self.stats_panel = StatsPanel()
+                    yield self.stats_panel
+                self.calendar_scroll = VerticalScroll(id="calendar-scroll")
+                with self.calendar_scroll:
+                    self.calendar_panel = CalendarPanel()
+                    yield self.calendar_panel
                 self.active_task_panel = ActiveTaskPanel()
                 yield self.active_task_panel
                 self.pomo_panel = PomodoroPanel()
                 yield self.pomo_panel
                 self.spotify_panel = SpotifyPanel()
                 yield self.spotify_panel
-                self.anim_panel = AnimationPanel()
-                yield self.anim_panel
         yield Footer()
 
     def on_mount(self):
@@ -1167,7 +1209,7 @@ class TodoApp(App):
         self.kanban.lists[tc.STATUS_TODO].focus()
         self.set_interval(1.0, self.on_second_tick)
         self.set_interval(2.0, self.check_goals_file)
-        self.set_interval(1.0 / ANIM_FPS, self.anim_panel.tick)
+        self._anim_timer = self.set_interval(1.0 / self.anim_fps, self.spotify_panel.tick)
 
     def toast(self, text, style="dim"):
         self.query_one(ToastLine).show(text, style)
@@ -1177,7 +1219,7 @@ class TodoApp(App):
         self.calendar_panel.update_content(self.state, self.today)
         self.active_task_panel.update_content(self.state, self.today)
         self.pomo_panel.render_panel(tc.get_pomodoro_count(self.state, self.today))
-        self.spotify_panel.update_content()
+        self.spotify_panel.refresh_spotify_info()
 
     def check_goals_file(self):
         """Polled every 2s: if goals.json changed on disk since we last read it (hand-edited,
@@ -1253,28 +1295,33 @@ class TodoApp(App):
 
         self.push_screen(TextPromptScreen("New field name (short id, e.g. 'networking')", ""), on_name)
 
-    # ---- Animation panel (see animation.py) ----------------------------------
+    # ---- Animation (merged into SpotifyPanel, see animation.py) --------------
 
     def action_animation_toggle(self):
         """g: if a clip is already loaded, start/stop it in place. Otherwise render and
         play the default clip (first run) so 'g' alone is enough to get something going."""
-        if self.anim_panel.frames:
-            if self.anim_panel.running:
-                self.anim_panel.stop()
+        sp = self.spotify_panel
+        if sp.frames:
+            if sp.running:
+                sp.stop()
                 self.toast("Animation stopped", style="dim")
             else:
-                self.anim_panel.running = True
-                self.anim_panel.render_panel()
-                self.toast(f"Playing {self.anim_panel.current_name}", style="bold green")
+                sp.running = True
+                sp.render_panel()
+                self.toast(f"Playing {sp.current_name}", style="bold green")
             return
         names = anim.list_animations()
         if not names:
-            self.toast("No animations available in ~/.mtdo/animations", style="bold yellow")
+            self.toast("No animations available -- press G to add one", style="bold yellow")
             return
         self.start_animation(names[0])
 
     def action_animation_pick(self):
-        """G: choose which clip to play, or add a new one from a file path."""
+        """G: choose which clip to play, or add a new one from a file path. Adding a new
+        clip also lets you set its framerate and chafa symbol style (anifetch-style flags:
+        -r/--framerate, -ca/-c/--chafa-arguments). -W/-H/-s/--sound are recognized but
+        ignored -- render size always fits the live panel, and audio always comes from
+        Spotify itself, never the clip."""
         names = anim.list_animations()
 
         def on_pick(name):
@@ -1289,47 +1336,88 @@ class TodoApp(App):
                     except (FileNotFoundError, ValueError) as e:
                         self.toast(str(e), style="bold red")
                         return
-                    self.start_animation(new_name)
+
+                    def on_options(opts):
+                        fps, chafa_args = _parse_anim_options(opts)
+                        self.start_animation(new_name, fps=fps, chafa_args=chafa_args)
+
+                    self.push_screen(
+                        TextPromptScreen(
+                            'Render options, e.g. -r 20 -ca "--symbols wide --fg-only" (blank = defaults)', ""
+                        ),
+                        on_options,
+                    )
                 self.push_screen(TextPromptScreen("Path to a video/gif file", ""), on_path)
                 return
             self.start_animation(name)
 
         self.push_screen(AnimationPickScreen(names), on_pick)
 
-    def start_animation(self, name):
+    def _set_anim_fps(self, fps):
+        fps = max(1, min(fps, 30))
+        if fps == self.anim_fps:
+            return
+        self.anim_fps = fps
+        if self._anim_timer is not None:
+            self._anim_timer.stop()
+        self._anim_timer = self.set_interval(1.0 / self.anim_fps, self.spotify_panel.tick)
+
+    def start_animation(self, name, fps=None, chafa_args=None):
         """Kicks off background rendering (ffmpeg + chafa, can take a couple seconds on
-        first play, instant afterward from cache) and plays the clip once ready."""
+        first play, instant afterward from cache) and plays the clip once ready. Render
+        size is always the live SpotifyPanel size -- see animation_target_size()."""
         chafa_ok, ffmpeg_ok = anim.check_deps()
         if not (chafa_ok and ffmpeg_ok):
             missing = [t for t, ok in (("chafa", chafa_ok), ("ffmpeg", ffmpeg_ok)) if not ok]
             self.toast(f"Animation needs {' + '.join(missing)} installed (brew install {' '.join(missing)})",
                        style="bold red")
             return
-        self.anim_panel.loading = True
-        self.anim_panel.render_panel()
+        if fps:
+            self._set_anim_fps(fps)
+        if chafa_args is not None:
+            self.anim_chafa_args = chafa_args
+        width, height = self.spotify_panel.animation_target_size()
+        self.spotify_panel.loading = True
+        self.spotify_panel.render_panel()
         self.toast(f"Rendering {name}...", style="bold cyan")
-        self.run_worker(lambda: self._render_animation(name), thread=True, exclusive=True, group="anim_render")
+        self.run_worker(
+            lambda: self._render_animation(name, width, height, self.anim_fps, self.anim_chafa_args),
+            thread=True, exclusive=True, group="anim_render",
+        )
 
-    def _render_animation(self, name):
+    def maybe_rerender_for_resize(self, name):
+        """Called by SpotifyPanel after its resize settles. Re-renders at the new size
+        only if a resize actually changed the target size for the currently-playing clip
+        -- avoids re-rendering on every resize event during a drag."""
+        sp = self.spotify_panel
+        if not sp.frames or sp.current_name != name:
+            return
+        width, height = sp.animation_target_size()
+        if sp.rendered_size == (width, height):
+            return
+        self.start_animation(name)
+
+    def _render_animation(self, name, width, height, fps, chafa_args):
         try:
-            frames = anim.get_frames(name, width=ANIM_WIDTH, height=ANIM_HEIGHT, fps=ANIM_FPS)
+            frames = anim.get_frames(name, width=width, height=height, fps=fps, chafa_args=chafa_args)
         except Exception as e:
             self.call_from_thread(self._animation_failed, str(e))
             return
-        self.call_from_thread(self._animation_ready, name, frames)
+        self.call_from_thread(self._animation_ready, name, frames, width, height)
 
-    def _animation_ready(self, name, frames):
-        self.anim_panel.load(name, frames)
+    def _animation_ready(self, name, frames, width, height):
+        self.spotify_panel.rendered_size = (width, height)
+        self.spotify_panel.load(name, frames)
         self.toast(f"Playing {name}", style="bold green")
 
     def _animation_failed(self, message):
-        self.anim_panel.loading = False
-        self.anim_panel.render_panel()
+        self.spotify_panel.loading = False
+        self.spotify_panel.render_panel()
         self.toast(f"Animation render failed: {message}", style="bold red")
 
     def on_second_tick(self):
         self.query_one(ClockHeader).update_clock()
-        self.spotify_panel.update_content()
+        self.spotify_panel.refresh_spotify_info()
         self.active_task_panel.update_content(self.state, self.today)
         if self.pomo_panel.running:
             if self.pomo_panel.remaining > 0:
@@ -1392,16 +1480,16 @@ class TodoApp(App):
         self.focus_mode = not self.focus_mode
         show = not self.focus_mode
         self.kanban.display = show
-        self.stats_panel.display = show
-        self.calendar_panel.display = show
+        self.stats_scroll.display = show
+        self.calendar_scroll.display = show
         if self.focus_mode:
             if not self.pomo_panel.running:
                 self._set_pomodoro_length(45, 10)
                 self.pomo_panel.running = True
-            if self.anim_panel.frames and not self.anim_panel.running:
-                self.anim_panel.running = True
-                self.anim_panel.render_panel()
-            elif not self.anim_panel.frames:
+            if self.spotify_panel.frames and not self.spotify_panel.running:
+                self.spotify_panel.running = True
+                self.spotify_panel.render_panel()
+            elif not self.spotify_panel.frames:
                 names = anim.list_animations()
                 if names:
                     self.start_animation(names[0])
