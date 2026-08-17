@@ -13,6 +13,7 @@ import re
 import subprocess
 
 from . import core as tc
+from . import config as appconfig
 
 from textual.app import App, ComposeResult
 from textual.containers import Horizontal, Vertical, Center, Middle
@@ -205,6 +206,41 @@ class TextPromptScreen(ModalScreen):
 
     def on_input_submitted(self, event: Input.Submitted):
         self.dismiss(event.value)
+
+    def on_key(self, event):
+        if event.key == "escape":
+            self.dismiss(None)
+
+
+class CategoryPickScreen(ModalScreen):
+    """Modal: pick which category a new card belongs to, when there's no highlighted
+    card to infer it from (e.g. an empty column). Returns the category name, or None
+    on Escape."""
+
+    CSS = """
+    CategoryPickScreen { align: center middle; }
+    #pick-box { width: 60; height: auto; max-height: 20; border: round magenta; padding: 1 2; background: $panel; }
+    """
+
+    def __init__(self, categories):
+        super().__init__()
+        self.categories = categories
+
+    def compose(self) -> ComposeResult:
+        with Center():
+            with Middle():
+                with Vertical(id="pick-box"):
+                    yield Static("Add card to which category?")
+                    yield VimListView(*[
+                        ListItem(Label(tc.CATEGORY_META[c]["label"]), name=c) for c in self.categories
+                    ])
+                    yield Static("Enter to pick, Escape to cancel", classes="dim")
+
+    def on_mount(self):
+        self.query_one(VimListView).focus()
+
+    def on_list_view_selected(self, event: ListView.Selected):
+        self.dismiss(event.item.name)
 
     def on_key(self, event):
         if event.key == "escape":
@@ -466,6 +502,7 @@ HELP_SECTIONS = [
         ("f", "Toggle Focus Mode -- hides the board + stats, keeps Active Task/Pomodoro/Spotify"),
         ("c", "Open the Career CRM"),
         ("v", "Open the Knowledge Vault"),
+        ("A", "Add a new field (category) -- writes to goals.json, live-reloads immediately"),
         ("?", "Show this cheat sheet"),
     ]),
     ("Pomodoro", [
@@ -487,7 +524,7 @@ HELP_SECTIONS = [
         ("u", "Send the highlighted card back one column"),
         ("t", "Edit a card's text (locked on fixed-label categories)"),
         ("n", "Edit a card's notes"),
-        ("a", "Add a new card (same category as the highlighted card)"),
+        ("a", "Add a new card (same category as highlighted card, or asks which field if none)"),
         ("d", "Delete the highlighted card"),
     ]),
     ("Career CRM (press c to open)", [
@@ -724,7 +761,25 @@ class KanbanBoard(Horizontal):
 
     def action_add_card(self):
         item = self.current_card()
-        category = item.category if item is not None else "jobs"
+        if item is not None:
+            self._add_card_to_category(item.category)
+            return
+        categories = tc.categories_for_day(self.app_ref.today)
+        if not categories:
+            self.app_ref.toast("No categories scheduled today.", style="bold yellow")
+            return
+        if len(categories) == 1:
+            self._add_card_to_category(categories[0])
+            return
+
+        def on_pick(category):
+            if category is None:
+                return
+            self._add_card_to_category(category)
+
+        self.app.push_screen(CategoryPickScreen(categories), on_pick)
+
+    def _add_card_to_category(self, category):
         meta = tc.CATEGORY_META[category]
         if not meta["addable"]:
             self.app_ref.toast(f"{meta['label']} doesn't support adding cards.", style="bold yellow")
@@ -973,6 +1028,7 @@ class TodoApp(App):
         ("+", "spotify_volume_up", "Vol+"),
         ("-", "spotify_volume_down", "Vol-"),
         ("P", "spotify_play_url", "Play URL"),
+        ("A", "add_field", "Add Field"),
     ]
 
     def __init__(self):
@@ -981,6 +1037,10 @@ class TodoApp(App):
         self.state = tc.load_state()
         self.state = tc.ensure_day_registered(self.state, self.today)
         self.focus_mode = False
+        try:
+            self._goals_mtime = os.path.getmtime(appconfig.GOALS_PATH)
+        except OSError:
+            self._goals_mtime = None
 
     def compose(self) -> ComposeResult:
         yield ClockHeader()
@@ -1008,6 +1068,7 @@ class TodoApp(App):
             self.toast(f"Auto-saved yesterday's report -> {saved}", style="bold cyan")
         self.kanban.lists[tc.STATUS_TODO].focus()
         self.set_interval(1.0, self.on_second_tick)
+        self.set_interval(2.0, self.check_goals_file)
 
     def toast(self, text, style="dim"):
         self.query_one(ToastLine).show(text, style)
@@ -1018,6 +1079,80 @@ class TodoApp(App):
         self.active_task_panel.update_content(self.state, self.today)
         self.pomo_panel.render_panel(tc.get_pomodoro_count(self.state, self.today))
         self.spotify_panel.update_content()
+
+    def check_goals_file(self):
+        """Polled every 2s: if goals.json changed on disk since we last read it (hand-edited,
+        or written by another mtdo process/action_add_field below), reload it into the running
+        app -- no restart needed. goals.json is the single source of truth; this makes the
+        live app always match whatever's currently on disk."""
+        try:
+            mtime = os.path.getmtime(appconfig.GOALS_PATH)
+        except OSError:
+            return
+        if self._goals_mtime is not None and mtime == self._goals_mtime:
+            return
+        self._goals_mtime = mtime
+        self.reload_from_goals(toast_on_change=True)
+
+    def reload_from_goals(self, toast_on_change=False):
+        try:
+            goals = appconfig.load_goals()
+        except FileNotFoundError:
+            return
+        cfg, _, _ = appconfig.goals_to_config(goals)
+        tc.configure(cfg)
+        CATEGORY_COLORS.update(_build_category_colors())
+        self.state = tc.ensure_day_registered(self.state, self.today)
+        tc.save_state(self.state)
+        self.kanban.rebuild()
+        self.refresh_side_panels()
+        try:
+            self._goals_mtime = os.path.getmtime(appconfig.GOALS_PATH)
+        except OSError:
+            pass
+        if toast_on_change:
+            self.toast("goals.json changed -- reloaded", style="bold cyan")
+
+    def action_add_field(self):
+        """Create a brand new top-level category (e.g. a new subject/track) from inside
+        the app. Writes it to goals.json (the source of truth) then reloads from it, so
+        the new field shows up immediately and survives a restart."""
+
+        def on_name(name):
+            if not name:
+                return
+            slug = re.sub(r"[^a-z0-9_]+", "_", name.strip().lower()).strip("_")
+            if not slug:
+                self.toast("Invalid field name.", style="bold red")
+                return
+            if slug in tc.CATEGORY_META:
+                self.toast(f"Field '{slug}' already exists.", style="bold yellow")
+                return
+
+            def on_label(label):
+                label = (label or name).strip()
+                new_category = {
+                    "name": slug,
+                    "label": label,
+                    "days": [0, 1, 2, 3, 4, 5, 6],
+                    "min_blocks": 0,
+                    "addable": True,
+                    "deletable": True,
+                    "notes": True,
+                    "score_weight": 10,
+                    "curriculum": [],
+                }
+                try:
+                    appconfig.add_category_to_goals(new_category)
+                except (FileNotFoundError, ValueError) as e:
+                    self.toast(str(e), style="bold red")
+                    return
+                self.reload_from_goals()
+                self.toast(f"Added field: {label}", style="bold green")
+
+            self.push_screen(TextPromptScreen("Display label for this field", name), on_label)
+
+        self.push_screen(TextPromptScreen("New field name (short id, e.g. 'networking')", ""), on_name)
 
     def on_second_tick(self):
         self.query_one(ClockHeader).update_clock()

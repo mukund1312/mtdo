@@ -1,24 +1,51 @@
 {
-  "_instructions": "Fill this in yourself, or hand it to an AI assistant with your goals and let it fill this in for you. Then run: mtdo import goals.json -- it builds/updates your config from this. Delete this _instructions key, it's ignored either way.",
+  "_instructions": "Fill this in yourself, or hand it to an AI assistant with your goals and let it fill it in for you. Then run: mtdo import goals.json -- it builds/updates your config from this. Delete this _instructions key (and every other _*-prefixed key), it's ignored either way -- they're only here to explain the schema.",
+
+  "_read_this_first": {
+    "what_is_a_field": "A 'field' (aka 'category') is a top-level tracked area of your plan -- DSA, Backend, Gym, Job Applications, etc. Each field gets its own column of cards and its own line in the weekly progress panel on the right side of the app.",
+    "what_is_a_subfield": "A 'subfield' (aka 'card' or 'curriculum item') is one task INSIDE a field -- e.g. 'Two Sum' is a card inside the 'dsa' field. Cards are what you actually check off day to day.",
+
+    "rule_1_one_subject_per_field": "Give every distinct subject you want to track SEPARATELY its own field. Do NOT club two subjects into one field's label (e.g. do NOT write one 'Python & SQL Theory' field) -- if you do, the app can only show ONE combined completion percentage for both subjects mixed together, so you can never see 'I'm 80% done with Python but only 40% with SQL' -- you just get one blended number. Make two fields ('python' and 'sql') instead, each with its own curriculum, its own days, its own score_weight. Split score_weight between them however you like (e.g. 13 + 12 instead of one 25).",
+
+    "rule_2_addable_true_by_default": "Always set \"addable\": true unless this field is a genuinely fixed daily checklist you never want to add ad-hoc items to (rare). If addable is false, you and the app can ONLY ever show the pre-planned cards for that field -- pressing 'a' in the app to add a new card will refuse. Most fields should stay addable so you can drop in an extra task any day without editing this file.",
+
+    "rule_3_percentage_is_automatic": "You do NOT need to configure anything for the weekly completion percentage. The app's right-side Stats panel automatically computes, for every field with at least one card this week (Monday through today): (cards marked done) / (total cards) as a bar + percentage. This is fully automatic from your field's actual cards -- just make sure each subject is its own field (see rule 1) so its percentage isn't blended with something else.",
+
+    "rule_4_adding_fields_later": "Two ways to add a brand new field after you've already started the week: (a) edit this JSON, append a new object to \"categories\", then run `mtdo import goals.json` -- this appends curriculum safely without disturbing days you've already tracked, and auto-snapshots your previous plan for history. (b) press Shift+A inside the running app to add a field on the spot -- it writes straight into ~/.mtdo/goals.json and shows up immediately, no restart needed. Either way, the app also polls goals.json every ~2 seconds and live-reloads if you hand-edit the file directly while the app is open -- you never need to restart mtdo after editing goals.json."
+  },
+
   "app_name": "MY OS",
   "goal_line": "One sentence describing what you're working toward.",
+
   "categories": [
     {
-      "name": "example_category",
+      "name": "example_field",
+      "_name_note": "Short internal id, lowercase, no spaces (use underscores). This is how the app and state.json refer to the field internally -- once you've started tracking a day, don't rename this, the app won't find that field's old history under a new name.",
+
       "label": "Human-readable name shown in the app",
+      "_label_note": "What you actually see in the UI. Keep this specific to ONE subject (see rule_1 above) -- e.g. 'Python Theory', not 'Python & SQL Theory'.",
+
       "days": [0, 1, 2, 3, 4],
-      "_days_note": "0=Monday .. 6=Sunday. [0,1,2,3,4,5,6] = every day.",
+      "_days_note": "Which days this field shows up. 0=Monday .. 6=Sunday. [0,1,2,3,4,5,6] = every day.",
+
       "min_blocks": 2,
+      "_min_blocks_note": "Floor for counting this field 'complete' toward your daily streak. 0 = no floor, any activity counts.",
+
       "addable": true,
+      "_addable_note": "See rule_2 above -- leave this true almost always, so you (or pressing 'a' in the app) can add extra cards beyond the pre-planned curriculum.",
+
       "deletable": true,
       "notes": true,
+
       "score_weight": 25,
+      "_score_weight_note": "Contribution to the daily 0-100 score. All fields' weights should sum to ~100. If you split one subject into two fields (rule_1), split its weight between them too.",
+
       "curriculum": [
         ["First day's task", "Second task for the first day"],
         ["Second day's task"],
         ["Third day's task"]
       ],
-      "_curriculum_note": "One list per scheduled day, consumed in order starting your first day using the app. Omit entirely for a category with no set curriculum -- you'll just add tasks yourself each day."
+      "_curriculum_note": "One list of cards per scheduled day, consumed in order starting your first day using the app. Each inner list is that day's subfields/cards. Omit this key entirely for a field with no set curriculum -- you'll just add cards yourself each day (make sure addable stays true if so)."
     },
     {
       "name": "example_fixed_checkin",
@@ -30,7 +57,7 @@
       "notes": false,
       "score_weight": 10,
       "fixed_labels": ["The one thing you check off every day"],
-      "_fixed_labels_note": "Use this instead of curriculum for a repeated daily item (e.g. a workout check-in). Don't set both on the same category."
+      "_fixed_labels_note": "Use this instead of curriculum for a repeated daily item (e.g. a workout check-in) that never needs extra ad-hoc cards. Don't set both curriculum and fixed_labels on the same field. Since there's nothing to add here by design, addable is false -- this is the one legitimate exception to rule_2."
     }
   ]
 }

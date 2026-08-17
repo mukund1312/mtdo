@@ -171,6 +171,26 @@ def goals_to_config(goals, existing_cfg=None):
     return cfg, added, updated
 
 
+def add_category_to_goals(new_category):
+    """Appends one new category dict (as produced by the app's in-app 'Add Field' flow)
+    to goals.json and writes it back. goals.json remains the single source of truth --
+    the running app re-reads it (see app.py's file-watch reload) rather than this function
+    mutating the live app state directly.
+
+    Raises FileNotFoundError if there's no goals.json yet, ValueError if the name is taken.
+    """
+    if not os.path.exists(GOALS_PATH):
+        raise FileNotFoundError(f"No goals.json at {GOALS_PATH} yet.")
+    with open(GOALS_PATH) as f:
+        goals = json.load(f)
+    goals.setdefault("categories", [])
+    if any(c.get("name") == new_category["name"] for c in goals["categories"]):
+        raise ValueError(f"Category '{new_category['name']}' already exists.")
+    goals["categories"].append(new_category)
+    with open(GOALS_PATH, "w") as f:
+        json.dump(goals, f, indent=2, sort_keys=False)
+
+
 def import_goals(json_path):
     """Builds or updates goals.json from a user-provided JSON file.
 
