@@ -164,8 +164,18 @@ def goals_to_config(goals, existing_cfg=None):
                 if key in cat_def:
                     existing[key] = cat_def[key]
             if new_curriculum:
-                existing.setdefault("curriculum", [])
-                existing["curriculum"].extend(new_curriculum)
+                existing_curriculum = existing.setdefault("curriculum", [])
+                # goals.json is the file you keep editing in place -- "week 2" usually means
+                # appending new day-lists onto the SAME curriculum array and re-importing,
+                # so new_curriculum typically already contains week 1 again too. Skip the
+                # common prefix so only genuinely new entries get appended; re-importing
+                # identical content is then a true no-op instead of duplicating everything.
+                overlap = 0
+                for old, new in zip(existing_curriculum, new_curriculum):
+                    if old != new:
+                        break
+                    overlap += 1
+                existing_curriculum.extend(new_curriculum[overlap:])
             updated.append(name)
 
     return cfg, added, updated
