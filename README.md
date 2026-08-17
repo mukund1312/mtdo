@@ -2,8 +2,13 @@
 
 A terminal task board built around a 4-column Kanban (Backlog / Todo / In Progress / Done),
 with a Pomodoro timer, streaks + a GitHub-style heatmap, a Focus Mode, a Career CRM for job
-applications, a Knowledge Vault for notes, and Spotify playback controls -- all keyboard-first,
-no mouse required.
+applications, a Knowledge Vault for notes, a Learning Coach panel that surfaces study and
+interview-prep guidance for whatever task is in progress, and Spotify playback controls --
+all keyboard-first, no mouse required.
+
+MTDO is built for deliberate practice, not entertainment -- every panel exists to help you
+learn, retain, and get interview-ready faster. There's no animation/video panel and never
+will be; screen space goes to coaching content instead.
 
 Everything about *what* you're tracking -- your categories, your curriculum, your goal -- lives
 in a config file, not in code. The app ships with a demo config (the plan I actually built this
@@ -126,52 +131,34 @@ mtdo status                      # print today's basket as markdown -- for scrip
 mtdo done <task_id> [date]       # mark a task done by ID (IDs come from `status`)
 ```
 
-## Spotify + animation panel
+## Learning Coach panel
 
-The Spotify panel is a display-first now-playing box -- song, artist, progress bar -- with
-a looping terminal animation (adapted from [anifetch](https://github.com/Notenlish/anifetch)'s
-ffmpeg + chafa pipeline) filling the rest of the panel below the progress bar. No icon
-buttons or volume bar clutter the display; playback keys still work, they're just not
-drawn as a row of icons anymore:
+MTDO isn't for entertainment -- there's no animation, GIF, or video panel, and there never
+will be. The space that would occupy goes to a Learning Coach panel instead: whenever a
+card is `in_progress`, this panel shows coaching content for it --
 
-- `m` play/pause, `[` / `]` prev/next, `+` / `-` volume, `P` paste a link and play it
-- `g` -- start/stop the animation (plays a default clip on first use if one's set up, see below)
-- `G` -- pick a different clip, or add a new one from a file path (optionally set its
-  framerate and chafa symbol style, e.g. `-r 20 -ca "--symbols wide --fg-only"` --
-  anifetch-style flags. `-W`/`-H`/`-s`/`--sound` are recognized but ignored: render size
-  always fits the live panel rather than a fixed resolution, and audio always comes from
-  Spotify itself, never extracted from the clip)
-- Entering Focus Mode (`f`) auto-starts the animation if nothing's already playing
+- **Focus On** -- what to understand before moving on
+- **Ask Yourself** -- active-recall questions (topic-appropriate: DSA gets brute-force/
+  complexity/edge-case questions, Backend gets scaling/failure-mode questions, Database
+  gets query/index/execution-plan questions, System Design gets the requirements-through-
+  tradeoffs checklist)
+- **Interview Check** -- what an interviewer would actually ask
+- **Common Mistakes**, **Mental Models**, and a rotating **Pro Tip**
+- A closing prompt: could you explain this for 5 minutes without notes right now?
 
-The animation re-renders itself (from cache when possible) whenever the panel resizes, so
-it keeps filling the available space as the terminal grows or shrinks. In Focus Mode the
-kanban board, Stats, and Calendar all hide, so Spotify gets the whole right column. In the
-normal view, Stats and Calendar are capped to a scrollable ~8 rows each (scroll to see the
-rest) so Spotify still gets real room instead of being squeezed to nothing.
-
-This repo doesn't ship a default clip (the original example video's license/source is
-unclear, so it stays out of version control). First time you clone: press `G`, choose
-"Add new from a file path...", and point it at any video or gif you own. It's copied into
-`~/.mtdo/animations/` and every clip you add after that shows up in the `G` picker.
-
-Requires two external CLI tools (not Python packages):
-
-```bash
-brew install chafa ffmpeg       # macOS
-sudo apt install chafa ffmpeg   # Debian/Ubuntu
-```
-
-Without them, pressing `g` shows a toast telling you what's missing instead of failing
-silently. Your own clips (any of `.mp4 .mov .avi .mkv .webm .flv .wmv .m4v .gif`) live in
-`~/.mtdo/animations/`; rendered frames are cached in `~/.mtdo/anim_cache/` keyed by
-(file, size, fps), so replaying the same clip is instant after the first render.
+Any curriculum task in `goals.json` can carry this content directly (`focus_points`,
+`questions`, `interview_questions`, `mistakes`, `tips`, `mental_models`, ... -- see
+`goals_template.json`'s `rule_9`), which is what an AI generating your curriculum should
+fill in. Tasks without that metadata still get a full, topic-appropriate coaching
+framework automatically (set a category's `topic_type` to `dsa`, `backend`, `database`, or
+`system_design` in `goals.json` to pick which one) -- so the coach never has nothing to say.
 
 ## Platform notes
 
-Core features (Kanban, Pomodoro, streaks, Career CRM, Knowledge Vault) are plain Python/Textual
-and should run anywhere Textual runs. Spotify controls use AppleScript, so they're **macOS +
-Spotify desktop app only** -- they no-op safely everywhere else. The Animation panel needs
-`chafa` + `ffmpeg` on PATH (see above); it degrades to a clear error toast without them.
+Core features (Kanban, Pomodoro, streaks, Career CRM, Knowledge Vault, Learning Coach) are
+plain Python/Textual and should run anywhere Textual runs. Spotify controls use
+AppleScript, so they're **macOS + Spotify desktop app only** -- they no-op safely
+everywhere else.
 
 ## Data
 

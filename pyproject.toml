@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "mtdo"
 version = "0.1.0"
-description = "A config-driven terminal task board: Kanban tasks, focus/pomodoro, streaks, career CRM, notes vault, and Spotify controls, all keyboard-first."
+description = "A config-driven terminal task board: Kanban tasks, focus/pomodoro, streaks, career CRM, notes vault, a Learning Coach panel, and Spotify controls, all keyboard-first."
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }
@@ -25,4 +25,4 @@ mtdo = "mtdo.cli:main"
 where = ["src"]
 
 [tool.setuptools.package-data]
-mtdo = ["*.yaml", "*.json", "assets/*"]
+mtdo = ["*.yaml", "*.json"]

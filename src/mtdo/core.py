@@ -78,6 +78,7 @@ def configure(cfg):
             "notes": meta.get("notes", True),
             "fixed_labels": meta.get("fixed_labels"),
             "curriculum": meta.get("curriculum") or [],
+            "topic_type": meta.get("topic_type"),
         }
         SCORE_WEIGHTS[name] = meta.get("score_weight", 10)
 
@@ -120,8 +121,22 @@ def _resolve_plan_start(state):
     return datetime.date.fromisoformat(meta["plan_start"])
 
 
-def _make_block(text="", status=STATUS_TODO, notes=""):
-    return {"text": text, "status": status, "notes": notes}
+def _make_block(text="", status=STATUS_TODO, notes="", coaching=None):
+    blk = {"text": text, "status": status, "notes": notes}
+    if coaching:
+        blk["coaching"] = coaching
+    return blk
+
+
+def _task_text_and_coaching(item):
+    """A curriculum entry is either a plain string (simple task, no extra metadata) or a
+    rich object -- {"task": "...", "focus_points": [...], "questions": [...], ...} (see
+    goals_template.json rule_9) -- powering the Learning Coach panel. Returns
+    (display_text, coaching_dict_or_None) either way, so callers never need to care which
+    form a given task was written in."""
+    if isinstance(item, dict):
+        return item.get("task", "(untitled)"), item
+    return item, None
 
 
 def is_done(block):
@@ -162,7 +177,11 @@ def _ensure_weekly_menu(state, category, this_week):
         days_per_week = max(1, len(meta["days"])) if meta["days"] else 7
         chunk = curriculum[idx:idx + days_per_week]
         if chunk:
-            items = [{"text": t, "picked": False} for day_list in chunk for t in day_list]
+            items = []
+            for day_list in chunk:
+                for raw in day_list:
+                    text, coaching = _task_text_and_coaching(raw)
+                    items.append({"text": text, "picked": False, "coaching": coaching})
             cursor[category] = idx + len(chunk)
 
     entry = {"week": this_week, "items": items}
@@ -191,7 +210,7 @@ def pick_menu_item(state, today, category, item_index):
     if item["picked"]:
         return False
     item["picked"] = True
-    add_block(state, today.isoformat(), category, item["text"])
+    add_block(state, today.isoformat(), category, item["text"], coaching=item.get("coaching"))
     return True
 
 
@@ -385,9 +404,9 @@ def set_block_notes(state, date_key, category, idx, notes):
     state[date_key][category][idx]["notes"] = notes
 
 
-def add_block(state, date_key, category, text=""):
+def add_block(state, date_key, category, text="", coaching=None):
     blocks = state.setdefault(date_key, {}).setdefault(category, [])
-    blocks.append(_make_block(text=text))
+    blocks.append(_make_block(text=text, coaching=coaching))
 
 
 def delete_block(state, date_key, category, idx):

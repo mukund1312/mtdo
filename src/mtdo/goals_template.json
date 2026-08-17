@@ -19,7 +19,11 @@
 
     "rule_7_two_way_sync_for_ad_hoc_additions": "Cards you add directly in the app (press 'a', pick a field, type a task that wasn't in this JSON's curriculum) get written back into goals.json automatically, under that field's \"extra_tasks\" list -- a plain running log, separate from \"curriculum\" so it never disturbs the cursor/week-batch mechanism above. This means goals.json stays a living record of everything you've actually worked on, not just what was originally planned -- useful context for whoever (you or an AI) plans next week's curriculum.",
 
-    "rule_8_the_weekly_update_procedure_for_an_ai": "When the user pastes you their goals.json (this file, filled in with their real fields) and says something like 'plan next week', or also pastes their weekly_report_<date>.txt from ~/.mtdo/reports/: (1) For each curriculum field, APPEND new inner lists to the END of its existing 'curriculum' array -- never remove, reorder, or edit the lists that are already there, that corrupts the app's tracking of what's already been picked/completed. Append exactly as many new lists as that field's 'days' array length (see rule_5) for one more week. (2) If the weekly report shows a field wasn't finished (leftover unpicked or undone items), ask the user whether to lighten next week's load, carry the leftover topics into next week's new lists, or leave it as-is -- don't just silently pile more on top. (3) Check every field's 'extra_tasks' array (if present) -- it's a log of things the user added by hand mid-week that weren't in the original plan; use it to see what they actually needed that wasn't anticipated, and factor it into next week. (4) Return the FULL updated JSON (this whole file, curriculum extended, _-keys and all), not just a diff -- that's what keeps this file self-documenting for the week after too. (5) Tell the user to save it over their goals.json and run `mtdo import goals.json`. Don't touch any 'name' field, don't add both 'curriculum' and 'fixed_labels' to one field, don't edit 'extra_tasks' except to read it."
+    "rule_8_the_weekly_update_procedure_for_an_ai": "When the user pastes you their goals.json (this file, filled in with their real fields) and says something like 'plan next week', or also pastes their weekly_report_<date>.txt from ~/.mtdo/reports/: (1) For each curriculum field, APPEND new inner lists to the END of its existing 'curriculum' array -- never remove, reorder, or edit the lists that are already there, that corrupts the app's tracking of what's already been picked/completed. Append exactly as many new lists as that field's 'days' array length (see rule_5) for one more week, and write rich task objects for them (see rule_9), not bare strings -- that's what makes the Learning Coach panel actually useful instead of generic. (2) If the weekly report shows a field wasn't finished (leftover unpicked or undone items), ask the user whether to lighten next week's load, carry the leftover topics into next week's new lists, or leave it as-is -- don't just silently pile more on top. (3) Check every field's 'extra_tasks' array (if present) -- it's a log of things the user added by hand mid-week that weren't in the original plan; use it to see what they actually needed that wasn't anticipated, and factor it into next week. (4) Return the FULL updated JSON (this whole file, curriculum extended, _-keys and all), not just a diff -- that's what keeps this file self-documenting for the week after too. (5) Tell the user to save it over their goals.json and run `mtdo import goals.json`. Don't touch any 'name' field, don't add both 'curriculum' and 'fixed_labels' to one field, don't edit 'extra_tasks' except to read it.",
+
+    "rule_9_learning_coach_task_metadata": "MTDO is built for deliberate practice, not entertainment -- there's a Learning Coach panel (fills the space under Spotify, also visible in Focus Mode) that shows study/interview-prep guidance for whichever task is currently in_progress. Any curriculum task -- an entry inside a 'curriculum' inner list -- can be written as a plain string (simple, gets a generic/topic-appropriate coaching framework automatically, see topic_type below) OR as a rich object for task-specific coaching: {\"task\": \"SQL Joins\", \"focus_points\": [...], \"questions\": [...], \"interview_questions\": [...], \"mistakes\": [...], \"tips\": [...], \"mental_models\": [...]}. Only \"task\" is required in the object form; any of the other keys you omit falls back to the generic/topic-specific default. WHEN WRITING CURRICULUM FOR A REAL SUBJECT (not the placeholder examples below), prefer the rich object form for every task you can -- 3-5 focus_points, 2-3 questions, 1-2 interview_questions, 1-2 mistakes, 1 tip, 1 mental_model per task is plenty. This is the single highest-value thing you can do when generating a plan: it's the difference between the coach saying something generic vs. something that actually teaches.",
+
+    "rule_9b_topic_type_for_automatic_coaching": "Set a curriculum field's \"topic_type\" to one of \"dsa\", \"backend\", \"database\", or \"system_design\" to give EVERY task in that field (even plain-string ones with no rich metadata) an appropriate generic coaching framework instead of the fully-generic fallback -- e.g. topic_type \"dsa\" makes every task's default Ask-Yourself questions be 'What's the brute-force solution? Why is it slow? What data structure helps? Time/space complexity? Edge cases?' instead of the generic 'What is it? Why is it needed?'. Omit topic_type (or use something else) for fields that don't fit one of those four -- they just get the fully-generic framework, which is still complete, just less pointed."
   },
 
   "app_name": "MY OS",
@@ -48,13 +52,27 @@
       "score_weight": 25,
       "_score_weight_note": "Contribution to the daily 0-100 score. All fields' weights should sum to ~100. If you split one subject into two fields (rule_1), split its weight between them too.",
 
+      "topic_type": "database",
+      "_topic_type_note": "See rule_9b above. One of \"dsa\", \"backend\", \"database\", \"system_design\", or omit entirely. Only matters for curriculum fields (see rule_9) -- shapes the automatic coaching framework for tasks that don't specify their own.",
+
       "curriculum": [
-        ["Week 1 item", "Week 1 item"],
+        [
+          "Week 1 plain-string item -- gets this field's topic_type framework automatically",
+          {
+            "task": "SQL Joins",
+            "focus_points": ["INNER JOIN", "LEFT JOIN", "RIGHT JOIN"],
+            "questions": ["When does LEFT JOIN return NULL?", "Why use JOIN instead of a subquery?"],
+            "interview_questions": ["Explain all joins with examples", "Compare JOIN vs UNION"],
+            "mistakes": ["Confusing LEFT and RIGHT joins"],
+            "tips": ["Always visualize result tables"],
+            "mental_models": ["Think of joins as set intersections"]
+          }
+        ],
         ["Week 1 item"],
         ["Week 2 item", "Week 2 item"],
         ["Week 2 item"]
       ],
-      "_curriculum_note": "See rule_5 above -- this field's days=[0,1,2,3,4] means 5 scheduled days/week, so every 5 consecutive inner lists = one week's menu, all pulled in together and workable any day that week (not locked to a specific weekday). This example only shows 2 lists per 'week' to keep it short -- yours should have as many inner lists per week as you have scheduled days. Omit this key entirely for a field with no set curriculum -- you'll just add cards yourself each day (make sure addable stays true if so)."
+      "_curriculum_note": "See rule_5 above -- this field's days=[0,1,2,3,4] means 5 scheduled days/week, so every 5 consecutive inner lists = one week's menu, all pulled in together and workable any day that week (not locked to a specific weekday). This example only shows 2 lists per 'week' to keep it short -- yours should have as many inner lists per week as you have scheduled days. Each task in a list can be a plain string OR a rich object (see rule_9) -- this example shows one of each. Omit \"curriculum\" entirely for a field with no set curriculum -- you'll just add cards yourself each day (make sure addable stays true if so)."
     },
     {
       "name": "example_fixed_checkin",
