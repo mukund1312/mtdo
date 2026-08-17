@@ -6,3 +6,8 @@ venv/
 build/
 dist/
 .DS_Store
+
+# Personal data -- your actual goals/curriculum/salary details, never the template
+src/mtdo/goals.json
+goals.json
+goals_snapshots/
