@@ -126,11 +126,39 @@ mtdo status                      # print today's basket as markdown -- for scrip
 mtdo done <task_id> [date]       # mark a task done by ID (IDs come from `status`)
 ```
 
+## Animation panel
+
+A small panel under the Spotify box (and visible in Focus Mode) plays a looping terminal
+animation rendered from any video/gif you give it -- adapted from
+[anifetch](https://github.com/Notenlish/anifetch)'s ffmpeg + chafa pipeline.
+
+- `g` -- start/stop the animation (plays a default clip on first use if one's set up, see below)
+- `G` -- pick a different clip, or add a new one by pasting a file path
+- Entering Focus Mode (`f`) auto-starts the animation if nothing's already playing
+
+This repo doesn't ship a default clip (the original example video's license/source is
+unclear, so it stays out of version control). First time you clone: press `G`, choose
+"Add new from a file path...", and point it at any video or gif you own. It's copied into
+`~/.mtdo/animations/` and every clip you add after that shows up in the `G` picker.
+
+Requires two external CLI tools (not Python packages):
+
+```bash
+brew install chafa ffmpeg       # macOS
+sudo apt install chafa ffmpeg   # Debian/Ubuntu
+```
+
+Without them, pressing `g` shows a toast telling you what's missing instead of failing
+silently. Your own clips (any of `.mp4 .mov .avi .mkv .webm .flv .wmv .m4v .gif`) live in
+`~/.mtdo/animations/`; rendered frames are cached in `~/.mtdo/anim_cache/` keyed by
+(file, size, fps), so replaying the same clip is instant after the first render.
+
 ## Platform notes
 
 Core features (Kanban, Pomodoro, streaks, Career CRM, Knowledge Vault) are plain Python/Textual
 and should run anywhere Textual runs. Spotify controls use AppleScript, so they're **macOS +
-Spotify desktop app only** -- they no-op safely everywhere else.
+Spotify desktop app only** -- they no-op safely everywhere else. The Animation panel needs
+`chafa` + `ffmpeg` on PATH (see above); it degrades to a clear error toast without them.
 
 ## Data
 

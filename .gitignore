@@ -11,3 +11,8 @@ dist/
 src/mtdo/goals.json
 goals.json
 goals_snapshots/
+
+# Bundled default animation clip -- kept local-only (provenance/license unclear,
+# see README's Animation panel section). animation.py degrades gracefully if it's
+# missing; ensure_default_asset() just has nothing to copy on first run.
+src/mtdo/assets/*.mp4

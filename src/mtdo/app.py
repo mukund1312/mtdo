@@ -14,6 +14,7 @@ import subprocess
 
 from . import core as tc
 from . import config as appconfig
+from . import animation as anim
 
 from textual.app import App, ComposeResult
 from textual.containers import Horizontal, Vertical, Center, Middle
@@ -234,6 +235,42 @@ class CategoryPickScreen(ModalScreen):
                     yield VimListView(*[
                         ListItem(Label(tc.CATEGORY_META[c]["label"]), name=c) for c in self.categories
                     ])
+                    yield Static("Enter to pick, Escape to cancel", classes="dim")
+
+    def on_mount(self):
+        self.query_one(VimListView).focus()
+
+    def on_list_view_selected(self, event: ListView.Selected):
+        self.dismiss(event.item.name)
+
+    def on_key(self, event):
+        if event.key == "escape":
+            self.dismiss(None)
+
+
+class AnimationPickScreen(ModalScreen):
+    """Modal: pick which animation clip to play, or add a new one from a file path.
+    Dismisses with a filename (inside ~/.mtdo/animations/) to play, or None on cancel."""
+
+    ADD_NEW = "__add_new__"
+
+    CSS = """
+    AnimationPickScreen { align: center middle; }
+    #anim-pick-box { width: 60; height: auto; max-height: 20; border: round magenta; padding: 1 2; background: $panel; }
+    """
+
+    def __init__(self, names):
+        super().__init__()
+        self.names = names
+
+    def compose(self) -> ComposeResult:
+        with Center():
+            with Middle():
+                with Vertical(id="anim-pick-box"):
+                    yield Static("Play which animation?")
+                    items = [ListItem(Label(n), name=n) for n in self.names]
+                    items.append(ListItem(Label("+ Add new from a file path..."), name=self.ADD_NEW))
+                    yield VimListView(*items)
                     yield Static("Enter to pick, Escape to cancel", classes="dim")
 
     def on_mount(self):
@@ -499,7 +536,7 @@ HELP_SECTIONS = [
     ("Global", [
         ("q", "Quit the app"),
         ("r", "Refresh all panels"),
-        ("f", "Toggle Focus Mode -- hides the board + stats, keeps Active Task/Pomodoro/Spotify"),
+        ("f", "Toggle Focus Mode -- hides the board + stats, keeps Active Task/Pomodoro/Spotify/Animation. Auto-starts the animation if one isn't already playing."),
         ("c", "Open the Career CRM"),
         ("v", "Open the Knowledge Vault"),
         ("A", "Add a new field (category) -- writes to goals.json, live-reloads immediately"),
@@ -516,6 +553,10 @@ HELP_SECTIONS = [
         ("]", "Next track"),
         ("+ / -", "Volume up/down"),
         ("P", "Paste a playlist/album/track link and play it"),
+    ]),
+    ("Animation (under the Spotify box, also plays in Focus Mode)", [
+        ("g", "Start/stop the animation (renders + plays the default clip on first use)"),
+        ("G", "Pick a different clip, or add a new one from a file path"),
     ]),
     ("Kanban Board (Backlog / Todo / In Progress / Done)", [
         ("h / l", "Move focus between columns"),
@@ -974,6 +1015,59 @@ class SpotifyPanel(Static):
         self.update(Panel(Group(*rows), title="Spotify", border_style="green", box=box.ROUNDED))
 
 
+ANIM_WIDTH = 26
+ANIM_HEIGHT = 11
+ANIM_FPS = 8
+
+
+class AnimationPanel(Static):
+    """Plays a chafa-rendered video/gif clip (see animation.py) under the Spotify box.
+    Rendering happens off-thread (see TodoApp.start_animation) -- this widget only ever
+    deals with already-rendered frame strings via load()/stop()/tick()."""
+
+    def __init__(self):
+        super().__init__()
+        self.frames = []
+        self.frame_idx = 0
+        self.running = False
+        self.loading = False
+        self.current_name = None
+        self.render_panel()
+
+    def load(self, name, frames):
+        self.current_name = name
+        self.frames = frames
+        self.frame_idx = 0
+        self.running = True
+        self.loading = False
+        self.render_panel()
+
+    def stop(self):
+        self.running = False
+        self.render_panel()
+
+    def tick(self):
+        if not self.running or not self.frames:
+            return
+        self.frame_idx = (self.frame_idx + 1) % len(self.frames)
+        self.render_panel()
+
+    def render_panel(self):
+        if self.loading:
+            body = Text("Rendering animation...", style="dim italic", justify="center")
+            title, color = "Animation", "grey50"
+        elif self.frames:
+            body = Text.from_ansi(self.frames[self.frame_idx])
+            playing = self.running
+            title = f"Animation -- {self.current_name}" + ("" if playing else " (stopped)")
+            color = "magenta" if playing else "grey50"
+        else:
+            body = Text("g: start   G: pick clip", style="dim italic", justify="center")
+            title, color = "Animation", "grey50"
+        footer = Text("g: start/stop    G: pick/add clip", style="dim italic", justify="center")
+        self.update(Panel(Group(body, Text(""), footer), title=title, border_style=color, box=box.ROUNDED))
+
+
 class ClockHeader(Static):
     def update_clock(self):
         now = datetime.datetime.now().strftime("%I:%M:%S %p")
@@ -1006,7 +1100,7 @@ class TodoApp(App):
     #kanban-list-done { border: round green; }
     KanbanColumnList { height: 1fr; padding: 0 1; }
     #right-col { width: 1fr; }
-    StatsPanel, CalendarPanel, PomodoroPanel, ActiveTaskPanel { height: auto; }
+    StatsPanel, CalendarPanel, PomodoroPanel, ActiveTaskPanel, AnimationPanel { height: auto; }
     SpotifyPanel { height: 1fr; }
     ClockHeader { height: 1; dock: top; }
     ToastLine { height: 1; dock: top; padding: 0 1; }
@@ -1029,6 +1123,8 @@ class TodoApp(App):
         ("-", "spotify_volume_down", "Vol-"),
         ("P", "spotify_play_url", "Play URL"),
         ("A", "add_field", "Add Field"),
+        ("g", "animation_toggle", "Start/Stop Animation"),
+        ("G", "animation_pick", "Pick Animation"),
     ]
 
     def __init__(self):
@@ -1059,6 +1155,8 @@ class TodoApp(App):
                 yield self.pomo_panel
                 self.spotify_panel = SpotifyPanel()
                 yield self.spotify_panel
+                self.anim_panel = AnimationPanel()
+                yield self.anim_panel
         yield Footer()
 
     def on_mount(self):
@@ -1069,6 +1167,7 @@ class TodoApp(App):
         self.kanban.lists[tc.STATUS_TODO].focus()
         self.set_interval(1.0, self.on_second_tick)
         self.set_interval(2.0, self.check_goals_file)
+        self.set_interval(1.0 / ANIM_FPS, self.anim_panel.tick)
 
     def toast(self, text, style="dim"):
         self.query_one(ToastLine).show(text, style)
@@ -1154,6 +1253,80 @@ class TodoApp(App):
 
         self.push_screen(TextPromptScreen("New field name (short id, e.g. 'networking')", ""), on_name)
 
+    # ---- Animation panel (see animation.py) ----------------------------------
+
+    def action_animation_toggle(self):
+        """g: if a clip is already loaded, start/stop it in place. Otherwise render and
+        play the default clip (first run) so 'g' alone is enough to get something going."""
+        if self.anim_panel.frames:
+            if self.anim_panel.running:
+                self.anim_panel.stop()
+                self.toast("Animation stopped", style="dim")
+            else:
+                self.anim_panel.running = True
+                self.anim_panel.render_panel()
+                self.toast(f"Playing {self.anim_panel.current_name}", style="bold green")
+            return
+        names = anim.list_animations()
+        if not names:
+            self.toast("No animations available in ~/.mtdo/animations", style="bold yellow")
+            return
+        self.start_animation(names[0])
+
+    def action_animation_pick(self):
+        """G: choose which clip to play, or add a new one from a file path."""
+        names = anim.list_animations()
+
+        def on_pick(name):
+            if name is None:
+                return
+            if name == AnimationPickScreen.ADD_NEW:
+                def on_path(path):
+                    if not path:
+                        return
+                    try:
+                        new_name = anim.add_animation_file(path)
+                    except (FileNotFoundError, ValueError) as e:
+                        self.toast(str(e), style="bold red")
+                        return
+                    self.start_animation(new_name)
+                self.push_screen(TextPromptScreen("Path to a video/gif file", ""), on_path)
+                return
+            self.start_animation(name)
+
+        self.push_screen(AnimationPickScreen(names), on_pick)
+
+    def start_animation(self, name):
+        """Kicks off background rendering (ffmpeg + chafa, can take a couple seconds on
+        first play, instant afterward from cache) and plays the clip once ready."""
+        chafa_ok, ffmpeg_ok = anim.check_deps()
+        if not (chafa_ok and ffmpeg_ok):
+            missing = [t for t, ok in (("chafa", chafa_ok), ("ffmpeg", ffmpeg_ok)) if not ok]
+            self.toast(f"Animation needs {' + '.join(missing)} installed (brew install {' '.join(missing)})",
+                       style="bold red")
+            return
+        self.anim_panel.loading = True
+        self.anim_panel.render_panel()
+        self.toast(f"Rendering {name}...", style="bold cyan")
+        self.run_worker(lambda: self._render_animation(name), thread=True, exclusive=True, group="anim_render")
+
+    def _render_animation(self, name):
+        try:
+            frames = anim.get_frames(name, width=ANIM_WIDTH, height=ANIM_HEIGHT, fps=ANIM_FPS)
+        except Exception as e:
+            self.call_from_thread(self._animation_failed, str(e))
+            return
+        self.call_from_thread(self._animation_ready, name, frames)
+
+    def _animation_ready(self, name, frames):
+        self.anim_panel.load(name, frames)
+        self.toast(f"Playing {name}", style="bold green")
+
+    def _animation_failed(self, message):
+        self.anim_panel.loading = False
+        self.anim_panel.render_panel()
+        self.toast(f"Animation render failed: {message}", style="bold red")
+
     def on_second_tick(self):
         self.query_one(ClockHeader).update_clock()
         self.spotify_panel.update_content()
@@ -1225,6 +1398,13 @@ class TodoApp(App):
             if not self.pomo_panel.running:
                 self._set_pomodoro_length(45, 10)
                 self.pomo_panel.running = True
+            if self.anim_panel.frames and not self.anim_panel.running:
+                self.anim_panel.running = True
+                self.anim_panel.render_panel()
+            elif not self.anim_panel.frames:
+                names = anim.list_animations()
+                if names:
+                    self.start_animation(names[0])
         elif not self.pomo_panel.running:
             self._set_pomodoro_length(tc.DEFAULT_POMODORO_MINUTES, tc.DEFAULT_BREAK_MINUTES)
         self.toast("Focus Mode ON -- 45/10 pomodoro started, press f to exit" if self.focus_mode else "Focus Mode off",

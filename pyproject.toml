@@ -25,4 +25,4 @@ mtdo = "mtdo.cli:main"
 where = ["src"]
 
 [tool.setuptools.package-data]
-mtdo = ["*.yaml"]
+mtdo = ["*.yaml", "*.json", "assets/*"]
