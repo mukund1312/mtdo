@@ -82,7 +82,7 @@ def cmd_status(_args):
                 today_lines.append(f"| {tid} | {meta['label']} | {text} |")
 
     if backlog_lines:
-        out.append(f"### Backlog (last {tc.BACKLOG_LOOKBACK_DAYS} days, not ticked)")
+        out.append("### Backlog (rest of this week, not ticked)")
         out.append("| ID | From | Category | What's left |")
         out.append("|---|---|---|---|")
         out.extend(backlog_lines)

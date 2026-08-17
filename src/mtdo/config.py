@@ -201,6 +201,28 @@ def add_category_to_goals(new_category):
         json.dump(goals, f, indent=2, sort_keys=False)
 
 
+def append_extra_task(category, text):
+    """Records a card you added by hand in the app (not from the curriculum) back into
+    goals.json, under that category's 'extra_tasks' list -- so goals.json stays a living
+    record of everything you've actually worked on, including stuff you added yourself,
+    for whoever (you or an AI) reads it later to plan the next week. Deliberately kept
+    separate from 'curriculum': it doesn't touch the cursor/week-batch mechanism, it's
+    just a log. No-op if goals.json or the category doesn't exist (e.g. state.json-only
+    setups, or a category that's since been renamed)."""
+    if not os.path.exists(GOALS_PATH):
+        return
+    with open(GOALS_PATH) as f:
+        goals = json.load(f)
+    for cat in goals.get("categories", []):
+        if cat.get("name") == category:
+            cat.setdefault("extra_tasks", []).append(text)
+            break
+    else:
+        return
+    with open(GOALS_PATH, "w") as f:
+        json.dump(goals, f, indent=2, sort_keys=False)
+
+
 def import_goals(json_path):
     """Builds or updates goals.json from a user-provided JSON file.
 

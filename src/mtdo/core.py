@@ -114,22 +114,37 @@ def is_done(block):
     return block.get("status") == STATUS_DONE
 
 
-def _prefill_blocks(category, cursor_idx):
-    """Returns (blocks, consumed). consumed=True only if a real curriculum item was used
-    for this day -- the caller advances the per-category cursor only in that case, so a
-    day where curriculum has run out never permanently skips an entry you add later."""
+def _iso_week_key(d):
+    year, week, _ = d.isocalendar()
+    return f"{year}-W{week:02d}"
+
+
+def _prefill_week_batch(category, cursor_idx):
+    """Pulls this WHOLE week's curriculum in at once -- one day-list's worth per
+    scheduled weekday, all flattened into one pool -- rather than doling out a single
+    day-list per day. This is the "menu card" model: everything due this week is visible
+    and workable from day one, so you can do more on Monday and less on Wednesday and
+    still finish by Saturday, instead of being locked to today's specific slice.
+    Returns (blocks, day_lists_consumed). day_lists_consumed=0 means nothing was pulled
+    from curriculum (fixed_labels category, or curriculum exhausted) -- the caller only
+    advances the cursor and marks the week as claimed when this is > 0."""
     meta = CATEGORY_META[category]
     if meta["fixed_labels"] is not None:
-        return [_make_block(text=label) for label in meta["fixed_labels"]], False
+        return [_make_block(text=label) for label in meta["fixed_labels"]], 0
 
     curriculum = meta["curriculum"]
-    if curriculum and cursor_idx < len(curriculum):
-        blocks = [_make_block(text=t) for t in curriculum[cursor_idx]]
-        while len(blocks) < meta["min_blocks"]:
-            blocks.append(_make_block())
-        return blocks, True
+    if not curriculum:
+        return [_make_block() for _ in range(meta["min_blocks"])], 0
 
-    return [_make_block() for _ in range(meta["min_blocks"])], False
+    days_per_week = max(1, len(meta["days"]))
+    chunk = curriculum[cursor_idx:cursor_idx + days_per_week]
+    if not chunk:
+        return [_make_block() for _ in range(meta["min_blocks"])], 0
+
+    blocks = [_make_block(text=t) for day_list in chunk for t in day_list]
+    while len(blocks) < meta["min_blocks"]:
+        blocks.append(_make_block())
+    return blocks, len(chunk)
 
 
 # ---- State I/O --------------------------------------------------------------
@@ -163,20 +178,31 @@ def save_state(state):
 
 
 def ensure_day_registered(state, d):
+    """Registers today's (or a backfilled day's) blocks per scheduled category. For
+    curriculum categories, the first time a category comes due in a new ISO week, this
+    pulls that WHOLE week's curriculum in as one pool (see _prefill_week_batch) -- later
+    days that week just register empty (nothing new), since the pool from day one already
+    carries forward through the week (see blocks_for_category's week-aware lookback)."""
     plan_start = _resolve_plan_start(state)
     key = d.isoformat()
     day = state.setdefault(key, {})
     cursor = state.setdefault("_meta", {}).setdefault("curriculum_cursor", {})
+    week_claimed = state.setdefault("_meta", {}).setdefault("curriculum_week", {})
+    this_week = _iso_week_key(d)
     for category in categories_for_day(d):
         if category in day:
             continue
         if d < plan_start:
             day[category] = [_make_block() for _ in range(CATEGORY_META[category]["min_blocks"])]
             continue
+        if week_claimed.get(category) == this_week:
+            day[category] = []
+            continue
         idx = cursor.get(category, 0)
-        blocks, consumed = _prefill_blocks(category, idx)
+        blocks, consumed = _prefill_week_batch(category, idx)
         if consumed:
-            cursor[category] = idx + 1
+            cursor[category] = idx + consumed
+            week_claimed[category] = this_week
         day[category] = blocks
     return state
 
@@ -205,6 +231,8 @@ def advance_status(state, date_key, category, idx):
     elif new_status == STATUS_DONE and cur == STATUS_IN_PROGRESS:
         blk["elapsed_seconds"] = blk.get("elapsed_seconds", 0) + _seconds_since(blk.get("started_at"))
         blk["started_at"] = None
+    if new_status == STATUS_DONE:
+        blk["completed_at"] = datetime.datetime.now().isoformat()
     blk["status"] = new_status
     if new_status == STATUS_DONE and category == "jobs":
         _maybe_link_job_to_crm(state, blk)
@@ -250,6 +278,7 @@ def regress_status(state, date_key, category, idx):
         blk["started_at"] = None
     elif cur == STATUS_DONE and new_status == STATUS_IN_PROGRESS:
         blk["started_at"] = datetime.datetime.now().isoformat()
+        blk["completed_at"] = None
     blk["status"] = new_status
     return new_status
 
@@ -318,8 +347,16 @@ def delete_block(state, date_key, category, idx):
 
 def blocks_for_category(state, category, today, lookback=None):
     """Rows for display: unfinished blocks from the last `lookback` days first
-    (tagged carried), then today's own blocks (tagged not-carried), in order."""
-    lookback = BACKLOG_LOOKBACK_DAYS if lookback is None else lookback
+    (tagged carried), then today's own blocks (tagged not-carried), in order.
+
+    Default lookback is week-aware, not a fixed day count: it reaches back to Monday of
+    the current week (today.weekday() days back) so a whole week's curriculum pool (see
+    ensure_day_registered) stays visible and workable any day you get to it, right up to
+    Saturday's completion check. It resets to 0 on Monday -- last week's leftovers don't
+    bleed into a new week's board; anything chronically missed is what the streak/slippage
+    tracking and weekly report are for instead. Pass an explicit lookback to override this
+    (e.g. BACKLOG_LOOKBACK_DAYS) for callers that want a fixed window regardless of weekday."""
+    lookback = today.weekday() if lookback is None else lookback
     rows = []
     for i in range(lookback, 0, -1):
         d = today - datetime.timedelta(days=i)
@@ -432,6 +469,27 @@ def compute_week_activity(state, today):
         done, total = day_completion(state, d)
         rows.append((DAY_NAMES[i][:2], done, total, d == today, d))
     return rows
+
+
+def compute_week_progress(state, today, through_today=True):
+    """{category: (done, total)} across the current week -- Monday through today by
+    default, or the full Monday-Sunday week if through_today=False (used for the Saturday
+    completion check, which should count everything claimed for the week even if today
+    is earlier than Sunday). This is the single source of truth behind the Stats panel's
+    weekly bars and the Saturday check -- both read the same numbers."""
+    monday = today - datetime.timedelta(days=today.weekday())
+    end = today if through_today else monday + datetime.timedelta(days=6)
+    per_category = {}
+    d = monday
+    while d <= end:
+        for category, blocks in state.get(d.isoformat(), {}).items():
+            if category in NON_DAY_KEYS:
+                continue
+            entry = per_category.setdefault(category, [0, 0])
+            entry[1] += len(blocks)
+            entry[0] += sum(1 for b in blocks if is_done(b))
+        d += datetime.timedelta(days=1)
+    return per_category
 
 
 def compute_month_heatmap(state, year, month):
@@ -644,6 +702,106 @@ def save_report_txt(state, today):
     path = os.path.join(appconfig.REPORTS_DIR, f"report_{today.isoformat()}.txt")
     with open(path, "w") as f:
         f.write(format_report_text(state, today))
+    return path
+
+
+def compute_weekly_report_data(state, today):
+    """Everything a weekly report (or an AI reading one) needs: per category, every task
+    assigned this week with when it was assigned, when (if) it was actually completed,
+    time spent, and notes -- plus which distinct days anything got completed on, so
+    pacing (spread across the week vs crammed into one sitting) can be read off directly."""
+    monday = today - datetime.timedelta(days=today.weekday())
+    per_category = {}
+    for i in range(7):
+        d = monday + datetime.timedelta(days=i)
+        key = d.isoformat()
+        for category, blocks in state.get(key, {}).items():
+            if category in NON_DAY_KEYS:
+                continue
+            entry = per_category.setdefault(category, {"tasks": [], "done_days": set()})
+            for blk in blocks:
+                completed_date = None
+                if is_done(blk) and blk.get("completed_at"):
+                    completed_date = blk["completed_at"][:10]
+                    entry["done_days"].add(completed_date)
+                entry["tasks"].append({
+                    "text": blk["text"] or "(untitled)",
+                    "status": blk.get("status", STATUS_TODO),
+                    "assigned_day": d.strftime("%a %b %d"),
+                    "completed_day": completed_date,
+                    "elapsed_seconds": blk.get("elapsed_seconds", 0),
+                    "notes": blk.get("notes", ""),
+                })
+    return per_category, monday
+
+
+def _fmt_hm(seconds):
+    h, rem = divmod(int(seconds), 3600)
+    m = rem // 60
+    return f"{h}h {m}m" if h else f"{m}m"
+
+
+def format_weekly_report_text(state, today):
+    """The Saturday checkpoint report: per field, done/total, time spent, a plain-language
+    pacing read (spread across the week vs done in one sitting), and every task with its
+    assigned/completed day -- detailed enough for an AI to read and actually assess
+    consistency, not just tally a percentage."""
+    per_category, monday = compute_weekly_report_data(state, today)
+    week_end = monday + datetime.timedelta(days=6)
+    lines = ["=" * 60, "WEEKLY REPORT",
+             f"Week of {monday.strftime('%b %d')} - {week_end.strftime('%b %d, %Y')}",
+             f"Goal: {GOAL_LINE}", "=" * 60, ""]
+    if not per_category:
+        lines.append("Nothing tracked this week yet.")
+        return "\n".join(lines)
+
+    total_done, total_all = 0, 0
+    for category in CATEGORY_ORDER:
+        data = per_category.get(category)
+        if not data or not data["tasks"]:
+            continue
+        label = CATEGORY_META[category]["label"]
+        tasks = data["tasks"]
+        done_count = sum(1 for t in tasks if t["status"] == STATUS_DONE)
+        total_done += done_count
+        total_all += len(tasks)
+        total_seconds = sum(t["elapsed_seconds"] for t in tasks)
+
+        lines.append(f"## {label} -- {done_count}/{len(tasks)} done, {_fmt_hm(total_seconds)} spent")
+        n_days = len(data["done_days"])
+        if done_count == 0:
+            pacing = "Nothing completed yet."
+        elif n_days <= 1:
+            only_day = next(iter(data["done_days"]))
+            pacing = f"All {done_count} done in a single sitting ({only_day}) -- not spread across the week."
+        elif n_days >= 5:
+            pacing = f"Spread across {n_days} different days -- consistent, not crammed."
+        else:
+            pacing = f"Completed across {n_days} different days."
+        lines.append(f"  {pacing}")
+        for t in tasks:
+            mark = "x" if t["status"] == STATUS_DONE else " "
+            when = f"done {t['completed_day']}" if t["completed_day"] else f"assigned {t['assigned_day']}, not done"
+            time_str = f", {_fmt_hm(t['elapsed_seconds'])}" if t["elapsed_seconds"] else ""
+            note_str = f" -- note: {t['notes']}" if t["notes"] else ""
+            lines.append(f"  [{mark}] {t['text']} ({when}{time_str}){note_str}")
+        lines.append("")
+
+    rate = round(total_done / total_all * 100) if total_all else 0
+    lines.append(f"Week total: {total_done}/{total_all} ({rate}%)")
+    lines.append("")
+    lines.append("For an AI reading this: assess consistency (spread across the week vs")
+    lines.append("crammed into one day), time spent vs. what was planned, and anything")
+    lines.append("that slipped -- then suggest concrete adjustments for next week.")
+    return "\n".join(lines)
+
+
+def save_weekly_report_txt(state, today):
+    os.makedirs(appconfig.REPORTS_DIR, exist_ok=True)
+    monday = today - datetime.timedelta(days=today.weekday())
+    path = os.path.join(appconfig.REPORTS_DIR, f"weekly_report_{monday.isoformat()}.txt")
+    with open(path, "w") as f:
+        f.write(format_weekly_report_text(state, today))
     return path
 
 

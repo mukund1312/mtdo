@@ -11,7 +11,13 @@
 
     "rule_3_percentage_is_automatic": "You do NOT need to configure anything for the weekly completion percentage. The app's right-side Stats panel automatically computes, for every field with at least one card this week (Monday through today): (cards marked done) / (total cards) as a bar + percentage. This is fully automatic from your field's actual cards -- just make sure each subject is its own field (see rule 1) so its percentage isn't blended with something else.",
 
-    "rule_4_adding_fields_later": "Two ways to add a brand new field after you've already started the week: (a) edit this JSON, append a new object to \"categories\", then run `mtdo import goals.json` -- this appends curriculum safely without disturbing days you've already tracked, and auto-snapshots your previous plan for history. (b) press Shift+A inside the running app to add a field on the spot -- it writes straight into ~/.mtdo/goals.json and shows up immediately, no restart needed. Either way, the app also polls goals.json every ~2 seconds and live-reloads if you hand-edit the file directly while the app is open -- you never need to restart mtdo after editing goals.json."
+    "rule_4_adding_fields_later": "Two ways to add a brand new field after you've already started the week: (a) edit this JSON, append a new object to \"categories\", then run `mtdo import goals.json` -- this appends curriculum safely without disturbing days you've already tracked, and auto-snapshots your previous plan for history. (b) press Shift+A inside the running app to add a field on the spot -- it writes straight into ~/.mtdo/goals.json and shows up immediately, no restart needed. Either way, the app also polls goals.json every ~2 seconds and live-reloads if you hand-edit the file directly while the app is open -- you never need to restart mtdo after editing goals.json.",
+
+    "rule_5_curriculum_is_a_weekly_menu_not_a_daily_lock": "IMPORTANT for whoever (AI or human) writes the curriculum arrays below: each inner list is still 'one day's worth of items', but the app does NOT force you to do that specific list on that specific calendar day. The first time a field comes due in a new week, the app pulls in ALL of that week's day-lists at once (however many day-lists = that field's number of scheduled days per week) as one combined pool -- think of it as a menu for the week, not a daily assignment. You can do more on Monday and less on Wednesday, or all of it in one sitting Saturday morning -- whatever you actually do gets carried forward and stays visible/workable all week. The only thing that matters is: by Saturday, is the week's menu finished? So when writing curriculum, think in WEEKLY chunks: 'this field runs N days/week, so every N consecutive inner lists = one week's menu' -- the split between those N lists barely matters since they all become available together anyway. Keep splitting content across roughly N items per week purely so review/pacing reads naturally in the weekly report, not because the app enforces day-by-day order.",
+
+    "rule_6_saturday_check_and_weekly_report": "Every Saturday, opening the app shows a toast summarizing that week's menu: done/total per field, flagged if incomplete, e.g. 'DSA 12/12  SQL 2/4 ⚠'. It also auto-saves a detailed weekly_report_<monday-date>.txt to ~/.mtdo/reports/ -- per field: done/total, time spent, EVERY task with which day it was actually completed, and a plain-language pacing read ('spread across 4 different days' vs 'all done in a single sitting -- not spread across the week'). Hand that file to an AI assistant to get real coaching on consistency, not just a percentage.",
+
+    "rule_7_two_way_sync_for_ad_hoc_additions": "Cards you add directly in the app (press 'a', pick a field, type a task that wasn't in this JSON's curriculum) get written back into goals.json automatically, under that field's \"extra_tasks\" list -- a plain running log, separate from \"curriculum\" so it never disturbs the cursor/week-batch mechanism above. This means goals.json stays a living record of everything you've actually worked on, not just what was originally planned -- useful context for whoever (you or an AI) plans next week's curriculum."
   },
 
   "app_name": "MY OS",
@@ -41,11 +47,12 @@
       "_score_weight_note": "Contribution to the daily 0-100 score. All fields' weights should sum to ~100. If you split one subject into two fields (rule_1), split its weight between them too.",
 
       "curriculum": [
-        ["First day's task", "Second task for the first day"],
-        ["Second day's task"],
-        ["Third day's task"]
+        ["Week 1 item", "Week 1 item"],
+        ["Week 1 item"],
+        ["Week 2 item", "Week 2 item"],
+        ["Week 2 item"]
       ],
-      "_curriculum_note": "One list of cards per scheduled day, consumed in order starting your first day using the app. Each inner list is that day's subfields/cards. Omit this key entirely for a field with no set curriculum -- you'll just add cards yourself each day (make sure addable stays true if so)."
+      "_curriculum_note": "See rule_5 above -- this field's days=[0,1,2,3,4] means 5 scheduled days/week, so every 5 consecutive inner lists = one week's menu, all pulled in together and workable any day that week (not locked to a specific weekday). This example only shows 2 lists per 'week' to keep it short -- yours should have as many inner lists per week as you have scheduled days. Omit this key entirely for a field with no set curriculum -- you'll just add cards yourself each day (make sure addable stays true if so)."
     },
     {
       "name": "example_fixed_checkin",

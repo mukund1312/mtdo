@@ -874,6 +874,8 @@ class KanbanBoard(Horizontal):
                 return
             tc.add_block(self.app_ref.state, key, category, value)
             tc.save_state(self.app_ref.state)
+            appconfig.append_extra_task(category, value)
+            self.app_ref.mark_goals_write()
             self.rebuild()
             self.app_ref.refresh_side_panels()
 
@@ -897,19 +899,12 @@ class KanbanBoard(Horizontal):
 
 class StatsPanel(Static):
     def update_content(self, state, today):
-        monday = today - datetime.timedelta(days=today.weekday())
+        week_progress = tc.compute_week_progress(state, today)
         cat_table = Table.grid(padding=(0, 1))
         cat_table.add_column()
         cat_table.add_column()
         for category in tc.CATEGORY_ORDER:
-            done, total = 0, 0
-            d = monday
-            while d <= today:
-                key = d.isoformat()
-                blocks = state.get(key, {}).get(category, [])
-                total += len(blocks)
-                done += sum(1 for b in blocks if tc.is_done(b))
-                d += datetime.timedelta(days=1)
+            done, total = week_progress.get(category, (0, 0))
             if total == 0:
                 continue
             color = CATEGORY_COLORS.get(category, "white")
@@ -1216,8 +1211,16 @@ class TodoApp(App):
     def on_mount(self):
         saved = tc.maybe_autosave_daily_report(self.state, self.today)
         self.refresh_side_panels()
+        messages, style = [], "bold cyan"
         if saved:
-            self.toast(f"Auto-saved yesterday's report -> {saved}", style="bold cyan")
+            messages.append(f"Auto-saved yesterday's report -> {saved}")
+        if self.today.weekday() == 5:  # Saturday -- the week's completion checkpoint
+            check, all_done = self._weekly_check_summary()
+            report_path = tc.save_weekly_report_txt(self.state, self.today)
+            messages.append(f"{check}  (full report -> {report_path})")
+            style = "bold green" if all_done else "bold yellow"
+        if messages:
+            self.toast("   |   ".join(messages), style=style)
         self.kanban.lists[tc.STATUS_TODO].focus()
         self.set_interval(1.0, self.on_second_tick)
         self.set_interval(2.0, self.check_goals_file)
@@ -1232,6 +1235,34 @@ class TodoApp(App):
         self.active_task_panel.update_content(self.state, self.today)
         self.pomo_panel.render_panel(tc.get_pomodoro_count(self.state, self.today))
         self.spotify_panel.refresh_spotify_info()
+
+    def _weekly_check_summary(self):
+        """Saturday's completion checkpoint: this week's done/total per field, using the
+        same numbers as the Stats panel's weekly bars (see tc.compute_week_progress).
+        Returns (summary_text, all_done)."""
+        progress = tc.compute_week_progress(self.state, self.today)
+        parts, all_done = [], True
+        for category in tc.CATEGORY_ORDER:
+            done, total = progress.get(category, (0, 0))
+            if total == 0:
+                continue
+            label = tc.CATEGORY_META[category]["label"].split(" ")[0].split("/")[0]
+            ok = done >= total
+            all_done = all_done and ok
+            parts.append(f"{label} {done}/{total}{'' if ok else ' ⚠'}")
+        if not parts:
+            return "Week check: nothing tracked yet this week.", True
+        return "Week check (Sat): " + "  ".join(parts), all_done
+
+    def mark_goals_write(self):
+        """Call after writing to goals.json outside of reload_from_goals (e.g.
+        append_extra_task) so the next check_goals_file poll doesn't mistake our own
+        write for an external edit and fire a redundant "goals.json changed" toast --
+        we already know what changed and don't need a full reconfigure for it."""
+        try:
+            self._goals_mtime = os.path.getmtime(appconfig.GOALS_PATH)
+        except OSError:
+            pass
 
     def check_goals_file(self):
         """Polled every 2s: if goals.json changed on disk since we last read it (hand-edited,
