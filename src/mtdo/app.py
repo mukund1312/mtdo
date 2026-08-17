@@ -289,6 +289,100 @@ class CategoryPickScreen(ModalScreen):
             self.dismiss(None)
 
 
+class WeeklyMenuScreen(ModalScreen):
+    """'a' opens here whenever there's a curriculum menu to pick from (see
+    core.get_weekly_menu): every item due this week, across every curriculum field, in
+    one list. Already-picked items (on today's board, or sitting undone in the backlog
+    from earlier this week) show grayed-out and struck-through -- you can look at them but
+    not re-pick them. Space toggles selection on an unpicked item; the "Add N selected"
+    row (updates live as you toggle) commits them all to today's board at once. "+ Type my
+    own card..." and "+ New field..." stay available as escape hatches for anything not on
+    the menu. Dismisses with a dict describing what to do, or None on Escape."""
+
+    ROW_CUSTOM = "__custom__"
+    ROW_NEW_FIELD = "__new_field__"
+    ROW_CONFIRM = "__confirm__"
+
+    CSS = """
+    WeeklyMenuScreen { align: center middle; }
+    #menu-box { width: 78; height: auto; max-height: 34; border: round magenta; padding: 1 2; background: $panel; }
+    """
+
+    def __init__(self, entries):
+        """entries: list of (category, item_index, text, already_picked)."""
+        super().__init__()
+        self.entries = entries
+        self.picked_lookup = {(c, i): picked for c, i, _text, picked in entries}
+        self.selected = set()
+
+    def compose(self) -> ComposeResult:
+        with Center():
+            with Middle():
+                with Vertical(id="menu-box"):
+                    yield Static("This Week's Menu", classes="dim")
+                    self.lv = VimListView()
+                    yield self.lv
+                    yield Static("space: toggle    enter: choose row    escape: cancel", classes="dim")
+
+    def on_mount(self):
+        self.rebuild()
+        self.lv.focus()
+
+    def rebuild(self):
+        prev_index = self.lv.index if self.lv.index is not None else 0
+        self.lv.clear()
+        items = []
+        for category, idx, text, picked in self.entries:
+            color = CATEGORY_COLORS.get(category, "white")
+            tag = tc.CATEGORY_META[category]["label"].split(" ")[0].split("/")[0]
+            badge = Text(f" {tag} ", style=f"bold white on {color}")
+            if picked:
+                body = Text.assemble(badge, "  ", ("✓ " + text, "dim strike"), "  (already in your plate)")
+            else:
+                mark = "[x]" if (category, idx) in self.selected else "[ ]"
+                body = Text.assemble(badge, f"  {mark} ", text)
+            items.append(ListItem(Label(body), name=f"menu:{category}:{idx}"))
+        items.append(ListItem(
+            Label(Text(f"✔ Add {len(self.selected)} selected", style="bold green")), name=self.ROW_CONFIRM))
+        items.append(ListItem(Label(Text("+ Type my own card...", style="bold cyan")), name=self.ROW_CUSTOM))
+        items.append(ListItem(Label(Text("+ New field...", style="bold magenta")), name=self.ROW_NEW_FIELD))
+        self.lv.extend(items)
+        if items:
+            self.lv.index = min(prev_index, len(items) - 1)
+
+    def _toggle_highlighted(self):
+        item = self.lv.highlighted_child
+        if item is None or not item.name or not item.name.startswith("menu:"):
+            return
+        _, category, idx_s = item.name.split(":")
+        key = (category, int(idx_s))
+        if self.picked_lookup.get(key):
+            return
+        if key in self.selected:
+            self.selected.discard(key)
+        else:
+            self.selected.add(key)
+        self.rebuild()
+
+    def on_key(self, event):
+        if event.key == "escape":
+            self.dismiss(None)
+        elif event.key == "space":
+            self._toggle_highlighted()
+            event.stop()
+
+    def on_list_view_selected(self, event: ListView.Selected):
+        name = event.item.name
+        if name == self.ROW_CONFIRM:
+            self.dismiss({"action": "confirm", "picks": list(self.selected)})
+        elif name == self.ROW_CUSTOM:
+            self.dismiss({"action": "custom"})
+        elif name == self.ROW_NEW_FIELD:
+            self.dismiss({"action": "new_field"})
+        elif name and name.startswith("menu:"):
+            self._toggle_highlighted()
+
+
 class AnimationPickScreen(ModalScreen):
     """Modal: pick which animation clip to play, or add a new one from a file path.
     Dismisses with a filename (inside ~/.mtdo/animations/) to play, or None on cancel."""
@@ -606,7 +700,7 @@ HELP_SECTIONS = [
         ("u", "Send the highlighted card back one column"),
         ("t", "Edit a card's text (locked on fixed-label categories)"),
         ("n", "Edit a card's notes"),
-        ("a", "Add a new card -- always asks which field, with a \"+ New field...\" option to create one on the spot"),
+        ("a", "Open this week's menu (space to select, one or several) -- or type a free-text card / create a new field"),
         ("d", "Delete the highlighted card"),
     ]),
     ("Career CRM (press c to open)", [
@@ -842,11 +936,41 @@ class KanbanBoard(Horizontal):
         self.app.push_screen(TextPromptScreen("Notes", current), on_result)
 
     def action_add_card(self):
-        """Always asks which field the new card belongs to -- never silently inferred
-        from whatever card happens to be highlighted, so 'a' never surprises you by
-        landing on the wrong field. Picking "+ New field..." creates a field on the spot
-        and immediately asks for its first card, so DSA-style "create field, then add
-        sub-cards to it" is a single flow."""
+        """If any curriculum field has a weekly menu (picked or not), 'a' opens that menu
+        first -- see WeeklyMenuScreen. Otherwise (no curriculum anywhere yet) it falls
+        straight back to the plain field-picker + free-text flow."""
+        state = self.app_ref.state
+        today = self.app_ref.today
+        entries = []
+        for category in tc.CATEGORY_ORDER:
+            for idx, item in enumerate(tc.get_weekly_menu(state, today, category)):
+                entries.append((category, idx, item["text"], item["picked"]))
+
+        if not entries:
+            self._open_field_picker_for_custom_card()
+            return
+
+        def on_result(result):
+            if result is None:
+                return
+            if result["action"] == "confirm":
+                picks = sorted(result["picks"])
+                added = sum(1 for category, idx in picks if tc.pick_menu_item(state, today, category, idx))
+                if added:
+                    tc.save_state(state)
+                    self.rebuild()
+                    self.app_ref.refresh_side_panels()
+                    self.app_ref.toast(f"Added {added} card(s) from this week's menu", style="bold green")
+            elif result["action"] == "custom":
+                self._open_field_picker_for_custom_card()
+            elif result["action"] == "new_field":
+                self.app_ref.create_field(on_created=self._add_card_to_category)
+
+        self.app.push_screen(WeeklyMenuScreen(entries), on_result)
+
+    def _open_field_picker_for_custom_card(self):
+        """Escape hatch for a free-text card not on any menu -- always asks which field,
+        never silently inferred from whatever's highlighted."""
         categories = tc.categories_for_day(self.app_ref.today)
 
         def on_pick(category):

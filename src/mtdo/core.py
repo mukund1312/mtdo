@@ -83,8 +83,22 @@ def configure(cfg):
 
 
 def categories_for_day(d):
+    """Which category columns show up on the board today. Fixed-labels categories (Gym,
+    a daily check-in, ...) still respect their 'days' schedule -- those are genuine
+    recurring daily items. Curriculum categories are always shown every day regardless of
+    'days': curriculum content is no longer tied to specific calendar days at all (see the
+    weekly menu below) -- 'days' for those only sets how many items make up one week's
+    menu, not which days they're visible."""
     wd = d.weekday()
-    return [c for c in CATEGORY_ORDER if wd in CATEGORY_META[c]["days"]]
+    result = []
+    for c in CATEGORY_ORDER:
+        meta = CATEGORY_META[c]
+        if meta["fixed_labels"] is not None:
+            if wd in meta["days"]:
+                result.append(c)
+        else:
+            result.append(c)
+    return result
 
 
 def get_today():
@@ -119,32 +133,66 @@ def _iso_week_key(d):
     return f"{year}-W{week:02d}"
 
 
-def _prefill_week_batch(category, cursor_idx):
-    """Pulls this WHOLE week's curriculum in at once -- one day-list's worth per
-    scheduled weekday, all flattened into one pool -- rather than doling out a single
-    day-list per day. This is the "menu card" model: everything due this week is visible
-    and workable from day one, so you can do more on Monday and less on Wednesday and
-    still finish by Saturday, instead of being locked to today's specific slice.
-    Returns (blocks, day_lists_consumed). day_lists_consumed=0 means nothing was pulled
-    from curriculum (fixed_labels category, or curriculum exhausted) -- the caller only
-    advances the cursor and marks the week as claimed when this is > 0."""
+def _prefill_fixed_daily(category):
+    """Fixed-labels categories (Gym, a daily check-in, ...) still auto-fill every
+    scheduled day exactly as before -- these are genuine daily recurring items, not
+    curriculum content, so the weekly-menu/pick model below doesn't apply to them."""
     meta = CATEGORY_META[category]
-    if meta["fixed_labels"] is not None:
-        return [_make_block(text=label) for label in meta["fixed_labels"]], 0
+    return [_make_block(text=label) for label in meta["fixed_labels"]]
 
+
+def _ensure_weekly_menu(state, category, this_week):
+    """Populates (once per ISO week, idempotent after that) this category's weekly menu:
+    however many curriculum day-lists make up one week (len(meta['days']), or 7 if unset)
+    pulled from wherever the cursor left off, flattened into a flat list of pickable
+    items. This does NOT put anything onto the board -- see pick_menu_item for that.
+    Categories with no curriculum at all get an empty, permanently-this-week menu (nothing
+    to pick; addable lets you type your own cards directly instead)."""
+    menu = state.setdefault("_meta", {}).setdefault("weekly_menu", {})
+    entry = menu.get(category)
+    if entry and entry.get("week") == this_week:
+        return entry
+
+    meta = CATEGORY_META[category]
     curriculum = meta["curriculum"]
-    if not curriculum:
-        return [_make_block() for _ in range(meta["min_blocks"])], 0
+    items = []
+    if curriculum:
+        cursor = state["_meta"].setdefault("curriculum_cursor", {})
+        idx = cursor.get(category, 0)
+        days_per_week = max(1, len(meta["days"])) if meta["days"] else 7
+        chunk = curriculum[idx:idx + days_per_week]
+        if chunk:
+            items = [{"text": t, "picked": False} for day_list in chunk for t in day_list]
+            cursor[category] = idx + len(chunk)
 
-    days_per_week = max(1, len(meta["days"]))
-    chunk = curriculum[cursor_idx:cursor_idx + days_per_week]
-    if not chunk:
-        return [_make_block() for _ in range(meta["min_blocks"])], 0
+    entry = {"week": this_week, "items": items}
+    menu[category] = entry
+    return entry
 
-    blocks = [_make_block(text=t) for day_list in chunk for t in day_list]
-    while len(blocks) < meta["min_blocks"]:
-        blocks.append(_make_block())
-    return blocks, len(chunk)
+
+def get_weekly_menu(state, today, category):
+    """The current week's menu for a category: every curriculum item due this week,
+    picked or not (picked ones stay in the list so the menu screen can show them
+    grayed-out rather than just disappearing). Empty for fixed-labels or no-curriculum
+    categories -- there's nothing to pick there."""
+    meta = CATEGORY_META.get(category)
+    if meta is None or meta["fixed_labels"] is not None or not meta["curriculum"]:
+        return []
+    entry = _ensure_weekly_menu(state, category, _iso_week_key(today))
+    return entry["items"]
+
+
+def pick_menu_item(state, today, category, item_index):
+    """Moves one weekly-menu item onto today's board as a real, workable card. Returns
+    False (no-op) if it's already been picked -- callers should already be filtering
+    those out of what's selectable, this is just a safety net."""
+    entry = _ensure_weekly_menu(state, category, _iso_week_key(today))
+    item = entry["items"][item_index]
+    if item["picked"]:
+        return False
+    item["picked"] = True
+    add_block(state, today.isoformat(), category, item["text"])
+    return True
 
 
 # ---- State I/O --------------------------------------------------------------
@@ -178,32 +226,35 @@ def save_state(state):
 
 
 def ensure_day_registered(state, d):
-    """Registers today's (or a backfilled day's) blocks per scheduled category. For
-    curriculum categories, the first time a category comes due in a new ISO week, this
-    pulls that WHOLE week's curriculum in as one pool (see _prefill_week_batch) -- later
-    days that week just register empty (nothing new), since the pool from day one already
-    carries forward through the week (see blocks_for_category's week-aware lookback)."""
+    """Registers today's (or a backfilled day's) blocks per category.
+
+    Fixed-labels categories (Gym, a daily check-in, ...) still auto-fill every scheduled
+    day exactly as before -- those are genuine daily recurring items.
+
+    Curriculum categories start the day BLANK -- nothing gets auto-added to the board.
+    Instead, this week's curriculum populates a separate weekly menu (see
+    _ensure_weekly_menu / get_weekly_menu) that you pick from explicitly (the app's 'a'
+    add-card flow); picking a menu item is what actually puts a card on the board (see
+    pick_menu_item). Whatever you don't finish still carries forward into the backlog on
+    later days exactly as any other card would -- picking from the menu is the only thing
+    that's new here, carry-forward is unchanged."""
     plan_start = _resolve_plan_start(state)
     key = d.isoformat()
     day = state.setdefault(key, {})
-    cursor = state.setdefault("_meta", {}).setdefault("curriculum_cursor", {})
-    week_claimed = state.setdefault("_meta", {}).setdefault("curriculum_week", {})
     this_week = _iso_week_key(d)
     for category in categories_for_day(d):
         if category in day:
             continue
+        meta = CATEGORY_META[category]
         if d < plan_start:
-            day[category] = [_make_block() for _ in range(CATEGORY_META[category]["min_blocks"])]
+            day[category] = [_make_block() for _ in range(meta["min_blocks"])]
             continue
-        if week_claimed.get(category) == this_week:
-            day[category] = []
+        if meta["fixed_labels"] is not None:
+            day[category] = _prefill_fixed_daily(category)
             continue
-        idx = cursor.get(category, 0)
-        blocks, consumed = _prefill_week_batch(category, idx)
-        if consumed:
-            cursor[category] = idx + consumed
-            week_claimed[category] = this_week
-        day[category] = blocks
+        if meta["curriculum"]:
+            _ensure_weekly_menu(state, category, this_week)
+        day[category] = []
     return state
 
 
@@ -476,7 +527,13 @@ def compute_week_progress(state, today, through_today=True):
     default, or the full Monday-Sunday week if through_today=False (used for the Saturday
     completion check, which should count everything claimed for the week even if today
     is earlier than Sunday). This is the single source of truth behind the Stats panel's
-    weekly bars and the Saturday check -- both read the same numbers."""
+    weekly bars and the Saturday check -- both read the same numbers.
+
+    total counts the FULL weekly menu from day one, not just what's been picked onto the
+    board so far -- still-unpicked items count toward total (not done) so e.g. "DSA 0/12"
+    is accurate Monday morning, not just once you start picking. Picked items are already
+    counted via their board blocks below; this only adds the ones NOT yet picked, so
+    nothing is double-counted."""
     monday = today - datetime.timedelta(days=today.weekday())
     end = today if through_today else monday + datetime.timedelta(days=6)
     per_category = {}
@@ -489,6 +546,16 @@ def compute_week_progress(state, today, through_today=True):
             entry[1] += len(blocks)
             entry[0] += sum(1 for b in blocks if is_done(b))
         d += datetime.timedelta(days=1)
+
+    this_week = _iso_week_key(today)
+    for category, menu_entry in state.get("_meta", {}).get("weekly_menu", {}).items():
+        if menu_entry.get("week") != this_week:
+            continue
+        unpicked = sum(1 for item in menu_entry["items"] if not item["picked"])
+        if unpicked:
+            entry = per_category.setdefault(category, [0, 0])
+            entry[1] += unpicked
+
     return per_category
 
 
@@ -708,8 +775,8 @@ def save_report_txt(state, today):
 def compute_weekly_report_data(state, today):
     """Everything a weekly report (or an AI reading one) needs: per category, every task
     assigned this week with when it was assigned, when (if) it was actually completed,
-    time spent, and notes -- plus which distinct days anything got completed on, so
-    pacing (spread across the week vs crammed into one sitting) can be read off directly."""
+    time spent, and notes -- plus which distinct days anything got completed on (for
+    pacing), and how many of this week's menu items were never even picked."""
     monday = today - datetime.timedelta(days=today.weekday())
     per_category = {}
     for i in range(7):
@@ -718,7 +785,7 @@ def compute_weekly_report_data(state, today):
         for category, blocks in state.get(key, {}).items():
             if category in NON_DAY_KEYS:
                 continue
-            entry = per_category.setdefault(category, {"tasks": [], "done_days": set()})
+            entry = per_category.setdefault(category, {"tasks": [], "done_days": set(), "unpicked": 0})
             for blk in blocks:
                 completed_date = None
                 if is_done(blk) and blk.get("completed_at"):
@@ -732,6 +799,16 @@ def compute_weekly_report_data(state, today):
                     "elapsed_seconds": blk.get("elapsed_seconds", 0),
                     "notes": blk.get("notes", ""),
                 })
+
+    this_week = _iso_week_key(today)
+    for category, menu_entry in state.get("_meta", {}).get("weekly_menu", {}).items():
+        if menu_entry.get("week") != this_week:
+            continue
+        unpicked = sum(1 for item in menu_entry["items"] if not item["picked"])
+        if unpicked:
+            per_category.setdefault(category, {"tasks": [], "done_days": set(), "unpicked": 0})
+            per_category[category]["unpicked"] = unpicked
+
     return per_category, monday
 
 
@@ -758,16 +835,18 @@ def format_weekly_report_text(state, today):
     total_done, total_all = 0, 0
     for category in CATEGORY_ORDER:
         data = per_category.get(category)
-        if not data or not data["tasks"]:
+        unpicked = data["unpicked"] if data else 0
+        if not data or (not data["tasks"] and not unpicked):
             continue
         label = CATEGORY_META[category]["label"]
         tasks = data["tasks"]
         done_count = sum(1 for t in tasks if t["status"] == STATUS_DONE)
+        week_total = len(tasks) + unpicked
         total_done += done_count
-        total_all += len(tasks)
+        total_all += week_total
         total_seconds = sum(t["elapsed_seconds"] for t in tasks)
 
-        lines.append(f"## {label} -- {done_count}/{len(tasks)} done, {_fmt_hm(total_seconds)} spent")
+        lines.append(f"## {label} -- {done_count}/{week_total} done, {_fmt_hm(total_seconds)} spent")
         n_days = len(data["done_days"])
         if done_count == 0:
             pacing = "Nothing completed yet."
@@ -779,6 +858,8 @@ def format_weekly_report_text(state, today):
         else:
             pacing = f"Completed across {n_days} different days."
         lines.append(f"  {pacing}")
+        if unpicked:
+            lines.append(f"  {unpicked} item(s) still sitting unpicked in this week's menu.")
         for t in tasks:
             mark = "x" if t["status"] == STATUS_DONE else " "
             when = f"done {t['completed_day']}" if t["completed_day"] else f"assigned {t['assigned_day']}, not done"
