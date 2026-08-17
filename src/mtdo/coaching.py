@@ -127,22 +127,40 @@ EXPERT_TIPS = [
 ]
 
 
-def build_coaching_content(block, topic_type=None):
-    """Merges a task's own rich metadata (block.get("coaching"), see goals_template.json
-    rule_9) with generic/topic-specific fallbacks. Returns a dict with the Learning Coach
-    panel's six sections: focus_on, ask_yourself, interview_check, mistakes,
-    mental_models, pro_tip -- each a list of strings (pro_tip is a single string).
-    block may be None (nothing active right now) -- callers should handle that themselves,
-    this always returns a fully generic framework so the panel never has nothing to show."""
-    meta = (block or {}).get("coaching") or {}
-    framework = TOPIC_FRAMEWORKS.get(topic_type, {})
+def build_coaching_content(block, category_meta=None):
+    """Three-tier merge, most-specific wins per field:
 
-    focus_on = meta.get("focus_points") or GENERIC_FOCUS_ON
-    ask_yourself = meta.get("questions") or framework.get("ask_yourself") or GENERIC_ASK_YOURSELF
-    interview_check = meta.get("interview_questions") or framework.get("interview_check") or GENERIC_INTERVIEW_CHECK
-    mistakes = meta.get("mistakes") or GENERIC_MISTAKES
-    mental_models = meta.get("mental_models") or GENERIC_MENTAL_MODELS
-    tips = meta.get("tips")
+      1. The TASK's own rich metadata (block["coaching"], see goals_template.json
+         rule_9) -- written for this exact task ("SQL Joins"), the most specific
+         possible content.
+      2. The FIELD's "coaching_framework" (category_meta["coaching_framework"], see
+         rule_9c) -- personalized by whoever wrote goals.json for what THIS user is
+         actually studying in this field right now (e.g. tuned to "Arrays & Hashmaps"
+         specifically, not DSA in general). This is genuine personalization -- it lives
+         in goals.json, not this file, precisely so it can be tailored per curriculum
+         instead of being one fixed bucket shared by everyone.
+      3. The built-in generic TOPIC_FRAMEWORKS bucket keyed by category_meta["topic_type"]
+         (dsa/backend/database/system_design), falling back further to the fully generic
+         GENERIC_* constants -- the safety net so the panel is never empty for a field
+         nobody's gotten around to personalizing yet.
+
+    category_meta is the dict from core.CATEGORY_META[category] (or None). Returns a
+    dict with the Learning Coach panel's sections: focus_on, ask_yourself,
+    interview_check, mistakes, mental_models, pro_tip, related_topics."""
+    meta = (block or {}).get("coaching") or {}
+    category_meta = category_meta or {}
+    field_framework = category_meta.get("coaching_framework") or {}
+    topic_framework = TOPIC_FRAMEWORKS.get(category_meta.get("topic_type"), {})
+
+    focus_on = meta.get("focus_points") or field_framework.get("focus_on") or GENERIC_FOCUS_ON
+    ask_yourself = (meta.get("questions") or field_framework.get("ask_yourself")
+                    or topic_framework.get("ask_yourself") or GENERIC_ASK_YOURSELF)
+    interview_check = (meta.get("interview_questions") or field_framework.get("interview_check")
+                        or topic_framework.get("interview_check") or GENERIC_INTERVIEW_CHECK)
+    mistakes = meta.get("mistakes") or field_framework.get("mistakes") or GENERIC_MISTAKES
+    mental_models = meta.get("mental_models") or field_framework.get("mental_models") or GENERIC_MENTAL_MODELS
+    related_topics = meta.get("related_topics") or field_framework.get("related_topics") or []
+    tips = meta.get("tips") or field_framework.get("tips")
     pro_tip = tips[0] if tips else random.choice(EXPERT_TIPS)
 
     return {
@@ -152,4 +170,5 @@ def build_coaching_content(block, topic_type=None):
         "mistakes": mistakes,
         "mental_models": mental_models,
         "pro_tip": pro_tip,
+        "related_topics": related_topics,
     }

@@ -1083,18 +1083,19 @@ class SpotifyPanel(Static):
 
 class LearningCoachPanel(Static):
     """The panel animation used to occupy. MTDO isn't for entertainment -- every pixel
-    should help the user get better. This shows coaching content for whichever task is
-    currently in progress: task-specific metadata if the curriculum author (human or AI)
-    wrote it (see goals_template.json rule_9), topic-appropriate generic questions
-    otherwise (see coaching.py). Fills all remaining space (height: 1fr)."""
+    should help the user get better. Shows coaching content for whichever task is
+    currently in progress, most-specific source wins (see coaching.build_coaching_content):
+    the task's own metadata, then the field's personalized coaching_framework in
+    goals.json, then a built-in topic-appropriate fallback. Fills remaining space
+    (height: 1fr)."""
 
     def update_content(self, state, today):
         active = tc.current_active_task(state, today)
         if active is None:
             self.update(self._idle_panel())
             return
-        topic_type = tc.CATEGORY_META.get(active["category"], {}).get("topic_type")
-        content = coaching.build_coaching_content(active["block"], topic_type)
+        category_meta = tc.CATEGORY_META.get(active["category"])
+        content = coaching.build_coaching_content(active["block"], category_meta)
         self.update(self._coach_panel(active["block"]["text"], content))
 
     def _idle_panel(self):
@@ -1124,6 +1125,10 @@ class LearningCoachPanel(Static):
         rows += self._section("Interview Check", content["interview_check"])
         rows += self._section("Common Mistakes", content["mistakes"])
         rows += self._section("Mental Models", content["mental_models"])
+        if content["related_topics"]:
+            rows.append(Text("Related Topics", style="bold cyan"))
+            rows.append(Text(f"  {', '.join(content['related_topics'])}", style="white"))
+            rows.append(Text(""))
         rows.append(Text("Pro Tip", style="bold cyan"))
         rows.append(Text(f"  {content['pro_tip']}", style="italic white"))
         rows.append(Text(""))

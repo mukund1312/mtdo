@@ -160,7 +160,7 @@ def goals_to_config(goals, existing_cfg=None):
         else:
             new_curriculum = cat_def.get("curriculum")
             for key in ("label", "days", "min_blocks", "addable", "deletable", "notes",
-                        "score_weight", "fixed_labels"):
+                        "score_weight", "fixed_labels", "topic_type", "coaching_framework"):
                 if key in cat_def:
                     existing[key] = cat_def[key]
             if new_curriculum:

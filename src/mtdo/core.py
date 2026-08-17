@@ -79,6 +79,7 @@ def configure(cfg):
             "fixed_labels": meta.get("fixed_labels"),
             "curriculum": meta.get("curriculum") or [],
             "topic_type": meta.get("topic_type"),
+            "coaching_framework": meta.get("coaching_framework"),
         }
         SCORE_WEIGHTS[name] = meta.get("score_weight", 10)
 
