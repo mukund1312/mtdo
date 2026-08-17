@@ -3,6 +3,8 @@ the shell (handy for scripting or wiring into an AI assistant's tool-use, the wa
 original build wired into Claude Code's /todo skill)."""
 import argparse
 import datetime
+import json
+import os
 
 from . import config as appconfig
 
@@ -38,12 +40,19 @@ def cmd_import(args):
 
 
 def cmd_run(_args):
-    if not appconfig.config_exists():
-        print("First time here -- setting you up with a demo config so you can see it working.")
-        appconfig.init_config(fresh=False)
-        print(f"Created {appconfig.CONFIG_PATH} (a real example plan).")
-        print("Edit that file anytime to make it yours, or run `mtdo init --fresh` to start over empty.\n")
-    cfg = appconfig.load_config()
+    # Try to load goals.json first (Option A: JSON-driven mode)
+    try:
+        goals = appconfig.load_goals()
+        cfg, _, _ = appconfig.goals_to_config(goals)
+    except FileNotFoundError:
+        # Fallback: use config.yaml or demo if neither exists
+        if not appconfig.config_exists():
+            print("First time here -- setting you up with a demo config so you can see it working.")
+            appconfig.init_config(fresh=False)
+            print(f"Created {appconfig.CONFIG_PATH} (a real example plan).")
+            print("Edit that file anytime to make it yours, or run `mtdo init --fresh` to start over empty.\n")
+        cfg = appconfig.load_config()
+
     from . import app as todo_app
     todo_app.run_app(cfg)
 
@@ -123,6 +132,58 @@ def cmd_done(args):
     print(f"Marked '{args.task_id}' done for {key}.")
 
 
+def cmd_snapshots(_args):
+    """List all curriculum snapshots (week 1, week 2, etc)."""
+    snapshots = appconfig.get_snapshot_manifest()
+    if not snapshots:
+        print("No snapshots yet. Edit goals.json and run `mtdo import goals.json` to create one.")
+        return
+
+    print(f"\n## Curriculum Snapshots\n")
+    for i, snap in enumerate(snapshots, 1):
+        print(f"{i}. {snap['timestamp']} ({snap['size']} bytes)")
+        print(f"   Path: {snap['path']}\n")
+
+    current_path = appconfig.GOALS_PATH
+    if os.path.exists(current_path):
+        stat = os.stat(current_path)
+        print(f"Current: goals.json ({stat.st_size} bytes)")
+
+
+def cmd_snapshot_diff(args):
+    """Show the diff between two snapshots or current goals vs a snapshot."""
+    snapshots = appconfig.get_snapshot_manifest()
+    if not snapshots:
+        print("No snapshots to compare.")
+        return
+
+    if not args.snapshot:
+        # Compare current goals.json with most recent snapshot
+        if not os.path.exists(appconfig.GOALS_PATH):
+            print("No current goals.json to compare.")
+            return
+        with open(appconfig.GOALS_PATH) as f:
+            current = json.load(f)
+        snap_path = snapshots[0]["path"]
+        with open(snap_path) as f:
+            snapshot = json.load(f)
+        print(f"\nDiff: Current goals.json vs {snapshots[0]['timestamp']}\n")
+    else:
+        # Compare two specific snapshots
+        try:
+            snap_idx = int(args.snapshot) - 1
+            snap = snapshots[snap_idx]
+            with open(snap["path"]) as f:
+                snapshot = json.load(f)
+            print(f"\nSnapshot #{args.snapshot}: {snap['timestamp']}\n")
+        except (ValueError, IndexError):
+            print(f"Invalid snapshot number. Run `mtdo snapshots` to see available snapshots.")
+            return
+
+    import json
+    print(json.dumps(snapshot, indent=2))
+
+
 def main():
     parser = argparse.ArgumentParser(prog="mtdo", description="A config-driven terminal task/focus/career board.")
     sub = parser.add_subparsers(dest="command")
@@ -147,6 +208,13 @@ def main():
     p_done.add_argument("task_id")
     p_done.add_argument("date", nargs="?", default=None)
     p_done.set_defaults(func=cmd_done)
+
+    p_snapshots = sub.add_parser("snapshots", help="List all curriculum snapshots (week 1, 2, 3, etc)")
+    p_snapshots.set_defaults(func=cmd_snapshots)
+
+    p_snapshot_diff = sub.add_parser("snapshot-diff", help="View a snapshot or diff with current goals")
+    p_snapshot_diff.add_argument("snapshot", nargs="?", default=None, help="Snapshot number (from `mtdo snapshots`)")
+    p_snapshot_diff.set_defaults(func=cmd_snapshot_diff)
 
     args = parser.parse_args()
     if args.command is None:
