@@ -2,7 +2,7 @@
 """One merged live app: a 4-column Kanban board (Backlog / Todo / In Progress / Done)
 of today's cards, vim-navigable (h/l columns, j/k cards, space to advance, u to send
 back, t/n/a/d to edit/note/add/delete), plus live 12h clock, calendar, streaks,
-standalone pomodoro timer, a Spotify now-playing panel, and a Learning Coach panel that
+standalone pomodoro timer, a now-playing music panel, and a Learning Coach panel that
 surfaces study/interview-prep guidance for whichever task is currently in progress.
 Categories, curriculum, and goal all come from the user's config -- see config.py.
 Run via the `mtdo` command (see cli.py), or `python3 -m mtdo.app` directly.
@@ -16,6 +16,7 @@ from . import core as tc
 from . import config as appconfig
 from . import coaching
 from . import ai_backend
+from . import music
 from .claude_panel import ClaudePanel
 from .errorlog import LOG_PATH, log as app_log
 
@@ -70,66 +71,7 @@ def bar(done, total, width=18, color="white"):
     return text
 
 
-# ---- Spotify -----------------------------------------------------------------
-
-def _spotify_running():
-    return subprocess.run(
-        ["pgrep", "-x", "Spotify"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
-    ).returncode == 0
-
-
-_SPOTIFY_EMPTY = {"song": "Spotify Not Running", "artist": "", "position": 0.0, "duration": 0.0,
-                   "state": "stopped", "volume": None}
-
-
-def spotify_track():
-    """Returns {song, artist, position, duration, state, volume} -- position/duration in seconds."""
-    if not _spotify_running():
-        return dict(_SPOTIFY_EMPTY)
-    try:
-        output = subprocess.check_output([
-            "osascript", "-e",
-            'tell application "Spotify" to name of current track & "|||" & artist of current track'
-            ' & "|||" & (player position as string) & "|||" & (duration of current track as string)'
-            ' & "|||" & (player state as string) & "|||" & (sound volume as string)'
-        ]).decode().strip()
-        song, artist, position_s, duration_ms, state, volume_s = output.split("|||")
-        return {
-            "song": song, "artist": artist,
-            "position": float(position_s), "duration": float(duration_ms) / 1000.0,
-            "state": state, "volume": int(round(float(volume_s))),
-        }
-    except Exception:
-        return dict(_SPOTIFY_EMPTY)
-
-
-_SPOTIFY_URI_RE = re.compile(r"^spotify:(playlist|album|track|artist):[A-Za-z0-9]+$")
-_SPOTIFY_WEB_RE = re.compile(r"^https?://open\.spotify\.com/(?:intl-\w+/)?(playlist|album|track|artist)/([A-Za-z0-9]+)")
-
-
-def _spotify_uri_from_input(value):
-    value = value.strip()
-    if _SPOTIFY_URI_RE.match(value):
-        return value
-    m = _SPOTIFY_WEB_RE.match(value)
-    if m:
-        kind, sid = m.groups()
-        return f"spotify:{kind}:{sid}"
-    return None
-
-
-def spotify_play_url(value):
-    """Plays a pasted playlist/album/track/artist link. Returns False (and leaves whatever's
-    currently playing untouched) if the input isn't a recognizable Spotify link."""
-    uri = _spotify_uri_from_input(value)
-    if not uri:
-        return False
-    result = subprocess.run(
-        ["osascript", "-e", f'tell application "Spotify" to play track "{uri}"'],
-        capture_output=True,
-    )
-    return result.returncode == 0
-
+# ---- Spotify (fallback path -- see music.py for the primary nowplaying-cli path) -------
 
 def _fmt_mmss(seconds):
     seconds = max(0, int(seconds))
@@ -145,37 +87,6 @@ def _block_bar(frac, width):
 def _progress_bar(position, duration, width=18):
     frac = 0 if duration <= 0 else position / duration
     return _block_bar(frac, width)
-
-
-def spotify_play_pause():
-    subprocess.run(["osascript", "-e", 'tell application "Spotify" to playpause'])
-
-
-def spotify_next():
-    subprocess.run(["osascript", "-e", 'tell application "Spotify" to next track'])
-
-
-def spotify_previous():
-    subprocess.run(["osascript", "-e", 'tell application "Spotify" to previous track'])
-
-
-def _spotify_nudge_volume(delta):
-    subprocess.run(["osascript", "-e", f'''
-        tell application "Spotify"
-            set v to sound volume + ({delta})
-            if v > 100 then set v to 100
-            if v < 0 then set v to 0
-            set sound volume to v
-        end tell
-    '''])
-
-
-def spotify_volume_up():
-    _spotify_nudge_volume(10)
-
-
-def spotify_volume_down():
-    _spotify_nudge_volume(-10)
 
 
 class TextPromptScreen(ModalScreen):
@@ -667,7 +578,7 @@ HELP_SECTIONS = [
     ("Global", [
         ("q", "Quit the app"),
         ("r", "Refresh all panels"),
-        ("f", "Toggle Focus Mode -- hides the board + stats, keeps Active Task/Pomodoro/Spotify/Learning Coach + AI panel"),
+        ("f", "Toggle Focus Mode -- hides the board + stats, keeps Active Task/Pomodoro/Music/Learning Coach + AI panel"),
         ("C", "Open the AI assistant panel (auto-enters Focus Mode) -- pick Claude Code, a local Ollama model, or Claude/ChatGPT/Gemini via API"),
         ("c", "Open the Career CRM"),
         ("v", "Open the Knowledge Vault"),
@@ -680,14 +591,14 @@ HELP_SECTIONS = [
         ("x", "Reset the pomodoro timer"),
         ("t", "Edit the pomodoro work/break length (e.g. 25/5)"),
     ]),
-    ("Spotify", [
+    ("Music", [
         ("m", "Play/pause"),
         ("[", "Previous track"),
         ("]", "Next track"),
         ("+ / -", "Volume up/down"),
-        ("P", "Paste a playlist/album/track link and play it"),
+        ("P", "Paste a Spotify playlist/album/track link and play it"),
     ]),
-    ("Learning Coach (under the Spotify box; shares a row with the AI panel in Focus Mode)", [
+    ("Learning Coach (under the Now Playing box; shares a row with the AI panel in Focus Mode)", [
         ("space", "Start a card (in_progress) to activate the coach for it"),
         ("scroll", "Mouse-wheel/trackpad scroll to see the full coaching content"),
     ]),
@@ -796,7 +707,7 @@ ONBOARDING_STEPS = [
     ("Focus Mode", [
         ("f", "toggle Focus Mode"),
         "Hides the board and weekly stats, starts a 45/10 pomodoro automatically, "
-        "and gives the screen to your Active Task, Pomodoro, Spotify, the Learning "
+        "and gives the screen to your Active Task, Pomodoro, Music, the Learning "
         "Coach, and the AI panel.",
     ]),
     ("Learning Coach", [
@@ -812,9 +723,9 @@ ONBOARDING_STEPS = [
         "Ollama model, or Claude/ChatGPT/Gemini over their own API, your pick from a menu.",
         ("esc esc", "double-tap Escape to release keyboard focus without ending the session"),
     ]),
-    ("Pomodoro & Spotify", [
+    ("Pomodoro & Music", [
         ("p / x / t", "start-pause / reset / edit the pomodoro's work-break length"),
-        ("m", "play/pause Spotify"),
+        ("m", "play/pause -- whatever's in macOS's Now Playing, or Spotify"),
         ("[ / ]", "previous / next track"),
         ("+ / -", "volume up/down"),
     ]),
@@ -1281,23 +1192,31 @@ class PomodoroPanel(Static):
         self.update(Panel(body, title="Pomodoro", border_style="orange3", box=box.ROUNDED))
 
 
-class SpotifyPanel(Static):
+class NowPlayingPanel(Static):
     """Compact now-playing display -- song/artist/progress only. Playback keys
     (m/[/]/+/-/P) still work, just not drawn as an icon row. Deliberately small
     (height: auto) -- MTDO isn't an entertainment app, music is background utility, not
-    something that should compete with the Learning Coach panel below it for space."""
+    something that should compete with the Learning Coach panel below it for space.
+
+    Controls whatever macOS's Now Playing session currently is (YouTube Music in a
+    browser tab, Apple Music, VLC, Spotify, anything) via music.py's nowplaying-cli
+    path when it's installed, falling back to Spotify-only AppleScript otherwise --
+    see music.py for the full story. The title bar names whichever path is actually
+    active, and the paste-a-link feature (P) stays Spotify-specific either way, since
+    there's no universal equivalent for "play this exact link"."""
 
     def __init__(self):
         super().__init__()
-        self.last_info = dict(_SPOTIFY_EMPTY)
+        self.last_info = music.now_playing()
         self.render_panel()
 
-    def refresh_spotify_info(self):
-        self.last_info = spotify_track()
+    def refresh_music_info(self):
+        self.last_info = music.now_playing()
         self.render_panel()
 
     def render_panel(self):
         info = self.last_info
+        universal = music.has_nowplaying_cli()
         rows = [
             Text(info["song"], style="bold bright_white", justify="center", no_wrap=True, overflow="ellipsis"),
             Text(info["artist"], style="grey70", justify="center", no_wrap=True, overflow="ellipsis"),
@@ -1306,8 +1225,12 @@ class SpotifyPanel(Static):
             prog = _progress_bar(info["position"], info["duration"])
             rows.append(Text(f"{prog} {_fmt_mmss(info['position'])} / {_fmt_mmss(info['duration'])}",
                               style="cyan", justify="center"))
+        if not universal:
+            rows.append(Text(f"for YouTube Music/Apple Music/anything: {music.NOWPLAYING_INSTALL_HINT}",
+                              style="dim italic", justify="center"))
         rows.append(Text("m play/pause  [ prev  ] next  +/- vol  P url", style="dim italic", justify="center"))
-        self.update(Panel(Group(*rows), title="Spotify", border_style="green", box=box.ROUNDED))
+        title = "Now Playing" if universal else "Spotify"
+        self.update(Panel(Group(*rows), title=title, border_style="green", box=box.ROUNDED))
 
 
 class LearningCoachPanel(Static):
@@ -1400,7 +1323,7 @@ class TodoApp(App):
     #kanban-list-done { border: round green; }
     KanbanColumnList { height: 1fr; padding: 0 1; }
     #right-col { width: 1fr; overflow-y: auto; }
-    PomodoroPanel, ActiveTaskPanel, SpotifyPanel { height: auto; }
+    PomodoroPanel, ActiveTaskPanel, NowPlayingPanel { height: auto; }
     StatsPanel, CalendarPanel { height: auto; }
     #stats-scroll, #calendar-scroll { height: auto; max-height: 8; }
     #coach-claude-row { height: 1fr; }
@@ -1421,12 +1344,12 @@ class TodoApp(App):
         ("c", "open_career", "Career"),
         ("v", "open_vault", "Vault"),
         ("?", "open_help", "Help"),
-        ("m", "spotify_toggle", "Spotify"),
-        ("[", "spotify_prev", "Prev"),
-        ("]", "spotify_next", "Next"),
-        ("+", "spotify_volume_up", "Vol+"),
-        ("-", "spotify_volume_down", "Vol-"),
-        ("P", "spotify_play_url", "Play URL"),
+        ("m", "music_toggle", "Music"),
+        ("[", "music_prev", "Prev"),
+        ("]", "music_next", "Next"),
+        ("+", "music_volume_up", "Vol+"),
+        ("-", "music_volume_down", "Vol-"),
+        ("P", "spotify_play_url", "Play Spotify URL"),
         ("A", "add_field", "Add Field"),
         ("C", "toggle_claude", "Claude Code"),
         ("w", "replay_walkthrough", "Walkthrough"),
@@ -1462,8 +1385,8 @@ class TodoApp(App):
                 yield self.active_task_panel
                 self.pomo_panel = PomodoroPanel()
                 yield self.pomo_panel
-                self.spotify_panel = SpotifyPanel()
-                yield self.spotify_panel
+                self.music_panel = NowPlayingPanel()
+                yield self.music_panel
                 with Horizontal(id="coach-claude-row"):
                     self.coach_scroll = VerticalScroll(id="coach-scroll")
                     with self.coach_scroll:
@@ -1500,7 +1423,7 @@ class TodoApp(App):
         self.calendar_panel.update_content(self.state, self.today)
         self.active_task_panel.update_content(self.state, self.today)
         self.pomo_panel.render_panel(tc.get_pomodoro_count(self.state, self.today))
-        self.spotify_panel.refresh_spotify_info()
+        self.music_panel.refresh_music_info()
         self.coach_panel.update_content(self.state, self.today)
 
     def _weekly_check_summary(self):
@@ -1627,7 +1550,7 @@ class TodoApp(App):
 
     def on_second_tick(self):
         self.query_one(ClockHeader).update_clock()
-        self.spotify_panel.refresh_spotify_info()
+        self.music_panel.refresh_music_info()
         self.active_task_panel.update_content(self.state, self.today)
         if self.pomo_panel.running:
             if self.pomo_panel.remaining > 0:
@@ -1788,26 +1711,26 @@ class TodoApp(App):
     def action_replay_walkthrough(self):
         self.push_screen(OnboardingScreen())
 
-    def action_spotify_toggle(self):
-        spotify_play_pause()
+    def action_music_toggle(self):
+        music.play_pause()
 
-    def action_spotify_prev(self):
-        spotify_previous()
+    def action_music_prev(self):
+        music.previous_track()
 
-    def action_spotify_next(self):
-        spotify_next()
+    def action_music_next(self):
+        music.next_track()
 
-    def action_spotify_volume_up(self):
-        spotify_volume_up()
+    def action_music_volume_up(self):
+        music.volume_up()
 
-    def action_spotify_volume_down(self):
-        spotify_volume_down()
+    def action_music_volume_down(self):
+        music.volume_down()
 
     def action_spotify_play_url(self):
         def on_result(value):
             if not value:
                 return
-            if spotify_play_url(value):
+            if music.play_spotify_url(value):
                 self.toast(f"Playing: {value[:60]}", style="bold green")
             else:
                 self.toast("Not a Spotify link -- left current playback alone.", style="bold yellow")

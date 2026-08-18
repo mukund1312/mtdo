@@ -1,0 +1,188 @@
+"""Now-playing display + playback controls for whatever's actually playing --
+YouTube Music in a browser tab, Apple Music, VLC, Spotify, anything -- not just
+Spotify. MTDO isn't an entertainment app; music is background utility, so this stays
+a thin, best-effort layer, not a real player.
+
+Two paths, tried in this order:
+
+1. nowplaying-cli (https://github.com/kirtan-shah/nowplaying-cli), if installed --
+   a small open-source wrapper around macOS's own MediaRemote framework, the same
+   thing that drives the system media widget. Works for whatever app currently owns
+   "Now Playing", regardless of which one that is. `brew install nowplaying-cli` sets
+   it up; there's no in-app installer for this (unlike the AI panel's Ollama install)
+   since there's no natural interactive moment to ask in a passive, always-on
+   feature -- the panel just shows the one-line install hint instead, and it's
+   already inside a terminal with an AI panel one keypress away that can run the
+   install itself if asked to.
+2. Spotify-specific AppleScript, as a fallback when nowplaying-cli isn't installed --
+   the original behavior, unchanged, so nothing regresses for anyone who doesn't
+   want the extra dependency.
+
+Volume is the one place these genuinely differ: nowplaying-cli's underlying
+framework has no volume control, so when it's the active path, volume commands
+nudge the system's actual output volume (which affects whatever's playing, which is
+arguably more "universal" anyway) instead of a single app's internal volume.
+"""
+import re
+import shutil
+import subprocess
+
+NOWPLAYING_INSTALL_HINT = "brew install nowplaying-cli"
+
+
+def has_nowplaying_cli():
+    return shutil.which("nowplaying-cli") is not None
+
+
+def _spotify_running():
+    return subprocess.run(
+        ["pgrep", "-x", "Spotify"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+    ).returncode == 0
+
+
+_EMPTY = {"song": "Nothing Playing", "artist": "", "position": 0.0, "duration": 0.0,
+          "state": "stopped", "volume": None}
+
+
+def now_playing():
+    """Returns {song, artist, position, duration, state, volume} -- position/duration
+    in seconds, volume 0-100 or None if not controllable on this path."""
+    if has_nowplaying_cli():
+        return _nowplaying_cli_info()
+    return _spotify_info()
+
+
+def play_pause():
+    if has_nowplaying_cli():
+        subprocess.run(["nowplaying-cli", "togglePlayPause"])
+    else:
+        _spotify_osa('tell application "Spotify" to playpause')
+
+
+def next_track():
+    if has_nowplaying_cli():
+        subprocess.run(["nowplaying-cli", "next"])
+    else:
+        _spotify_osa('tell application "Spotify" to next track')
+
+
+def previous_track():
+    if has_nowplaying_cli():
+        subprocess.run(["nowplaying-cli", "previous"])
+    else:
+        _spotify_osa('tell application "Spotify" to previous track')
+
+
+def volume_up():
+    _nudge_volume(10)
+
+
+def volume_down():
+    _nudge_volume(-10)
+
+
+def _nudge_volume(delta):
+    if has_nowplaying_cli():
+        # No per-app volume in MediaRemote -- nudge the actual system output volume,
+        # which affects whatever's playing regardless of app.
+        subprocess.run(["osascript", "-e", f'''
+            set v to output volume of (get volume settings)
+            set v to v + ({delta})
+            if v > 100 then set v to 100
+            if v < 0 then set v to 0
+            set volume output volume v
+        '''])
+    else:
+        subprocess.run(["osascript", "-e", f'''
+            tell application "Spotify"
+                set v to sound volume + ({delta})
+                if v > 100 then set v to 100
+                if v < 0 then set v to 0
+                set sound volume to v
+            end tell
+        '''])
+
+
+# -- Spotify path (fallback / also used for the "P" paste-a-link feature, which has
+# no universal equivalent) -----------------------------------------------------
+
+def _spotify_osa(script):
+    subprocess.run(["osascript", "-e", script])
+
+
+def _spotify_info():
+    if not _spotify_running():
+        return dict(_EMPTY)
+    try:
+        output = subprocess.check_output([
+            "osascript", "-e",
+            'tell application "Spotify" to name of current track & "|||" & artist of current track'
+            ' & "|||" & (player position as string) & "|||" & (duration of current track as string)'
+            ' & "|||" & (player state as string) & "|||" & (sound volume as string)'
+        ]).decode().strip()
+        song, artist, position_s, duration_ms, state, volume_s = output.split("|||")
+        return {
+            "song": song, "artist": artist,
+            "position": float(position_s), "duration": float(duration_ms) / 1000.0,
+            "state": state, "volume": int(round(float(volume_s))),
+        }
+    except Exception:
+        return dict(_EMPTY)
+
+
+_SPOTIFY_URI_RE = re.compile(r"^spotify:(playlist|album|track|artist):[A-Za-z0-9]+$")
+_SPOTIFY_WEB_RE = re.compile(r"^https?://open\.spotify\.com/(?:intl-\w+/)?(playlist|album|track|artist)/([A-Za-z0-9]+)")
+
+
+def _spotify_uri_from_input(value):
+    value = value.strip()
+    if _SPOTIFY_URI_RE.match(value):
+        return value
+    m = _SPOTIFY_WEB_RE.match(value)
+    if m:
+        kind, sid = m.groups()
+        return f"spotify:{kind}:{sid}"
+    return None
+
+
+def play_spotify_url(value):
+    """Plays a pasted Spotify playlist/album/track/artist link -- Spotify-specific,
+    no equivalent through nowplaying-cli, so this always goes straight to Spotify's
+    own AppleScript regardless of which path is otherwise active. Returns False (and
+    leaves whatever's currently playing untouched) if the input isn't a recognizable
+    Spotify link."""
+    uri = _spotify_uri_from_input(value)
+    if not uri:
+        return False
+    result = subprocess.run(
+        ["osascript", "-e", f'tell application "Spotify" to play track "{uri}"'],
+        capture_output=True,
+    )
+    return result.returncode == 0
+
+
+# -- nowplaying-cli path ---------------------------------------------------------
+
+def _nowplaying_cli_info():
+    try:
+        result = subprocess.run(
+            ["nowplaying-cli", "get", "--json", "title", "artist", "elapsedTime", "duration", "playbackRate"],
+            capture_output=True, text=True, timeout=3,
+        )
+        import json
+        data = json.loads(result.stdout)
+    except Exception:
+        return dict(_EMPTY)
+
+    title = data.get("title")
+    if not title:
+        return dict(_EMPTY)
+    playing = (data.get("playbackRate") or 0) > 0
+    return {
+        "song": title,
+        "artist": data.get("artist") or "",
+        "position": float(data.get("elapsedTime") or 0),
+        "duration": float(data.get("duration") or 0),
+        "state": "playing" if playing else "paused",
+        "volume": None,  # not controllable via MediaRemote -- see _nudge_volume
+    }
