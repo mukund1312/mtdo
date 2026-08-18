@@ -15,9 +15,12 @@ installing something or exporting a key shouldn't require restarting mtdo):
 detect() returns (command, label) for the best available backend, or (None, message)
 when nothing is usable -- the caller shows `message` directly in the pane.
 """
+import json
 import os
 import shutil
 import subprocess
+
+CHOICE_PATH = os.path.expanduser("~/.mtdo/ai_backend_choice.json")
 
 
 NOTHING_CONFIGURED_MESSAGE = (
@@ -57,6 +60,30 @@ def detect():
     if options:
         return options[0]
     return None, NOTHING_CONFIGURED_MESSAGE
+
+
+def save_choice(command, label):
+    """Remembers the last backend picked in AIBackendPickScreen, so next time it's
+    pre-selected in the list instead of always defaulting back to the top -- picking
+    is still shown every time (in case you want to switch), it just takes one Enter
+    press to repeat your last choice instead of navigating to it again."""
+    try:
+        os.makedirs(os.path.dirname(CHOICE_PATH), exist_ok=True)
+        with open(CHOICE_PATH, "w") as f:
+            json.dump({"command": command, "label": label}, f)
+    except OSError:
+        pass
+
+
+def load_choice():
+    """Returns the remembered (command, label), or None if nothing's been picked yet
+    or the file's unreadable."""
+    try:
+        with open(CHOICE_PATH) as f:
+            data = json.load(f)
+        return data["command"], data["label"]
+    except (OSError, ValueError, KeyError):
+        return None
 
 
 def _first_ollama_model():

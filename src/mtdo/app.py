@@ -272,21 +272,23 @@ class AIBackendPickScreen(ModalScreen):
     #ai-pick-box { width: 60; height: auto; max-height: 20; border: round green; padding: 1 2; background: $panel; }
     """
 
-    def __init__(self, options):
+    def __init__(self, options, remembered=None):
         super().__init__()
         self.options = options
+        commands = [command for command, _label in options]
+        self.preselect = commands.index(remembered[0]) if remembered and remembered[0] in commands else 0
 
     def compose(self) -> ComposeResult:
         with Center():
             with Middle():
                 with Vertical(id="ai-pick-box"):
                     if self.options:
-                        yield Static("Start which AI assistant?")
+                        yield Static("Start which AI assistant? (last choice pre-selected)")
                         items = [
                             ListItem(Label(label), name=str(i))
                             for i, (_command, label) in enumerate(self.options)
                         ]
-                        yield VimListView(*items)
+                        yield VimListView(*items, initial_index=self.preselect)
                         yield Static("Enter to pick, Escape to cancel", classes="dim")
                     else:
                         yield Static(ai_backend.NOTHING_CONFIGURED_MESSAGE)
@@ -1539,8 +1541,10 @@ class TodoApp(App):
 
     def action_toggle_claude(self):
         if not self.focus_mode:
-            self.toast("Claude Code lives in Focus Mode -- press f first", style="bold yellow")
-            return
+            # C is how people reach for the assistant -- auto-enter Focus Mode instead
+            # of just toasting an easy-to-miss "press f first" and leaving them to
+            # press C again themselves.
+            self.action_toggle_focus_mode()
         try:
             if self.claude_panel.has_focus:
                 self.claude_panel.blur()
@@ -1554,13 +1558,17 @@ class TodoApp(App):
                     return
                 try:
                     command, label = choice
+                    ai_backend.save_choice(command, label)
                     self.claude_panel.start_with(command, label)
                     self.claude_panel.focus()
                 except Exception:
                     app_log.exception("starting chosen AI backend failed")
                     self.toast(f"Claude Code panel hit an error -- see {LOG_PATH}", style="bold red")
 
-            self.push_screen(AIBackendPickScreen(ai_backend.list_available()), on_choice)
+            self.push_screen(
+                AIBackendPickScreen(ai_backend.list_available(), remembered=ai_backend.load_choice()),
+                on_choice,
+            )
         except Exception:
             app_log.exception("action_toggle_claude failed")
             self.toast(f"Claude Code panel hit an error -- see {LOG_PATH}", style="bold red")
