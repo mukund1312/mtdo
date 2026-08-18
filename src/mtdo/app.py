@@ -673,6 +673,7 @@ HELP_SECTIONS = [
         ("v", "Open the Knowledge Vault"),
         ("A", "Add a new field (category) -- writes to goals.json, live-reloads immediately"),
         ("?", "Show this cheat sheet"),
+        ("w", "Replay the first-launch walkthrough"),
     ]),
     ("Pomodoro", [
         ("p", "Start/pause the pomodoro timer"),
@@ -758,6 +759,161 @@ class HelpScreen(Screen):
         return Group(*sections)
 
     def action_close(self):
+        self.dismiss()
+
+
+# ---- First-launch walkthrough -------------------------------------------------
+# A short, skippable, game-tutorial-style tour: one idea per screen, paged through
+# with space/enter/arrows, shown automatically the first time mtdo ever runs (see
+# appconfig.has_onboarded()) and replayable any time with w. Each step's body is a
+# list of either plain strings (a paragraph) or (key, description) tuples (a styled
+# keybinding row) -- OnboardingScreen renders whichever it finds.
+
+ONBOARDING_STEPS = [
+    ("Welcome to mtdo", [
+        "mtdo is a terminal task board built for deliberate practice, not busywork.",
+        "This is a quick tour of everything it can do -- a few short steps, "
+        "space/enter/-> to move forward, <- to go back.",
+        "Escape skips straight to the board any time. Replay this later with w.",
+    ]),
+    ("The Board", [
+        "Your main screen is a kanban board -- one column per subject you're "
+        "tracking (a “field”), cut across four lanes: Backlog, Todo, "
+        "In Progress, Done.",
+        ("h / l", "move between columns"),
+        ("j / k", "move between cards"),
+        ("space", "advance the highlighted card to the next lane"),
+        ("u", "send it back a lane"),
+    ]),
+    ("Adding Cards", [
+        ("a", "add a card"),
+        "Fields with a curriculum open this week's whole menu to pick from -- "
+        "space selects one or several at once, the rest wait until you get to them.",
+        ("t", "edit a card's text"),
+        ("n", "edit a card's notes"),
+        ("d", "delete a card"),
+    ]),
+    ("Focus Mode", [
+        ("f", "toggle Focus Mode"),
+        "Hides the board and weekly stats, starts a 45/10 pomodoro automatically, "
+        "and gives the screen to your Active Task, Pomodoro, Spotify, the Learning "
+        "Coach, and the AI panel.",
+    ]),
+    ("Learning Coach", [
+        "Whatever card is In Progress, the Coach shows guidance for it -- what to "
+        "focus on, questions to ask yourself, common mistakes, mental models.",
+        "Not entertainment -- every panel here earns its space by helping you get "
+        "better at what you're actually studying.",
+        "Content can run long -- scroll it with your mouse wheel or trackpad.",
+    ]),
+    ("AI Assistant Panel", [
+        ("Shift+C", "start or focus the AI panel (auto-enters Focus Mode)"),
+        "A real terminal session embedded right in the app -- Claude Code, a local "
+        "Ollama model, or Claude/GPT/Gemini over their own API, your pick from a menu.",
+        ("esc esc", "double-tap Escape to release keyboard focus without ending the session"),
+    ]),
+    ("Pomodoro & Spotify", [
+        ("p / x / t", "start-pause / reset / edit the pomodoro's work-break length"),
+        ("m", "play/pause Spotify"),
+        ("[ / ]", "previous / next track"),
+        ("+ / -", "volume up/down"),
+    ]),
+    ("Career CRM & Knowledge Vault", [
+        ("c", "Career CRM -- track companies Applied -> OA -> Interview -> Offer"),
+        ("v", "Knowledge Vault -- a searchable notes vault, separate from card notes"),
+    ]),
+    ("Stats, Streaks & Weekly Reports", [
+        "The right side of the board tracks your daily score, current/longest "
+        "streak, and a month calendar heatmap.",
+        "Every Saturday: a week summary toast, plus a detailed report saved to "
+        "~/.mtdo/reports/ -- hand it to an AI assistant for real coaching on "
+        "consistency, not just a percentage.",
+    ]),
+    ("You're Set", [
+        ("?", "the full keybinding cheat sheet, any time"),
+        ("w", "replay this walkthrough any time"),
+        ("Shift+A", "add a brand new field on the spot"),
+        "Your whole plan lives in goals.json -- run `mtdo template` for a "
+        "fully-commented one to fill in yourself or hand to an AI assistant.",
+    ]),
+]
+
+
+class OnboardingScreen(ModalScreen):
+    BINDINGS = [
+        ("escape", "skip", "Skip"),
+        ("enter", "next", "Next"),
+        ("space", "next", "Next"),
+        ("right", "next", "Next"),
+        ("l", "next", "Next"),
+        ("left", "back", "Back"),
+        ("h", "back", "Back"),
+    ]
+
+    CSS = """
+    OnboardingScreen { align: center middle; }
+    #onboarding-box {
+        width: 80; height: auto; max-height: 90%; background: $panel;
+    }
+    """
+
+    def __init__(self):
+        super().__init__()
+        self.step = 0
+
+    def compose(self) -> ComposeResult:
+        with Center():
+            with Middle():
+                yield Static(self._render_step(), id="onboarding-box")
+
+    def _render_step(self):
+        n = len(ONBOARDING_STEPS)
+        title, body = ONBOARDING_STEPS[self.step]
+
+        dots = Text(justify="center")
+        for i in range(n):
+            dots.append("●" if i == self.step else "○",
+                        style="bold magenta" if i == self.step else "dim")
+            if i < n - 1:
+                dots.append(" ")
+
+        rows = [dots, Text(""), Text(title, style="bold underline", justify="center"), Text("")]
+        for item in body:
+            if isinstance(item, tuple):
+                key, desc = item
+                rows.append(Text.assemble((f"  {key:<9}", "bold gold3"), desc))
+            else:
+                rows.append(Text(item))
+            rows.append(Text(""))
+
+        last = self.step == n - 1
+        nav_parts = []
+        if self.step > 0:
+            nav_parts.append("← back")
+        if not last:
+            nav_parts.append("esc skip")
+        nav_parts.append("enter/space/→ " + ("start using mtdo" if last else "next"))
+        rows.append(Text("   ".join(nav_parts), style="dim italic", justify="center"))
+
+        return Panel(Group(*rows), title=f"Walkthrough  {self.step + 1}/{n}",
+                     border_style="magenta", box=box.ROUNDED)
+
+    def _refresh(self):
+        self.query_one("#onboarding-box", Static).update(self._render_step())
+
+    def action_next(self):
+        if self.step < len(ONBOARDING_STEPS) - 1:
+            self.step += 1
+            self._refresh()
+        else:
+            self.dismiss()
+
+    def action_back(self):
+        if self.step > 0:
+            self.step -= 1
+            self._refresh()
+
+    def action_skip(self):
         self.dismiss()
 
 
@@ -1273,6 +1429,7 @@ class TodoApp(App):
         ("P", "spotify_play_url", "Play URL"),
         ("A", "add_field", "Add Field"),
         ("C", "toggle_claude", "Claude Code"),
+        ("w", "replay_walkthrough", "Walkthrough"),
     ]
 
     def __init__(self):
@@ -1332,6 +1489,8 @@ class TodoApp(App):
         self.kanban.lists[tc.STATUS_TODO].focus()
         self.set_interval(1.0, self.on_second_tick)
         self.set_interval(2.0, self.check_goals_file)
+        if not appconfig.has_onboarded():
+            self.push_screen(OnboardingScreen(), callback=lambda _r=None: appconfig.mark_onboarded())
 
     def toast(self, text, style="dim"):
         self.query_one(ToastLine).show(text, style)
@@ -1607,6 +1766,9 @@ class TodoApp(App):
 
     def action_open_help(self):
         self.push_screen(HelpScreen())
+
+    def action_replay_walkthrough(self):
+        self.push_screen(OnboardingScreen())
 
     def action_spotify_toggle(self):
         spotify_play_pause()

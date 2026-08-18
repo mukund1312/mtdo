@@ -12,6 +12,20 @@ GOALS_SNAPSHOTS_DIR = os.path.join(APP_DIR, "goals_snapshots")
 CONFIG_PATH = os.path.join(APP_DIR, "config.yaml")
 STATE_PATH = os.path.join(APP_DIR, "state.json")
 REPORTS_DIR = os.path.join(APP_DIR, "reports")
+ONBOARDED_PATH = os.path.join(APP_DIR, "onboarded")
+
+
+def has_onboarded():
+    """Whether the first-launch walkthrough (app.OnboardingScreen) has already been
+    shown -- a plain marker file rather than anything in state.json/config.yaml, since
+    it's not really app data, just "have we said hello yet"."""
+    return os.path.exists(ONBOARDED_PATH)
+
+
+def mark_onboarded():
+    os.makedirs(APP_DIR, exist_ok=True)
+    with open(ONBOARDED_PATH, "w") as f:
+        f.write("")
 
 _PACKAGE_DIR = os.path.dirname(os.path.abspath(__file__))
 DEMO_CONFIG_PATH = os.path.join(_PACKAGE_DIR, "demo_config.yaml")
