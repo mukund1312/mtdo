@@ -1546,11 +1546,15 @@ class TodoApp(App):
             # press C again themselves.
             self.action_toggle_focus_mode()
         try:
-            if self.claude_panel.has_focus:
-                self.claude_panel.blur()
-                return
             if self.claude_panel.is_running:
-                self.claude_panel.focus()
+                # Focus/blur only makes sense once there's an actual session to type
+                # into -- otherwise "has_focus" is incidental (e.g. a stray click on
+                # the empty pane) and blurring it here would silently eat this very
+                # keypress instead of opening the picker below.
+                if self.claude_panel.has_focus:
+                    self.claude_panel.blur()
+                else:
+                    self.claude_panel.focus()
                 return
 
             def on_choice(choice):

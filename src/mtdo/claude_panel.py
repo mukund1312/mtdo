@@ -364,6 +364,13 @@ class ClaudePanel(Widget):
             event.stop()
 
     def _on_key_impl(self, event: events.Key) -> None:
+        if not self._pty_running or self._master_fd is None:
+            # Nothing running to forward keys to -- don't swallow them. If this empty
+            # pane ever ends up with focus (a stray click, Tab-cycling) without this
+            # check, every keypress including C itself would get silently consumed
+            # here and never reach TodoApp's own "C" binding, with zero visible
+            # feedback -- looks exactly like "pressing C does nothing."
+            return
         if event.key in _RELEASE_KEYS:
             self.blur()
             event.stop()
@@ -377,8 +384,6 @@ class ClaudePanel(Widget):
                 return
             self._last_escape_at = now
         event.stop()
-        if not self._pty_running or self._master_fd is None:
-            return
         data = self._encode_key(event)
         if data:
             try:
