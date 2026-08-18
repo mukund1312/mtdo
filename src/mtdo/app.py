@@ -1191,8 +1191,10 @@ class TodoApp(App):
     PomodoroPanel, ActiveTaskPanel, SpotifyPanel { height: auto; }
     StatsPanel, CalendarPanel { height: auto; }
     #stats-scroll, #calendar-scroll { height: auto; max-height: 8; }
-    LearningCoachPanel { height: 1fr; }
-    ClaudePanel { display: none; }
+    #coach-claude-row { height: 1fr; }
+    #coach-scroll { width: 1fr; height: 1fr; }
+    LearningCoachPanel { height: auto; }
+    ClaudePanel { width: 1fr; display: none; }
     ClockHeader { height: 1; dock: top; }
     ToastLine { height: 1; dock: top; padding: 0 1; }
     ListItem { padding: 0; }
@@ -1249,10 +1251,13 @@ class TodoApp(App):
                 yield self.pomo_panel
                 self.spotify_panel = SpotifyPanel()
                 yield self.spotify_panel
-                self.coach_panel = LearningCoachPanel()
-                yield self.coach_panel
-                self.claude_panel = ClaudePanel()
-                yield self.claude_panel
+                with Horizontal(id="coach-claude-row"):
+                    self.coach_scroll = VerticalScroll(id="coach-scroll")
+                    with self.coach_scroll:
+                        self.coach_panel = LearningCoachPanel()
+                        yield self.coach_panel
+                    self.claude_panel = ClaudePanel()
+                    yield self.claude_panel
         yield Footer()
 
     def on_mount(self):

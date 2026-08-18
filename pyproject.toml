@@ -18,6 +18,7 @@ dependencies = [
 
 [project.optional-dependencies]
 spotify = []  # Spotify controls use AppleScript on macOS -- no extra package needed, just macOS + Spotify.app
+webchat = ["anthropic", "openai"]  # last-resort AI panel backend when there's no Claude Code/Ollama -- see ai_backend.py
 
 [project.scripts]
 mtdo = "mtdo.cli:main"

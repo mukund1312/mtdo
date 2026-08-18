@@ -1,10 +1,16 @@
-"""Embeds a live `claude` (Claude Code CLI) session directly inside mtdo's Focus Mode,
-in the space that opens up in the bottom-right column once the kanban board and
-stats/calendar panels are hidden. Runs `claude` in a real pty and uses pyte to turn the
-pty's raw output into a screen buffer this widget renders each frame. Built by hand
-rather than pulling in the `textual-terminal` package because that package's internals
-only work against Textual ~0.70 and break on the current Textual (8.x) that the rest of
-this app already relies on.
+"""Embeds a live AI assistant session directly inside mtdo's Focus Mode, in the right
+half of the row that opens up once the kanban board and stats/calendar panels are
+hidden (the left half is the Learning Coach). Runs the assistant in a real pty and
+uses pyte to turn its raw output into a screen buffer this widget renders each frame.
+Built by hand rather than pulling in the `textual-terminal` package because that
+package's internals only work against Textual ~0.70 and break on the current Textual
+(8.x) that the rest of this app already relies on.
+
+Which assistant actually runs is decided by ai_backend.detect() on every start(): the
+`claude` CLI if it's installed, else a local Ollama model if one's pulled, else a
+minimal API-key chat (web_chat.py) if ANTHROPIC_API_KEY/OPENAI_API_KEY is set, else a
+message explaining what to set up. The point is that not having Claude Code installed
+should never force the user out of the terminal to get help.
 
 Spawns the child via os.openpty() + subprocess.Popen (with preexec_fn=os.setsid),
 *not* pty.fork()/os.fork(). Textual runs its own background input-reader thread, so
@@ -47,6 +53,7 @@ from rich.text import Text
 from textual import events
 from textual.widget import Widget
 
+from . import ai_backend
 from .errorlog import LOG_PATH, log
 
 _NAMED_COLORS = {
@@ -107,7 +114,11 @@ class ClaudePanel(Widget):
     }
     """
 
-    def __init__(self, command="claude", **kwargs):
+    def __init__(self, command=None, **kwargs):
+        """command=None (the default) means auto-detect a backend fresh on every
+        start() via ai_backend.detect() -- Claude Code, else a local Ollama model, else
+        an API-key-based chat, else a message explaining what to set up. Pass an
+        explicit command to pin one backend instead."""
         super().__init__(**kwargs)
         self.command = command
         self._master_fd = None
@@ -133,12 +144,22 @@ class ClaudePanel(Widget):
             self._start_impl()
         except Exception:
             log.exception("ClaudePanel.start failed")
-            self._error = f"Couldn't start Claude Code -- see {LOG_PATH}"
+            self._error = f"Couldn't start the AI panel -- see {LOG_PATH}"
             self._ended = True
             self._pty_running = False
             self.refresh()
 
     def _start_impl(self):
+        if self.command is not None:
+            command, label = self.command, None
+        else:
+            command, label = ai_backend.detect()
+        if command is None:
+            self._error = label  # detect() returns the explanation as the label slot
+            self._ended = True
+            self.refresh()
+            return
+
         cols, rows = self._pty_size()
         self._screen = pyte.Screen(cols, rows)
         self._stream = pyte.ByteStream(self._screen)
@@ -151,7 +172,7 @@ class ClaudePanel(Widget):
         env["TERM"] = "xterm-256color"
         try:
             proc = subprocess.Popen(
-                shlex.split(self.command),
+                shlex.split(command),
                 stdin=slave_fd, stdout=slave_fd, stderr=slave_fd,
                 preexec_fn=os.setsid,
                 env=env,
@@ -163,6 +184,7 @@ class ClaudePanel(Widget):
         self._pid = proc.pid
         self._master_fd = master_fd
         self._pty_running = True
+        self.border_title = label or "Claude Code"
         threading.Thread(target=self._read_loop, daemon=True).start()
         self.refresh()
 
