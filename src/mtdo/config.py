@@ -27,6 +27,31 @@ def mark_onboarded():
     with open(ONBOARDED_PATH, "w") as f:
         f.write("")
 
+
+PRACTICE_TERMINAL_FLAG_PATH = os.path.join(APP_DIR, "practice_terminal_enabled")
+
+
+def practice_terminal_enabled():
+    """Whether the optional third column in Focus Mode's second row (a plain
+    practice terminal, alongside the Learning Coach and the AI panel) is turned on --
+    off by default, since not everyone wants a third column; toggled with Shift+T
+    (TodoApp.action_toggle_practice_terminal), a plain marker file same as
+    has_onboarded() above since it's a UI preference, not tracked app data."""
+    return os.path.exists(PRACTICE_TERMINAL_FLAG_PATH)
+
+
+def set_practice_terminal_enabled(enabled):
+    os.makedirs(APP_DIR, exist_ok=True)
+    if enabled:
+        with open(PRACTICE_TERMINAL_FLAG_PATH, "w") as f:
+            f.write("")
+    else:
+        try:
+            os.remove(PRACTICE_TERMINAL_FLAG_PATH)
+        except OSError:
+            pass
+
+
 _PACKAGE_DIR = os.path.dirname(os.path.abspath(__file__))
 DEMO_CONFIG_PATH = os.path.join(_PACKAGE_DIR, "demo_config.yaml")
 FRESH_CONFIG_PATH = os.path.join(_PACKAGE_DIR, "fresh_config.yaml")

@@ -19,6 +19,7 @@ from . import ai_backend
 from . import music
 from . import plan_wizard
 from .claude_panel import ClaudePanel
+from .practice_terminal import PracticeTerminalPanel
 from .errorlog import LOG_PATH, log as app_log
 
 from textual.app import App, ComposeResult
@@ -621,6 +622,7 @@ HELP_SECTIONS = [
         ("w", "Replay the first-launch walkthrough"),
         ("g", "Set up a plan -- a short Q&A, then hands a crafted prompt to the AI panel to design your goals.json"),
         ("Shift+S", "Save the AI panel's transcript to a file -- a memory.md workaround for backends with no file access"),
+        ("Shift+T", "Toggle the optional Practice Terminal column in Focus Mode (Python/Java/C/C++/anything, via a real shell)"),
     ]),
     ("Pomodoro", [
         ("p", "Start/pause the pomodoro timer"),
@@ -758,6 +760,7 @@ ONBOARDING_STEPS = [
         "A real terminal session embedded right in the app -- Claude Code, a local "
         "Ollama model, or Claude/ChatGPT/Gemini over their own API, your pick from a menu.",
         ("esc esc", "double-tap Escape to release keyboard focus without ending the session"),
+        ("Shift+T", "toggle an optional Practice Terminal column too -- a real shell for DSA practice"),
     ]),
     ("Pomodoro & Music", [
         ("p / x / t", "start-pause / reset / edit the pomodoro's work-break length"),
@@ -1386,6 +1389,7 @@ class TodoApp(App):
     #coach-scroll { width: 1fr; height: 1fr; }
     LearningCoachPanel { height: auto; }
     ClaudePanel { width: 1fr; display: none; }
+    PracticeTerminalPanel { width: 1fr; display: none; }
     ClockHeader { height: 1; dock: top; }
     ToastLine { height: 1; dock: top; padding: 0 1; }
     ListItem { padding: 0; }
@@ -1411,6 +1415,7 @@ class TodoApp(App):
         ("w", "replay_walkthrough", "Walkthrough"),
         ("g", "plan_wizard", "Setup Plan"),
         ("S", "save_ai_transcript", "Save AI Transcript"),
+        ("T", "toggle_practice_terminal", "Practice Terminal"),
     ]
 
     def __init__(self):
@@ -1419,6 +1424,7 @@ class TodoApp(App):
         self.state = tc.load_state()
         self.state = tc.ensure_day_registered(self.state, self.today)
         self.focus_mode = False
+        self.practice_terminal_enabled = appconfig.practice_terminal_enabled()
         try:
             self._goals_mtime = os.path.getmtime(appconfig.GOALS_PATH)
         except OSError:
@@ -1452,6 +1458,8 @@ class TodoApp(App):
                         yield self.coach_panel
                     self.claude_panel = ClaudePanel()
                     yield self.claude_panel
+                    self.practice_panel = PracticeTerminalPanel()
+                    yield self.practice_panel
         yield Footer()
 
     def on_mount(self):
@@ -1674,6 +1682,7 @@ class TodoApp(App):
         self.stats_scroll.display = show
         self.calendar_scroll.display = show
         self.claude_panel.display = self.focus_mode
+        self.practice_panel.display = self.focus_mode and self.practice_terminal_enabled
         if self.focus_mode:
             if not self.pomo_panel.running:
                 self._set_pomodoro_length(45, 10)
@@ -1683,6 +1692,8 @@ class TodoApp(App):
                 self._set_pomodoro_length(tc.DEFAULT_POMODORO_MINUTES, tc.DEFAULT_BREAK_MINUTES)
             if self.claude_panel.has_focus:
                 self.claude_panel.blur()
+            if self.practice_panel.has_focus:
+                self.practice_panel.blur()
         self.toast("Focus Mode ON -- 45/10 pomodoro started, press f to exit" if self.focus_mode else "Focus Mode off",
                    style="bold bright_green" if self.focus_mode else "dim")
 
@@ -1754,6 +1765,10 @@ class TodoApp(App):
             self.claude_panel.stop()
         except Exception:
             app_log.exception("failed to stop claude panel on quit")
+        try:
+            self.practice_panel.stop()
+        except Exception:
+            app_log.exception("failed to stop practice terminal panel on quit")
         self.exit()
 
     def _handle_exception(self, error: Exception) -> None:
@@ -1831,6 +1846,22 @@ class TodoApp(App):
         self.toast(
             f"Saved -> {path}. Ask Claude Code to fold anything worth keeping into ~/.mtdo/memory.md.",
             style="bold green",
+        )
+
+    def action_toggle_practice_terminal(self):
+        """Turns the optional third column (Coach / AI / Practice Terminal) on or
+        off, persisted so the choice survives a restart. Doesn't stop a session
+        that's already running when turned off -- same "keep it alive while hidden"
+        behavior as the AI panel already has, so turning it back on later finds it
+        exactly where it was left."""
+        self.practice_terminal_enabled = not self.practice_terminal_enabled
+        appconfig.set_practice_terminal_enabled(self.practice_terminal_enabled)
+        if self.focus_mode:
+            self.practice_panel.display = self.practice_terminal_enabled
+        self.toast(
+            "Practice Terminal on -- click it in Focus Mode to start a shell" if self.practice_terminal_enabled
+            else "Practice Terminal off",
+            style="bold green" if self.practice_terminal_enabled else "dim",
         )
 
     def action_music_toggle(self):
