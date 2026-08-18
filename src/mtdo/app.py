@@ -1685,20 +1685,27 @@ class TodoApp(App):
             # press C again themselves.
             self.action_toggle_focus_mode()
         try:
-            if self.claude_panel.is_running:
-                # Focus/blur only makes sense once there's an actual session to type
-                # into -- otherwise "has_focus" is incidental (e.g. a stray click on
-                # the empty pane) and blurring it here would silently eat this very
-                # keypress instead of opening the picker below.
-                if self.claude_panel.has_focus:
-                    self.claude_panel.blur()
-                else:
-                    self.claude_panel.focus()
+            if self.claude_panel.has_focus:
+                # Already in it -- C here means "step out", matching Esc Esc/F2.
+                self.claude_panel.blur()
                 return
 
+            # Not focused, whether or not something's already running -- always show
+            # the picker. It used to skip straight to focusing whatever was already
+            # running, which meant there was no way back to this menu at all once
+            # you'd started a session: Esc Esc released focus, but a second C just
+            # refocused the same backend forever, with no path to switch to a
+            # different one. Picking the SAME backend that's already running just
+            # refocuses it (no restart, conversation intact); picking a different one
+            # stops the old session and starts the new one.
             def start_backend(command, label):
                 try:
+                    if self.claude_panel.is_running and command == self.claude_panel.command:
+                        self.claude_panel.focus()
+                        return
                     ai_backend.save_choice(command, label)
+                    if self.claude_panel.is_running:
+                        self.claude_panel.stop()
                     self.claude_panel.start_with(command, label)
                     self.claude_panel.focus()
                 except Exception:
