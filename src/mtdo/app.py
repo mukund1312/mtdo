@@ -15,6 +15,7 @@ import subprocess
 from . import core as tc
 from . import config as appconfig
 from . import coaching
+from .claude_panel import ClaudePanel
 
 from textual.app import App, ComposeResult
 from textual.containers import Horizontal, Vertical, VerticalScroll, Center, Middle
@@ -1190,6 +1191,7 @@ class TodoApp(App):
     StatsPanel, CalendarPanel { height: auto; }
     #stats-scroll, #calendar-scroll { height: auto; max-height: 8; }
     LearningCoachPanel { height: 1fr; }
+    ClaudePanel { display: none; }
     ClockHeader { height: 1; dock: top; }
     ToastLine { height: 1; dock: top; padding: 0 1; }
     ListItem { padding: 0; }
@@ -1211,6 +1213,7 @@ class TodoApp(App):
         ("-", "spotify_volume_down", "Vol-"),
         ("P", "spotify_play_url", "Play URL"),
         ("A", "add_field", "Add Field"),
+        ("C", "toggle_claude", "Claude Code"),
     ]
 
     def __init__(self):
@@ -1247,6 +1250,8 @@ class TodoApp(App):
                 yield self.spotify_panel
                 self.coach_panel = LearningCoachPanel()
                 yield self.coach_panel
+                self.claude_panel = ClaudePanel()
+                yield self.claude_panel
         yield Footer()
 
     def on_mount(self):
@@ -1466,14 +1471,32 @@ class TodoApp(App):
         self.kanban.display = show
         self.stats_scroll.display = show
         self.calendar_scroll.display = show
+        self.claude_panel.display = self.focus_mode
         if self.focus_mode:
             if not self.pomo_panel.running:
                 self._set_pomodoro_length(45, 10)
                 self.pomo_panel.running = True
-        elif not self.pomo_panel.running:
-            self._set_pomodoro_length(tc.DEFAULT_POMODORO_MINUTES, tc.DEFAULT_BREAK_MINUTES)
+        else:
+            if not self.pomo_panel.running:
+                self._set_pomodoro_length(tc.DEFAULT_POMODORO_MINUTES, tc.DEFAULT_BREAK_MINUTES)
+            if self.claude_panel.has_focus:
+                self.claude_panel.blur()
         self.toast("Focus Mode ON -- 45/10 pomodoro started, press f to exit" if self.focus_mode else "Focus Mode off",
                    style="bold bright_green" if self.focus_mode else "dim")
+
+    def action_toggle_claude(self):
+        if not self.focus_mode:
+            self.toast("Claude Code lives in Focus Mode -- press f first", style="bold yellow")
+            return
+        if self.claude_panel.has_focus:
+            self.claude_panel.blur()
+            return
+        self.claude_panel.start()
+        self.claude_panel.focus()
+
+    def action_quit(self):
+        self.claude_panel.stop()
+        self.exit()
 
     def action_open_career(self):
         self.push_screen(CareerScreen(self), callback=lambda _r=None: self.refresh_side_panels())
