@@ -1,53 +1,71 @@
-"""Picks which AI backend the assistant panel (claude_panel.py) should run, so the
+"""Picks which AI backends the assistant panel (claude_panel.py) can offer, so the
 user is never stuck without one just because they don't have Claude Code installed.
-Priority order, checked fresh on every start() (not cached at import time, since
-installing something or exporting a key shouldn't require restarting mtdo):
+list_available() is checked fresh every time C opens the picker (not cached at import
+time, since installing something or exporting a key shouldn't require restarting
+mtdo), and includes -- in preference order:
 
 1. the `claude` CLI (Claude Code), if it's on PATH
-2. a local model via `ollama run <model>`, if Ollama is installed and has at least one
-   model already pulled (we pick the first one `ollama list` reports rather than
-   guessing a name and triggering a slow, unexpected download)
-3. a minimal built-in chat REPL against the Anthropic or OpenAI API (web_chat.py), if
-   an API key is set in the environment -- so a user with neither Claude Code nor a
-   local model still gets an assistant without ever tabbing out to a browser
-4. otherwise, a clear message explaining what to install or set
+2. every local model Ollama already has pulled, via `ollama run <model>`
+3. Gemma 3 4B via Ollama specifically, always offered if Ollama is on PATH even when
+   not pulled yet -- `ollama run` pulls on first use automatically, so picking it is
+   genuinely zero extra setup ("out of the box"), just a first-run download
+4. if Ollama itself isn't installed but Homebrew is (this is macOS), an option that
+   installs Ollama and starts it, then runs Gemma 3 4B -- so a user with *nothing*
+   still never has to leave the terminal to get a local model running
+5. Claude, GPT, and Gemini via their own APIs (web_chat.py) -- always offered
+   regardless of whether a key is already set, since web_chat.py prompts for one
+   (and offers to remember it) the first time it's actually picked. This is the
+   "browser-free" option: real access to any of the big three without ever opening a
+   browser tab, which is the whole point of keeping the user inside the terminal.
 
-detect() returns (command, label) for the best available backend, or (None, message)
-when nothing is usable -- the caller shows `message` directly in the pane.
+detect() returns list_available()'s first entry for callers that don't want to
+prompt (e.g. ClaudePanel.start() with no pinned command), or (None,
+NOTHING_CONFIGURED_MESSAGE) in the (now very unlikely) case nothing is usable at all.
 """
 import json
 import os
+import shlex
 import shutil
 import subprocess
 
 CHOICE_PATH = os.path.expanduser("~/.mtdo/ai_backend_choice.json")
 
+GEMMA_MODEL = "gemma3:4b"
 
 NOTHING_CONFIGURED_MESSAGE = (
     "No AI backend found. Set up one of:\n\n"
     "  Claude Code -- npm install -g @anthropic-ai/claude-code\n"
     "  Ollama      -- install from ollama.com, then: ollama pull <model>\n"
-    "  API chat    -- export ANTHROPIC_API_KEY=... or OPENAI_API_KEY=...\n\n"
+    "  API chat    -- pick Claude/GPT/Gemini (API) and enter a key when asked\n\n"
     "Press C to try again after setting one up."
 )
 
 
 def list_available():
-    """Every backend that's actually usable right now, most-preferred first -- what
-    the backend-picker modal shows so the user chooses among real options instead of
-    a wishlist. Each entry is (command, label)."""
+    """Every backend offered right now, most-preferred first. Each entry is
+    (command, label). Local/installed backends come before API ones, since those
+    need no key and (for Claude Code and already-pulled Ollama models) no network
+    wait either."""
     options = []
     if shutil.which("claude"):
         options.append(("claude", "Claude Code"))
 
-    model = _first_ollama_model()
-    if model:
+    pulled = _pulled_ollama_models()
+    for model in pulled:
         options.append((f"ollama run {model}", f"Ollama ({model})"))
 
-    if os.environ.get("ANTHROPIC_API_KEY"):
-        options.append(("python3 -m mtdo.web_chat anthropic", "Claude (API)"))
-    if os.environ.get("OPENAI_API_KEY"):
-        options.append(("python3 -m mtdo.web_chat openai", "GPT (API)"))
+    if shutil.which("ollama"):
+        if GEMMA_MODEL not in pulled:
+            options.append((
+                f"ollama run {GEMMA_MODEL}",
+                f"Ollama ({GEMMA_MODEL}) -- downloads on first run",
+            ))
+    elif shutil.which("brew"):
+        options.append((_install_ollama_command(), "Install Ollama + gemma3:4b (first-time setup)"))
+
+    options.append(("python3 -m mtdo.web_chat anthropic", "Claude (API)"))
+    options.append(("python3 -m mtdo.web_chat openai", "GPT (API)"))
+    options.append(("python3 -m mtdo.web_chat gemini", "Gemini (API)"))
 
     return options
 
@@ -86,18 +104,30 @@ def load_choice():
         return None
 
 
-def _first_ollama_model():
+def _pulled_ollama_models():
     if not shutil.which("ollama"):
-        return None
+        return []
     try:
         result = subprocess.run(
             ["ollama", "list"], capture_output=True, text=True, timeout=5,
         )
     except (subprocess.SubprocessError, OSError):
-        return None
+        return []
     if result.returncode != 0:
-        return None
+        return []
     lines = [line for line in result.stdout.splitlines() if line.strip()]
-    if len(lines) < 2:  # header only (or nothing) -- no model pulled yet
-        return None
-    return lines[1].split()[0]
+    return [line.split()[0] for line in lines[1:]]  # skip the header row
+
+
+def _install_ollama_command():
+    """`ollama run` normally auto-starts Ollama's background service, but right after
+    a fresh `brew install` nothing is running yet -- explicitly start it and give it a
+    moment before the first `run`, so this works as one shot from a completely clean
+    machine instead of needing to be picked twice."""
+    script = (
+        "brew install ollama && "
+        "(ollama serve >/dev/null 2>&1 &) && "
+        "sleep 2 && "
+        f"ollama run {GEMMA_MODEL}"
+    )
+    return f"bash -lc {shlex.quote(script)}"
