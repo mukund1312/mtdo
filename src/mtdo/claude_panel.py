@@ -76,7 +76,7 @@ _SPECIAL_KEY_BYTES = {
 }
 
 _RELEASE_KEYS = {"f2"}
-_DOUBLE_ESCAPE_WINDOW = 0.6  # seconds
+_DOUBLE_ESCAPE_WINDOW = 1.2  # seconds -- see _on_key_impl for why this got bumped up
 
 
 _SCROLLBACK_LINES = 2000
@@ -399,10 +399,22 @@ class ClaudePanel(Widget):
             now = time.monotonic()
             if now - self._last_escape_at < _DOUBLE_ESCAPE_WINDOW:
                 self._last_escape_at = 0.0
+                self.border_subtitle = "Esc Esc (or F2) to leave"
                 self.blur()
                 event.stop()
                 return
+            # A lone Escape does nothing visible in most CLIs (readline/getpass
+            # prompts included), so without a cue here, someone pressing Escape,
+            # seeing nothing happen, and then pausing before trying again easily
+            # misses the window and never gets to "stuck" -- they just keep pressing
+            # single Escapes that each individually look like they did nothing.
             self._last_escape_at = now
+            self.border_subtitle = "Esc again to leave"
+            self.refresh()
+        elif self._last_escape_at:
+            self._last_escape_at = 0.0
+            self.border_subtitle = "Esc Esc (or F2) to leave"
+            self.refresh()
         event.stop()
         data = self._encode_key(event)
         if data:

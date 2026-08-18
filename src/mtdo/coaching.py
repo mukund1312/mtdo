@@ -127,6 +127,24 @@ EXPERT_TIPS = [
 ]
 
 
+def has_coaching_setup(block, category_meta):
+    """Whether there's any real coaching content for this task, or only the fully
+    generic fallback would apply. A task's own rich metadata, a field-level
+    coaching_framework, a topic_type, or field curriculum -- any of these means real
+    content exists. A bare fixed_labels checklist or free-text field with none of
+    that (e.g. "Gym", "Job Search" in the demo config) has nothing sensible to fall
+    back to: "What problem does a gym session solve?" doesn't mean anything, so the
+    panel should say plainly that nothing's set up here instead of showing generic
+    DSA-shaped boilerplate that doesn't fit the field."""
+    category_meta = category_meta or {}
+    return bool(
+        (block or {}).get("coaching")
+        or category_meta.get("coaching_framework")
+        or category_meta.get("topic_type")
+        or category_meta.get("curriculum")
+    )
+
+
 def build_coaching_content(block, category_meta=None):
     """Three-tier merge, most-specific wins per field:
 

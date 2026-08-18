@@ -1247,6 +1247,9 @@ class LearningCoachPanel(Static):
             self.update(self._idle_panel())
             return
         category_meta = tc.CATEGORY_META.get(active["category"])
+        if not coaching.has_coaching_setup(active["block"], category_meta):
+            self.update(self._no_coaching_panel(active["block"]["text"], category_meta))
+            return
         content = coaching.build_coaching_content(active["block"], category_meta)
         self.update(self._coach_panel(active["block"]["text"], content))
 
@@ -1257,6 +1260,17 @@ class LearningCoachPanel(Static):
             Text("Press space on a card to start one --", style="dim italic", justify="center"),
             Text("the coach activates for whatever you're", style="dim italic", justify="center"),
             Text("actively working on.", style="dim italic", justify="center"),
+        )
+        return Panel(body, title="Learning Coach", border_style="magenta", box=box.ROUNDED)
+
+    def _no_coaching_panel(self, task_text, category_meta):
+        label = (category_meta or {}).get("label", "this field")
+        body = Group(
+            Text(task_text, style="bold bright_white", justify="center", no_wrap=True, overflow="ellipsis"),
+            Text(""),
+            Text(f"No coaching content set up for {label} yet.", style="dim italic", justify="center"),
+            Text("Add a topic_type or coaching_framework to this", style="dim italic", justify="center"),
+            Text("field in goals.json to get guidance here.", style="dim italic", justify="center"),
         )
         return Panel(body, title="Learning Coach", border_style="magenta", box=box.ROUNDED)
 

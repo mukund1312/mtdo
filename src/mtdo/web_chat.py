@@ -27,6 +27,9 @@ import subprocess
 import sys
 
 SECRETS_PATH = os.path.expanduser("~/.mtdo/secrets.json")
+SECRETS_PATH_DISPLAY = "~/.mtdo/secrets.json"  # shown to the user -- the expanded
+# SECRETS_PATH always starts with their real home directory (their account name), no
+# reason to print that back at them
 
 _PROVIDERS = {
     "anthropic": {"env": ("ANTHROPIC_API_KEY",), "secrets_key": "anthropic_api_key", "display": "Anthropic"},
@@ -66,7 +69,7 @@ def get_api_key(provider):
     if value:
         return value
 
-    print(f"No {cfg['display']} API key found (checked {'/'.join(cfg['env'])} and {SECRETS_PATH}).")
+    print(f"No {cfg['display']} API key found (checked {'/'.join(cfg['env'])} and {SECRETS_PATH_DISPLAY}).")
     try:
         value = getpass.getpass(f"Paste your {cfg['display']} API key (input hidden): ").strip()
     except EOFError:
@@ -80,7 +83,7 @@ def get_api_key(provider):
         save = ""
     if save == "y":
         _save_secret(cfg["secrets_key"], value)
-        print(f"Saved to {SECRETS_PATH} (owner-only permissions).")
+        print(f"Saved to {SECRETS_PATH_DISPLAY} (owner-only permissions).")
     return value
 
 

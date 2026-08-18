@@ -355,13 +355,18 @@ def regress_status(state, date_key, category, idx):
 
 
 def current_active_task(state, today):
-    """First in_progress block for today, across categories -- the one Focus Mode centers on."""
-    key = today.isoformat()
-    day = state.get(key, {})
+    """First in_progress block, across categories -- the one Focus Mode and the
+    Learning Coach center on. Has to check backlog-carried blocks too (the same
+    lookback range blocks_for_category shows on the board), not just state[today]:
+    advance_status() mutates a block in place under its ORIGINAL date_key, it doesn't
+    move it to today when you advance a backlog card, so a card promoted straight
+    from Backlog to In Progress stayed invisible here -- Focus Mode and the Coach
+    would both claim nothing was active even with one clearly running on the board."""
     for category in categories_for_day(today):
-        for idx, blk in enumerate(day.get(category, [])):
-            if blk.get("status") == STATUS_IN_PROGRESS:
-                return {"date_key": key, "category": category, "idx": idx, "block": blk}
+        for row in blocks_for_category(state, category, today):
+            if row["block"].get("status") == STATUS_IN_PROGRESS:
+                return {"date_key": row["date_key"], "category": category,
+                        "idx": row["idx"], "block": row["block"]}
     return None
 
 

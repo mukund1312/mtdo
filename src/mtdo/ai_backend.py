@@ -41,6 +41,7 @@ import platform
 import shlex
 import shutil
 import subprocess
+import time
 
 CHOICE_PATH = os.path.expanduser("~/.mtdo/ai_backend_choice.json")
 
@@ -150,14 +151,43 @@ def ollama_run_command(model):
 
 
 def _pulled_ollama_models():
+    """Whatever's already pulled -- and, unlike a single `ollama list` call, actually
+    correct when the background service happens to be stopped (e.g. after a reboot,
+    or it was never left running). `ollama list` needs the service up to answer at
+    all; without this, the picker would silently claim nothing was pulled and offer
+    Gemma 3 4B as a fresh "downloads on first run" pick even after it's already on
+    disk -- confirmed by hand: stop the service, and a model that's genuinely pulled
+    disappears from this list until something starts it again."""
+    models = _try_ollama_list()
+    if models is not None:
+        return models
+    try:
+        subprocess.Popen(
+            ["ollama", "serve"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            start_new_session=True,
+        )
+    except OSError:
+        return []
+    for _ in range(8):
+        time.sleep(0.25)
+        models = _try_ollama_list()
+        if models is not None:
+            return models
+    return []
+
+
+def _try_ollama_list():
+    """Returns the pulled-model list, or None specifically when the service isn't
+    reachable -- distinct from an empty list, which means reachable but genuinely
+    nothing pulled yet."""
     try:
         result = subprocess.run(
             ["ollama", "list"], capture_output=True, text=True, timeout=5,
         )
     except (subprocess.SubprocessError, OSError):
-        return []
+        return None
     if result.returncode != 0:
-        return []
+        return None
     lines = [line for line in result.stdout.splitlines() if line.strip()]
     return [line.split()[0] for line in lines[1:]]  # skip the header row
 
