@@ -1,5 +1,5 @@
 """Minimal terminal chat REPL against the Anthropic, OpenAI, or Google (Gemini) API --
-the "browser-free" AI backends (see ai_backend.py): real access to Claude, GPT, or
+the "browser-free" AI backends (see ai_backend.py): real access to Claude, ChatGPT, or
 Gemini without ever opening an actual browser tab, which is the point of keeping the
 user inside the terminal. Deliberately bare-bones: one conversation, no tools, no file
 access. Its only job is "give the user a real model to talk to," not to reimplement
@@ -11,11 +11,19 @@ the picker regardless of whether a key is already set -- get_api_key() below che
 the usual env var first, then ~/.mtdo/secrets.json, and only then prompts (hidden
 input, via getpass) with an offer to remember it for next time. Models can be
 overridden with MTDO_ANTHROPIC_MODEL / MTDO_OPENAI_MODEL / MTDO_GEMINI_MODEL.
+
+Same story for the underlying SDK: if it's missing, _ensure_import() asks once
+("install it now with pip?") and, on yes, installs it right there before continuing --
+no separate trip to a shell needed. Handles Python installs that refuse a plain `pip
+install` outside a venv ("externally-managed-environment", common on Homebrew Python)
+by retrying with --break-system-packages, still gated behind that same single yes.
 """
 import getpass
+import importlib
 import json
 import os
 import stat
+import subprocess
 import sys
 
 SECRETS_PATH = os.path.expanduser("~/.mtdo/secrets.json")
@@ -84,11 +92,55 @@ def _read_line(prompt):
         return None
 
 
-def run_anthropic():
+def _pip_install(pip_name):
+    print(f"Installing {pip_name}...")
+    result = subprocess.run([sys.executable, "-m", "pip", "install", "--quiet", pip_name])
+    if result.returncode == 0:
+        return True
+    # Homebrew (and some Linux distro) Pythons refuse a plain install outside a venv --
+    # retry with the explicit override, but say so, since it's a real behavior change,
+    # not silently doing something more invasive than what was agreed to.
+    print("That Python won't take a plain pip install (looks externally managed).")
+    print("Retrying with --break-system-packages...")
+    result = subprocess.run(
+        [sys.executable, "-m", "pip", "install", "--quiet", "--break-system-packages", pip_name]
+    )
+    if result.returncode == 0:
+        return True
+    print(f"pip install failed (exit {result.returncode}). Install it yourself: "
+          f"{sys.executable} -m pip install {pip_name}")
+    return False
+
+
+def _ensure_import(module_name, pip_name):
+    """Imports `module_name`, installing `pip_name` via pip first -- with the user's
+    permission, asked once -- if it's missing. Returns the imported module, or None
+    if the user declined or the install failed."""
     try:
-        import anthropic
+        return importlib.import_module(module_name)
     except ImportError:
-        print("Missing dependency -- run: pip install anthropic")
+        pass
+    print(f"This needs the '{pip_name}' package, which isn't installed.")
+    try:
+        answer = input("Install it now with pip? [Y/n] ").strip().lower()
+    except EOFError:
+        print()
+        return None
+    if answer not in ("", "y", "yes"):
+        print("Skipping -- exiting.")
+        return None
+    if not _pip_install(pip_name):
+        return None
+    try:
+        return importlib.import_module(module_name)
+    except ImportError as e:
+        print(f"Installed but still couldn't import it: {e}")
+        return None
+
+
+def run_anthropic():
+    anthropic = _ensure_import("anthropic", "anthropic")
+    if anthropic is None:
         return
     key = get_api_key("anthropic")
     if not key:
@@ -121,10 +173,8 @@ def run_anthropic():
 
 
 def run_openai():
-    try:
-        import openai
-    except ImportError:
-        print("Missing dependency -- run: pip install openai")
+    openai = _ensure_import("openai", "openai")
+    if openai is None:
         return
     key = get_api_key("openai")
     if not key:
@@ -141,7 +191,7 @@ def run_openai():
         if not user.strip():
             continue
         history.append({"role": "user", "content": user})
-        print("gpt> ", end="", flush=True)
+        print("chatgpt> ", end="", flush=True)
         reply = ""
         try:
             stream = client.chat.completions.create(model=model, messages=history, stream=True)
@@ -158,10 +208,8 @@ def run_openai():
 
 
 def run_gemini():
-    try:
-        import google.generativeai as genai
-    except ImportError:
-        print("Missing dependency -- run: pip install google-generativeai")
+    genai = _ensure_import("google.generativeai", "google-generativeai")
+    if genai is None:
         return
     key = get_api_key("gemini")
     if not key:

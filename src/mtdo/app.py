@@ -668,7 +668,7 @@ HELP_SECTIONS = [
         ("q", "Quit the app"),
         ("r", "Refresh all panels"),
         ("f", "Toggle Focus Mode -- hides the board + stats, keeps Active Task/Pomodoro/Spotify/Learning Coach + AI panel"),
-        ("C", "Open the AI assistant panel (auto-enters Focus Mode) -- pick Claude Code, a local Ollama model, or Claude/GPT/Gemini via API"),
+        ("C", "Open the AI assistant panel (auto-enters Focus Mode) -- pick Claude Code, a local Ollama model, or Claude/ChatGPT/Gemini via API"),
         ("c", "Open the Career CRM"),
         ("v", "Open the Knowledge Vault"),
         ("A", "Add a new field (category) -- writes to goals.json, live-reloads immediately"),
@@ -809,7 +809,7 @@ ONBOARDING_STEPS = [
     ("AI Assistant Panel", [
         ("Shift+C", "start or focus the AI panel (auto-enters Focus Mode)"),
         "A real terminal session embedded right in the app -- Claude Code, a local "
-        "Ollama model, or Claude/GPT/Gemini over their own API, your pick from a menu.",
+        "Ollama model, or Claude/ChatGPT/Gemini over their own API, your pick from a menu.",
         ("esc esc", "double-tap Escape to release keyboard focus without ending the session"),
     ]),
     ("Pomodoro & Spotify", [
@@ -1723,17 +1723,35 @@ class TodoApp(App):
                     self.claude_panel.focus()
                 return
 
-            def on_choice(choice):
-                if choice is None:
-                    return
+            def start_backend(command, label):
                 try:
-                    command, label = choice
                     ai_backend.save_choice(command, label)
                     self.claude_panel.start_with(command, label)
                     self.claude_panel.focus()
                 except Exception:
                     app_log.exception("starting chosen AI backend failed")
                     self.toast(f"Claude Code panel hit an error -- see {LOG_PATH}", style="bold red")
+
+            def on_model_name(model):
+                model = (model or "").strip()
+                if not model:
+                    return
+                start_backend(ai_backend.ollama_run_command(model), f"Ollama ({model})")
+
+            def on_choice(choice):
+                if choice is None:
+                    return
+                command, label = choice
+                if command == ai_backend.PROMPT_CUSTOM_OLLAMA_MODEL:
+                    self.push_screen(
+                        TextPromptScreen(
+                            "Which Ollama model? (e.g. llama3.2, mistral, qwen2.5:7b -- "
+                            "see ollama.com/library)",
+                        ),
+                        on_model_name,
+                    )
+                    return
+                start_backend(command, label)
 
             self.push_screen(
                 AIBackendPickScreen(ai_backend.list_available(), remembered=ai_backend.load_choice()),

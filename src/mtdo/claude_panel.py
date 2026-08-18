@@ -79,8 +79,14 @@ _RELEASE_KEYS = {"f2"}
 _DOUBLE_ESCAPE_WINDOW = 0.6  # seconds
 
 
-class _PatchedScreen(pyte.Screen):
-    """Two fixes over stock pyte 0.8.2:
+_SCROLLBACK_LINES = 2000
+
+
+class _PatchedScreen(pyte.HistoryScreen):
+    """pyte.HistoryScreen instead of plain pyte.Screen for scrollback (prev_page() /
+    next_page(), wired to the mouse wheel below) -- they mutate self.buffer in place,
+    so the existing per-cell render loop needs no changes to show scrolled content.
+    Also two fixes over stock pyte 0.8.2:
 
     1. Screen.report_device_status() doesn't accept the `private` kwarg that
        streams.py always passes for DEC-private CSI sequences (e.g. `CSI ? 6 n`).
@@ -204,7 +210,7 @@ class ClaudePanel(Widget):
             return
 
         cols, rows = self._pty_size()
-        self._screen = _PatchedScreen(cols, rows, on_reply=self._write_reply)
+        self._screen = _PatchedScreen(cols, rows, history=_SCROLLBACK_LINES, on_reply=self._write_reply)
         self._stream = pyte.ByteStream(self._screen)
         self._ended = False
         self._error = None
@@ -355,6 +361,20 @@ class ClaudePanel(Widget):
                 self.app.action_toggle_claude()
         except Exception:
             log.exception("ClaudePanel on_click failed")
+
+    def on_mouse_scroll_up(self, event) -> None:
+        # Scroll into history -- doesn't need keyboard focus, same as scrolling any
+        # other pane with the wheel/trackpad.
+        if self._screen is not None:
+            self._screen.prev_page()
+            self.refresh()
+        event.stop()
+
+    def on_mouse_scroll_down(self, event) -> None:
+        if self._screen is not None:
+            self._screen.next_page()
+            self.refresh()
+        event.stop()
 
     def on_key(self, event: events.Key) -> None:
         try:

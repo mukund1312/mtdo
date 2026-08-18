@@ -8,15 +8,28 @@ mtdo), and includes -- in preference order:
 2. every local model Ollama already has pulled, via `ollama run <model>`
 3. Gemma 3 4B via Ollama specifically, always offered if Ollama is on PATH even when
    not pulled yet -- `ollama run` pulls on first use automatically, so picking it is
-   genuinely zero extra setup ("out of the box"), just a first-run download
-4. if Ollama itself isn't installed but Homebrew is (this is macOS), an option that
-   installs Ollama and starts it, then runs Gemma 3 4B -- so a user with *nothing*
-   still never has to leave the terminal to get a local model running
-5. Claude, GPT, and Gemini via their own APIs (web_chat.py) -- always offered
+   genuinely zero extra setup ("out of the box"), just a first-run download. Every
+   Ollama command here (this one included) first makes sure `ollama serve` is
+   actually running before the `run` -- it does NOT reliably auto-start on its own
+   (confirmed by hand: a fresh install leaves nothing listening, and `ollama run`
+   just fails with "could not connect to a running Ollama instance").
+4. a picker entry to run *any* Ollama model by name (not just Gemma) -- prompts for
+   a model tag via a text prompt, see app.OnboardingScreen's sibling,
+   PROMPT_CUSTOM_OLLAMA_MODEL below and TodoApp.action_toggle_claude's on_choice
+5. if Ollama itself isn't installed, an option that installs it via Ollama's own
+   official install script (ollama.com/install.sh -- works on macOS and Linux, no
+   Homebrew dependency) and starts it, then runs Gemma 3 4B -- so a user with
+   *nothing* installed still never has to leave the terminal. Not offered at all on
+   an unsupported OS (Windows has no shell one-liner for this, and mtdo's AI panel
+   itself needs a POSIX pty, so it can't run there regardless -- see
+   list_available()'s platform check).
+6. Claude, ChatGPT, and Gemini via their own APIs (web_chat.py) -- always offered
    regardless of whether a key is already set, since web_chat.py prompts for one
-   (and offers to remember it) the first time it's actually picked. This is the
-   "browser-free" option: real access to any of the big three without ever opening a
-   browser tab, which is the whole point of keeping the user inside the terminal.
+   (and offers to remember it) the first time it's actually picked, and now also
+   offers to install its own SDK dependency automatically if that's missing too.
+   This is the "browser-free" option: real access to any of the big three without
+   ever opening a browser tab, which is the whole point of keeping the user inside
+   the terminal.
 
 detect() returns list_available()'s first entry for callers that don't want to
 prompt (e.g. ClaudePanel.start() with no pinned command), or (None,
@@ -24,6 +37,7 @@ NOTHING_CONFIGURED_MESSAGE) in the (now very unlikely) case nothing is usable at
 """
 import json
 import os
+import platform
 import shlex
 import shutil
 import subprocess
@@ -32,11 +46,16 @@ CHOICE_PATH = os.path.expanduser("~/.mtdo/ai_backend_choice.json")
 
 GEMMA_MODEL = "gemma3:4b"
 
+# Sentinel "command" for the picker's "run any Ollama model" entry -- app.py's
+# on_choice special-cases this instead of starting a session directly, since it needs
+# to prompt for a model name first. Not a real shell command, never reaches Popen.
+PROMPT_CUSTOM_OLLAMA_MODEL = "__prompt_custom_ollama_model__"
+
 NOTHING_CONFIGURED_MESSAGE = (
     "No AI backend found. Set up one of:\n\n"
     "  Claude Code -- npm install -g @anthropic-ai/claude-code\n"
     "  Ollama      -- install from ollama.com, then: ollama pull <model>\n"
-    "  API chat    -- pick Claude/GPT/Gemini (API) and enter a key when asked\n\n"
+    "  API chat    -- pick Claude/ChatGPT/Gemini (API) and enter a key when asked\n\n"
     "Press C to try again after setting one up."
 )
 
@@ -50,21 +69,25 @@ def list_available():
     if shutil.which("claude"):
         options.append(("claude", "Claude Code"))
 
-    pulled = _pulled_ollama_models()
+    has_ollama = shutil.which("ollama") is not None
+    pulled = _pulled_ollama_models() if has_ollama else []
     for model in pulled:
-        options.append((f"ollama run {model}", f"Ollama ({model})"))
+        options.append((ollama_run_command(model), f"Ollama ({model})"))
 
-    if shutil.which("ollama"):
+    if has_ollama:
         if GEMMA_MODEL not in pulled:
             options.append((
-                f"ollama run {GEMMA_MODEL}",
+                ollama_run_command(GEMMA_MODEL),
                 f"Ollama ({GEMMA_MODEL}) -- downloads on first run",
             ))
-    elif shutil.which("brew"):
+        options.append((PROMPT_CUSTOM_OLLAMA_MODEL, "Ollama -- run any model (type the name)"))
+    elif platform.system() in ("Darwin", "Linux"):
         options.append((_install_ollama_command(), "Install Ollama + gemma3:4b (first-time setup)"))
+    # else: no shell one-liner for this on Windows, and the AI panel itself needs a
+    # POSIX pty anyway -- nothing usable to offer here, so nothing is added.
 
     options.append(("python3 -m mtdo.web_chat anthropic", "Claude (API)"))
-    options.append(("python3 -m mtdo.web_chat openai", "GPT (API)"))
+    options.append(("python3 -m mtdo.web_chat openai", "ChatGPT (API)"))
     options.append(("python3 -m mtdo.web_chat gemini", "Gemini (API)"))
 
     return options
@@ -73,10 +96,11 @@ def list_available():
 def detect():
     """The single best available backend, for callers that don't want to prompt --
     e.g. ClaudePanel.start() when no explicit command was pinned. Returns (command,
-    label), or (None, NOTHING_CONFIGURED_MESSAGE) if nothing is usable."""
-    options = list_available()
-    if options:
-        return options[0]
+    label), or (None, NOTHING_CONFIGURED_MESSAGE) if nothing is usable. Skips the
+    "run any model" prompt entry since there's no one here to answer a prompt."""
+    for command, label in list_available():
+        if command != PROMPT_CUSTOM_OLLAMA_MODEL:
+            return command, label
     return None, NOTHING_CONFIGURED_MESSAGE
 
 
@@ -104,9 +128,19 @@ def load_choice():
         return None
 
 
+def ollama_run_command(model):
+    """Wraps `ollama run <model>` so the background service is actually up first.
+    `ollama run` does NOT reliably auto-start it (verified by hand: right after a
+    fresh install, nothing is listening, and a plain `ollama run` just fails with
+    "could not connect to a running Ollama instance"). Starting it again when one's
+    already running is harmless and fast -- it just fails to bind the port and exits,
+    which is why this is safe to prepend unconditionally rather than trying to first
+    detect whether a server's already up."""
+    script = f"(ollama serve >/dev/null 2>&1 &) ; sleep 1 ; ollama run {shlex.quote(model)}"
+    return f"bash -lc {shlex.quote(script)}"
+
+
 def _pulled_ollama_models():
-    if not shutil.which("ollama"):
-        return []
     try:
         result = subprocess.run(
             ["ollama", "list"], capture_output=True, text=True, timeout=5,
@@ -120,12 +154,12 @@ def _pulled_ollama_models():
 
 
 def _install_ollama_command():
-    """`ollama run` normally auto-starts Ollama's background service, but right after
-    a fresh `brew install` nothing is running yet -- explicitly start it and give it a
-    moment before the first `run`, so this works as one shot from a completely clean
-    machine instead of needing to be picked twice."""
+    """Ollama's own official install script (not Homebrew) -- works the same way on
+    macOS and Linux, so this isn't tied to any one package manager. Starts the
+    service and runs Gemma 3 4B right after, so this works as one shot from a
+    completely clean machine."""
     script = (
-        "brew install ollama && "
+        "curl -fsSL https://ollama.com/install.sh | sh && "
         "(ollama serve >/dev/null 2>&1 &) && "
         "sleep 2 && "
         f"ollama run {GEMMA_MODEL}"
