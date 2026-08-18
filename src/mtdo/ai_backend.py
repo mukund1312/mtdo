@@ -34,16 +34,33 @@ mtdo), and includes -- in preference order:
 detect() returns list_available()'s first entry for callers that don't want to
 prompt (e.g. ClaudePanel.start() with no pinned command), or (None,
 NOTHING_CONFIGURED_MESSAGE) in the (now very unlikely) case nothing is usable at all.
+
+Persistent memory across sessions: unlike Claude Code (which already has its own
+CLAUDE.md / session-resume story), a bare `ollama run` REPL has zero memory beyond one
+session's context window -- exit it and the next `ollama run` starts from nothing.
+~/.mtdo/memory.md is a plain, user-curated file (same idea as CLAUDE.md: "here's what
+you should always know about me") that ollama_run_command() loads as a real system
+prompt on every Ollama session, via Ollama's own Modelfile mechanism -- verified by
+hand in a real pty that `ollama create` reuses the base model's existing weight layers
+(~0.07s, no meaningful extra disk) and that the resulting model's SYSTEM prompt
+actually takes effect on chat responses. web_chat.py loads the same file as each API's
+own system-prompt parameter for the same reason. Nothing auto-writes to this file --
+a bare Ollama/API chat has no file-write tools to keep it updated itself, so it's
+meant to be curated by hand (or by asking Claude Code, which *does* have file access,
+to help draft or refresh it).
 """
 import json
 import os
 import platform
+import re
 import shlex
 import shutil
 import subprocess
 import time
 
 CHOICE_PATH = os.path.expanduser("~/.mtdo/ai_backend_choice.json")
+MEMORY_PATH = os.path.expanduser("~/.mtdo/memory.md")
+_MEMORY_MODELFILE_PATH = os.path.expanduser("~/.mtdo/.ollama_memory_modelfile")
 
 GEMMA_MODEL = "gemma3:4b"
 
@@ -141,13 +158,50 @@ def ollama_run_command(model):
     Actively polls readiness (`ollama list` succeeding) for up to 5s instead of a
     blind sleep -- a fixed sleep is a race: fine most of the time, but a slower first
     boot (cold disk cache, GPU detection) can still lose it, and the fix must be a
-    poll, not a longer guess."""
+    poll, not a longer guess.
+
+    If ~/.mtdo/memory.md exists and has content, runs a derived model with it baked
+    in as a real system prompt (see module docstring) instead of the bare model --
+    falls back to the bare model if building that derived model fails for any reason,
+    so a memory.md problem never blocks starting a session at all."""
+    run_target = f"ollama run {shlex.quote(model)}"
+    memory = _read_memory()
+    if memory:
+        tag = _memory_model_tag(model)
+        if _write_memory_modelfile(model, memory):
+            run_target = (
+                f"ollama create {shlex.quote(tag)} -f {shlex.quote(_MEMORY_MODELFILE_PATH)} "
+                f">/dev/null 2>&1 && ollama run {shlex.quote(tag)} || {run_target}"
+            )
     script = (
         "(ollama serve >/dev/null 2>&1 &) ; "
         "for i in $(seq 1 20); do ollama list >/dev/null 2>&1 && break; sleep 0.25; done ; "
-        f"ollama run {shlex.quote(model)}"
+        f"{run_target}"
     )
     return f"bash -lc {shlex.quote(script)}"
+
+
+def _read_memory():
+    try:
+        with open(MEMORY_PATH) as f:
+            content = f.read().strip()
+    except OSError:
+        return None
+    return content or None
+
+
+def _memory_model_tag(model):
+    return f"mtdo-mem-{re.sub(r'[^a-zA-Z0-9_.-]', '-', model)}"
+
+
+def _write_memory_modelfile(model, memory):
+    try:
+        os.makedirs(os.path.dirname(_MEMORY_MODELFILE_PATH), exist_ok=True)
+        with open(_MEMORY_MODELFILE_PATH, "w") as f:
+            f.write(f'FROM {model}\nSYSTEM """{memory}"""\n')
+        return True
+    except OSError:
+        return False
 
 
 def _pulled_ollama_models():

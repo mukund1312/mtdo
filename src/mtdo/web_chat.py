@@ -87,6 +87,21 @@ def get_api_key(provider):
     return value
 
 
+MEMORY_PATH = os.path.expanduser("~/.mtdo/memory.md")
+
+
+def _read_memory():
+    """~/.mtdo/memory.md, loaded as this chat's system prompt if it exists and has
+    content -- see ai_backend.py's module docstring for the full story (same file
+    Ollama sessions load too, via a derived Modelfile there instead)."""
+    try:
+        with open(MEMORY_PATH) as f:
+            content = f.read().strip()
+    except OSError:
+        return None
+    return content or None
+
+
 def _read_line(prompt):
     try:
         return input(prompt)
@@ -151,8 +166,11 @@ def run_anthropic():
         return
     model = os.environ.get("MTDO_ANTHROPIC_MODEL", "claude-sonnet-5")
     client = anthropic.Anthropic(api_key=key)
+    memory = _read_memory()
     history = []
     print(f"Chatting with {model} (Anthropic API). Ctrl+D to exit.\n")
+    if memory:
+        print(f"(loaded {MEMORY_PATH} as context)\n")
     while True:
         user = _read_line("you> ")
         if user is None:
@@ -163,7 +181,10 @@ def run_anthropic():
         print("claude> ", end="", flush=True)
         reply = ""
         try:
-            with client.messages.stream(model=model, max_tokens=2048, messages=history) as stream:
+            stream_kwargs = {"model": model, "max_tokens": 2048, "messages": history}
+            if memory:
+                stream_kwargs["system"] = memory
+            with client.messages.stream(**stream_kwargs) as stream:
                 for text in stream.text_stream:
                     print(text, end="", flush=True)
                     reply += text
@@ -185,8 +206,11 @@ def run_openai():
         return
     model = os.environ.get("MTDO_OPENAI_MODEL", "gpt-4o")
     client = openai.OpenAI(api_key=key)
-    history = []
+    memory = _read_memory()
+    history = [{"role": "system", "content": memory}] if memory else []
     print(f"Chatting with {model} (OpenAI API). Ctrl+D to exit.\n")
+    if memory:
+        print(f"(loaded {MEMORY_PATH} as context)\n")
     while True:
         user = _read_line("you> ")
         if user is None:
@@ -220,8 +244,12 @@ def run_gemini():
         return
     genai.configure(api_key=key)
     model_name = os.environ.get("MTDO_GEMINI_MODEL", "gemini-2.0-flash")
-    chat = genai.GenerativeModel(model_name).start_chat(history=[])
+    memory = _read_memory()
+    model_kwargs = {"system_instruction": memory} if memory else {}
+    chat = genai.GenerativeModel(model_name, **model_kwargs).start_chat(history=[])
     print(f"Chatting with {model_name} (Gemini API). Ctrl+D to exit.\n")
+    if memory:
+        print(f"(loaded {MEMORY_PATH} as context)\n")
     while True:
         user = _read_line("you> ")
         if user is None:
