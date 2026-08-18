@@ -16,6 +16,7 @@ from . import core as tc
 from . import config as appconfig
 from . import coaching
 from .claude_panel import ClaudePanel
+from .errorlog import LOG_PATH, log as app_log
 
 from textual.app import App, ComposeResult
 from textual.containers import Horizontal, Vertical, VerticalScroll, Center, Middle
@@ -1488,15 +1489,30 @@ class TodoApp(App):
         if not self.focus_mode:
             self.toast("Claude Code lives in Focus Mode -- press f first", style="bold yellow")
             return
-        if self.claude_panel.has_focus:
-            self.claude_panel.blur()
-            return
-        self.claude_panel.start()
-        self.claude_panel.focus()
+        try:
+            if self.claude_panel.has_focus:
+                self.claude_panel.blur()
+                return
+            self.claude_panel.start()
+            self.claude_panel.focus()
+        except Exception:
+            app_log.exception("action_toggle_claude failed")
+            self.toast(f"Claude Code panel hit an error -- see {LOG_PATH}", style="bold red")
 
     def action_quit(self):
-        self.claude_panel.stop()
+        try:
+            self.claude_panel.stop()
+        except Exception:
+            app_log.exception("failed to stop claude panel on quit")
         self.exit()
+
+    def _handle_exception(self, error: Exception) -> None:
+        """Overrides Textual's private hook so any uncaught crash -- not just ones in
+        the Claude panel -- lands in ~/.mtdo/error.log before the normal crash screen
+        shows, since that screen (and its traceback) disappears the moment the
+        terminal's alternate screen buffer closes."""
+        app_log.error("mtdo crashed", exc_info=error)
+        super()._handle_exception(error)
 
     def action_open_career(self):
         self.push_screen(CareerScreen(self), callback=lambda _r=None: self.refresh_side_panels())

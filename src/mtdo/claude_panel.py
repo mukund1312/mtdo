@@ -1,32 +1,53 @@
 """Embeds a live `claude` (Claude Code CLI) session directly inside mtdo's Focus Mode,
 in the space that opens up in the bottom-right column once the kanban board and
-stats/calendar panels are hidden. Runs `claude` in a real pty (so it behaves exactly
-like it does in a normal terminal -- colors, its own TUI, everything) and uses pyte to
-turn the pty's raw output into a screen buffer this widget renders each frame. Built by
-hand rather than pulling in the `textual-terminal` package because that package's
-internals only work against Textual ~0.70 and break on the current Textual (8.x) that
-the rest of this app already relies on.
+stats/calendar panels are hidden. Runs `claude` in a real pty and uses pyte to turn the
+pty's raw output into a screen buffer this widget renders each frame. Built by hand
+rather than pulling in the `textual-terminal` package because that package's internals
+only work against Textual ~0.70 and break on the current Textual (8.x) that the rest of
+this app already relies on.
+
+Spawns the child via os.openpty() + subprocess.Popen (with preexec_fn=os.setsid),
+*not* pty.fork()/os.fork(). Textual runs its own background input-reader thread, so
+this process is multithreaded by the time a session starts -- raw fork() of a
+multithreaded process is a well-known source of intermittent deadlocks/crashes on
+macOS (only the calling thread survives into the child; locks held by other threads at
+fork time stay locked forever). subprocess.Popen's C-level fork+exec path is written to
+be async-signal-safe between fork and exec and avoids that hazard entirely.
+
+Every method that touches the pty, the subprocess, or pyte's parser is wrapped so a
+failure can't crash the whole mtdo app: it's logged to ~/.mtdo/error.log (see
+errorlog.py) and surfaced as a short message in the pane instead.
 
 Lifecycle: the process is started lazily on first "C" (see TodoApp.action_toggle_claude),
 persists across focus-mode toggles so you don't lose your session, and is torn down on
 unmount/app exit. While the panel has keyboard focus every key is forwarded to the pty
-(so `q`, `f`, etc. reach claude instead of mtdo's own bindings) except F2, which always
-releases focus back to mtdo.
+(so `q`, `f`, etc. reach claude instead of mtdo's own bindings) -- except double-tap
+Escape (press Escape twice within ~0.6s), which always releases focus back to mtdo. A
+single Escape still forwards to claude normally (it's claude's own cancel key). Two
+keys were tried and rejected for this: F2 doesn't reach the terminal on most laptop
+keyboards unless Fn is held (the top row defaults to media keys), and Ctrl+Q turned out
+to be a Textual built-in *priority* binding for "quit the whole app" -- priority
+bindings intercept before a focused widget's on_key ever runs, so it silently killed
+mtdo instead of releasing focus. F2 is still accepted too, for anyone on a keyboard
+that does send real F-keys.
 """
 import fcntl
 import os
-import pty
 import shlex
 import signal
 import struct
+import subprocess
 import termios
 import threading
+import time
 
 import pyte
 from rich.style import Style
 from rich.text import Text
 from textual import events
 from textual.widget import Widget
+
+from .errorlog import LOG_PATH, log
 
 _NAMED_COLORS = {
     "black": "black", "red": "red", "green": "green", "brown": "yellow",
@@ -38,7 +59,7 @@ _NAMED_COLORS = {
 
 _SPECIAL_KEY_BYTES = {
     "enter": b"\r", "escape": b"\x1b", "tab": b"\t", "shift+tab": b"\x1b[Z",
-    "backspace": b"\x7f", "delete": b"\x1b[3~",
+    "backspace": b"\x7f", "delete": b"\x1b[3~", "space": b" ",
     "up": b"\x1b[A", "down": b"\x1b[B", "right": b"\x1b[C", "left": b"\x1b[D",
     "home": b"\x1b[H", "end": b"\x1b[F",
     "pageup": b"\x1b[5~", "pagedown": b"\x1b[6~", "insert": b"\x1b[2~",
@@ -46,6 +67,9 @@ _SPECIAL_KEY_BYTES = {
     "f6": b"\x1b[17~", "f7": b"\x1b[18~", "f8": b"\x1b[19~",
     "f9": b"\x1b[20~", "f10": b"\x1b[21~", "f11": b"\x1b[23~", "f12": b"\x1b[24~",
 }
+
+_RELEASE_KEYS = {"f2"}
+_DOUBLE_ESCAPE_WINDOW = 0.6  # seconds
 
 
 def _rich_color(name):
@@ -88,12 +112,15 @@ class ClaudePanel(Widget):
         self.command = command
         self._master_fd = None
         self._pid = None
+        self._proc = None
         self._screen = None
         self._stream = None
         self._pty_running = False
         self._ended = False
+        self._error = None
+        self._last_escape_at = 0.0
         self.border_title = "Claude Code"
-        self.border_subtitle = "C to start · F2 to leave"
+        self.border_subtitle = "C to start · Esc Esc to leave"
 
     # -- process lifecycle -------------------------------------------------
 
@@ -102,33 +129,58 @@ class ClaudePanel(Widget):
         No-op if a session is already running."""
         if self._pty_running:
             return
+        try:
+            self._start_impl()
+        except Exception:
+            log.exception("ClaudePanel.start failed")
+            self._error = f"Couldn't start Claude Code -- see {LOG_PATH}"
+            self._ended = True
+            self._pty_running = False
+            self.refresh()
+
+    def _start_impl(self):
         cols, rows = self._pty_size()
         self._screen = pyte.Screen(cols, rows)
         self._stream = pyte.ByteStream(self._screen)
         self._ended = False
-        pid, master_fd = pty.fork()
-        if pid == 0:
-            env = os.environ.copy()
-            env["TERM"] = "xterm-256color"
-            try:
-                os.execvpe(shlex.split(self.command)[0], shlex.split(self.command), env)
-            finally:
-                os._exit(1)  # exec failed -- never fall back into the parent's code
-        self._pid = pid
+        self._error = None
+        master_fd, slave_fd = os.openpty()
+        winsize = struct.pack("HHHH", rows, cols, 0, 0)
+        fcntl.ioctl(master_fd, termios.TIOCSWINSZ, winsize)
+        env = os.environ.copy()
+        env["TERM"] = "xterm-256color"
+        try:
+            proc = subprocess.Popen(
+                shlex.split(self.command),
+                stdin=slave_fd, stdout=slave_fd, stderr=slave_fd,
+                preexec_fn=os.setsid,
+                env=env,
+                close_fds=True,
+            )
+        finally:
+            os.close(slave_fd)
+        self._proc = proc
+        self._pid = proc.pid
         self._master_fd = master_fd
-        self._set_pty_size(cols, rows)
         self._pty_running = True
         threading.Thread(target=self._read_loop, daemon=True).start()
         self.refresh()
 
     def stop(self):
+        try:
+            self._stop_impl()
+        except Exception:
+            log.exception("ClaudePanel.stop failed")
+
+    def _stop_impl(self):
         self._pty_running = False
         if self._pid is not None:
             try:
                 os.killpg(os.getpgid(self._pid), signal.SIGTERM)
-            except (ProcessLookupError, PermissionError):
+            except (ProcessLookupError, PermissionError, OSError):
                 pass
             self._pid = None
+        self._proc = None
         if self._master_fd is not None:
             try:
                 os.close(self._master_fd)
@@ -155,18 +207,10 @@ class ClaudePanel(Widget):
             pass
 
     def _read_loop(self):
-        while self._pty_running:
-            try:
-                data = os.read(self._master_fd, 4096)
-            except OSError:
-                break
-            if not data:
-                break
-            self._stream.feed(data)
-            try:
-                self.app.call_from_thread(self.refresh)
-            except Exception:
-                break
+        try:
+            self._read_loop_impl()
+        except Exception:
+            log.exception("ClaudePanel reader thread crashed")
         self._pty_running = False
         self._ended = True
         try:
@@ -174,20 +218,71 @@ class ClaudePanel(Widget):
         except Exception:
             pass
 
+    def _read_loop_impl(self):
+        while self._pty_running:
+            try:
+                data = os.read(self._master_fd, 4096)
+            except OSError as e:
+                log.info("ClaudePanel read loop ending: %s", e)
+                break
+            if not data:
+                exit_code = self._proc.poll() if self._proc else None
+                log.info("ClaudePanel read loop got EOF, subprocess exit code: %s", exit_code)
+                break
+            try:
+                self._stream.feed(data)
+            except Exception:
+                log.exception("pyte failed to parse %d bytes of claude output -- skipping", len(data))
+                continue
+            self.app.call_from_thread(self.refresh)
+
     def on_resize(self, event: events.Resize) -> None:
+        # Hiding the pane (leaving Focus Mode) still fires a resize down to a
+        # degenerate content_size (0, 0) -- forwarding that to the real pty as a
+        # winsize change reliably makes claude's own UI exit outright. There's also
+        # nothing to redraw for an invisible pane, so skip entirely while hidden.
+        if self._screen is None or not self.display:
+            return
+        self._sync_pty_size()
+
+    def on_show(self) -> None:
+        # The pane's on-screen dimensions can drift while hidden (other panels
+        # resizing, a terminal window resize) without any resize event reaching us,
+        # since we skip those while hidden -- catch up now that we're visible again.
+        self._sync_pty_size()
+
+    def _sync_pty_size(self):
         if self._screen is None:
             return
-        cols, rows = self._pty_size()
-        self._screen.resize(rows, cols)
-        self._set_pty_size(cols, rows)
+        try:
+            cols, rows = self._pty_size()
+            self._screen.resize(rows, cols)
+            self._set_pty_size(cols, rows)
+        except Exception:
+            log.exception("ClaudePanel resize failed")
 
     # -- input ----------------------------------------------------------------
 
     def on_key(self, event: events.Key) -> None:
-        if event.key == "f2":
+        try:
+            self._on_key_impl(event)
+        except Exception:
+            log.exception("ClaudePanel on_key failed for key=%r", getattr(event, "key", None))
+            event.stop()
+
+    def _on_key_impl(self, event: events.Key) -> None:
+        if event.key in _RELEASE_KEYS:
             self.blur()
             event.stop()
             return
+        if event.key == "escape":
+            now = time.monotonic()
+            if now - self._last_escape_at < _DOUBLE_ESCAPE_WINDOW:
+                self._last_escape_at = 0.0
+                self.blur()
+                event.stop()
+                return
+            self._last_escape_at = now
         event.stop()
         if not self._pty_running or self._master_fd is None:
             return
@@ -195,8 +290,8 @@ class ClaudePanel(Widget):
         if data:
             try:
                 os.write(self._master_fd, data)
-            except OSError:
-                pass
+            except OSError as e:
+                log.info("ClaudePanel write failed (session probably ended): %s", e)
 
     def _encode_key(self, event: events.Key):
         if event.key in _SPECIAL_KEY_BYTES:
@@ -210,6 +305,15 @@ class ClaudePanel(Widget):
     # -- rendering --------------------------------------------------------------
 
     def render(self):
+        try:
+            return self._render_impl()
+        except Exception:
+            log.exception("ClaudePanel render failed")
+            return Text(f"Render error -- see {LOG_PATH}", style="bold red")
+
+    def _render_impl(self):
+        if self._error:
+            return Text(self._error, style="bold red", justify="center")
         if self._screen is None:
             return Text(
                 "No Claude Code session yet.\nPress C to start one here.",
@@ -234,6 +338,6 @@ class ClaudePanel(Widget):
                     run_text, run_style = char.data, style
             if run_text:
                 out.append(run_text, style=run_style)
-        if self._ended:
+        if self._ended and not self._error:
             out.append("\n\n[session ended -- press C to start a new one]", style="dim italic yellow")
         return out
