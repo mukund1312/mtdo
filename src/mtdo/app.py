@@ -11,11 +11,14 @@ import datetime
 import os
 import re
 import subprocess
+import threading
 
 from . import core as tc
 from . import config as appconfig
 from . import coaching
 from . import ai_backend
+from . import ai_ask
+from . import code_runner
 from . import music
 from . import plan_wizard
 from .claude_panel import ClaudePanel
@@ -24,7 +27,7 @@ from .errorlog import LOG_PATH, log as app_log
 
 from textual.app import App, ComposeResult
 from textual.containers import Horizontal, Vertical, VerticalScroll, Center, Middle
-from textual.widgets import Static, ListView, ListItem, Label, Input, Footer, TextArea
+from textual.widgets import Static, ListView, ListItem, Label, Input, Footer, TextArea, Button
 from textual.screen import ModalScreen, Screen
 from textual.reactive import reactive
 from rich.text import Text
@@ -670,11 +673,197 @@ HELP_SECTIONS = [
         ("d", "Delete the highlighted note"),
         ("esc / q", "Back to the board"),
     ]),
+    ("Practice Lab (press Shift+L to open -- language picker, editor, run, AI complexity estimate)", [
+        ("click", "Pick Python / Java / C / C++ from the language row"),
+        ("ctrl+r", "Run the code, see real output and real run time"),
+        ("ctrl+b", "Ask the AI for a time/space complexity estimate (\"B\" for Big-O)"),
+        ("esc / q", "Back to the board"),
+    ]),
     ("Text prompt popups", [
         ("enter", "Save"),
         ("escape", "Cancel"),
     ]),
 ]
+
+
+class PracticeScreen(Screen):
+    """The "LeetCode-style" practice screen: a language picker, a real code editor
+    (Textual's TextArea -- syntax-highlighted for Python/Java, which are the only
+    two of the four with a built-in tree-sitter grammar shipped with Textual; C/C++
+    still fully edit and run, just without color, see code_runner.TEXTAREA_LANGUAGE),
+    an output panel showing what the code actually printed plus how long it
+    genuinely took to run, and a separate complexity panel showing an AI's Big-O
+    estimate for time and space. Those two are kept in visibly separate panels on
+    purpose: run time is a real measurement, complexity is an AI's estimate, and
+    blending them in one panel would make an estimate look like a fact.
+
+    A full screen rather than squeezed into Focus Mode's row alongside the Learning
+    Coach/AI panel/plain practice terminal -- a language picker + editor + output +
+    complexity genuinely needs more room than a 1/3-width column, the same reason
+    Career CRM and the Knowledge Vault are their own screens instead of panels."""
+
+    BINDINGS = [
+        ("escape", "close", "Back"),
+        ("q", "close", "Back"),
+        ("ctrl+r", "run_code", "Run"),
+        ("ctrl+b", "analyze_complexity", "Analyze Complexity"),  # "B" for Big-O -- ctrl+a is TextArea's own select-all binding and never reaches here while the editor has focus
+    ]
+
+    CSS = """
+    PracticeScreen { layout: vertical; }
+    #practice-lang-row { height: 3; dock: top; padding: 0 1; }
+    #practice-lang-row Button { margin: 0 1 0 0; min-width: 10; }
+    #practice-body { height: 1fr; }
+    #practice-editor-col { width: 2fr; }
+    #practice-side-col { width: 1fr; }
+    #practice-editor { height: 1fr; }
+    #practice-output-scroll, #practice-complexity-scroll { height: 1fr; }
+    #practice-help { height: 1; dock: bottom; padding: 0 1; }
+    """
+
+    _LANG_BUTTON_IDS = {"python": "lang-python", "java": "lang-java", "c": "lang-c", "cpp": "lang-cpp"}
+
+    def __init__(self):
+        super().__init__()
+        self.language = "python"
+        self.code_by_language = dict(code_runner.TEMPLATES)
+
+    def compose(self) -> ComposeResult:
+        with Horizontal(id="practice-lang-row"):
+            for lang in code_runner.LANGUAGES:
+                yield Button(
+                    code_runner.LANGUAGE_LABELS[lang],
+                    id=self._LANG_BUTTON_IDS[lang],
+                    variant="primary" if lang == self.language else "default",
+                )
+        with Horizontal(id="practice-body"):
+            with Vertical(id="practice-editor-col"):
+                self.editor = TextArea(
+                    self.code_by_language[self.language],
+                    language=code_runner.TEXTAREA_LANGUAGE[self.language],
+                    show_line_numbers=True,
+                    id="practice-editor",
+                )
+                yield self.editor
+            with Vertical(id="practice-side-col"):
+                with VerticalScroll(id="practice-output-scroll"):
+                    self.output_panel = Static(self._idle_output(), id="practice-output")
+                    yield self.output_panel
+                with VerticalScroll(id="practice-complexity-scroll"):
+                    self.complexity_panel = Static(self._idle_complexity(), id="practice-complexity")
+                    yield self.complexity_panel
+        yield Static("Ctrl+R run  ·  Ctrl+B analyze complexity  ·  Esc/q back", id="practice-help", classes="dim")
+
+    def on_mount(self):
+        self.editor.focus()
+
+    def action_close(self):
+        self.dismiss()
+
+    # -- language picker -------------------------------------------------
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        for lang, btn_id in self._LANG_BUTTON_IDS.items():
+            if event.button.id == btn_id:
+                self._switch_language(lang)
+                return
+
+    def _switch_language(self, lang):
+        if lang == self.language:
+            self.editor.focus()
+            return
+        self.code_by_language[self.language] = self.editor.text
+        self.language = lang
+        self.editor.language = code_runner.TEXTAREA_LANGUAGE[lang]
+        self.editor.text = self.code_by_language[lang]
+        for l, btn_id in self._LANG_BUTTON_IDS.items():
+            self.query_one(f"#{btn_id}", Button).variant = "primary" if l == lang else "default"
+        self.editor.focus()
+
+    # -- run ---------------------------------------------------------------
+
+    def _idle_output(self):
+        return Panel(
+            Text("Ctrl+R to run your code here.", style="dim italic", justify="center"),
+            title="Output", border_style="green", box=box.ROUNDED,
+        )
+
+    def action_run_code(self):
+        code = self.editor.text
+        language = self.language
+        self.output_panel.update(Panel(
+            Text("Running...", style="dim italic", justify="center"),
+            title="Output", border_style="green", box=box.ROUNDED,
+        ))
+        threading.Thread(target=self._run_code_worker, args=(language, code), daemon=True).start()
+
+    def _run_code_worker(self, language, code):
+        try:
+            result = code_runner.run(language, code)
+        except Exception as e:
+            app_log.exception("PracticeScreen run failed")
+            self.app.call_from_thread(self._show_run_error, str(e))
+            return
+        self.app.call_from_thread(self._show_run_result, result)
+
+    def _show_run_result(self, result):
+        status, color = ("OK", "bright_green") if result.ok else ("FAILED", "bright_red")
+        body = Group(
+            Text(f"{status}  ·  {result.elapsed:.3f}s", style=f"bold {color}"),
+            Text(""),
+            Text(result.output or "(no output)"),
+        )
+        self.output_panel.update(Panel(body, title="Output", border_style="green", box=box.ROUNDED))
+
+    def _show_run_error(self, message):
+        self.output_panel.update(Panel(
+            Text(f"Couldn't run that -- see {LOG_PATH}\n{message}", style="bold red"),
+            title="Output", border_style="red", box=box.ROUNDED,
+        ))
+
+    # -- complexity ----------------------------------------------------------
+
+    def _idle_complexity(self):
+        return Panel(
+            Text(
+                "Ctrl+A to ask the AI for a time/space complexity estimate.\n"
+                "(An estimate, not a measurement -- see Output for real run time.)",
+                style="dim italic", justify="center",
+            ),
+            title="Complexity (AI estimate)", border_style="magenta", box=box.ROUNDED,
+        )
+
+    def action_analyze_complexity(self):
+        code = self.editor.text
+        if not code.strip():
+            self.complexity_panel.update(Panel(
+                Text("Write some code first.", style="dim italic", justify="center"),
+                title="Complexity (AI estimate)", border_style="magenta", box=box.ROUNDED,
+            ))
+            return
+        language_label = code_runner.LANGUAGE_LABELS[self.language]
+        self.complexity_panel.update(Panel(
+            Text("Analyzing...", style="dim italic", justify="center"),
+            title="Complexity (AI estimate)", border_style="magenta", box=box.ROUNDED,
+        ))
+        threading.Thread(target=self._analyze_worker, args=(language_label, code), daemon=True).start()
+
+    def _analyze_worker(self, language_label, code):
+        prompt = (
+            f"Analyze the time and space complexity of this {language_label} code. "
+            "Be concise: state Big-O for both, each with a one-sentence justification. "
+            "No preamble, no code review, just the complexity analysis.\n\n" + code
+        )
+        try:
+            answer, error = ai_ask.ask(prompt)
+        except Exception as e:
+            app_log.exception("PracticeScreen complexity analysis failed")
+            answer, error = None, str(e)
+        self.app.call_from_thread(self._show_complexity_result, answer, error)
+
+    def _show_complexity_result(self, answer, error):
+        body = Text(error, style="bold red") if (error and not answer) else Text(answer or "(no response)")
+        self.complexity_panel.update(Panel(body, title="Complexity (AI estimate)", border_style="magenta", box=box.ROUNDED))
 
 
 class HelpScreen(Screen):
@@ -1416,6 +1605,7 @@ class TodoApp(App):
         ("g", "plan_wizard", "Setup Plan"),
         ("S", "save_ai_transcript", "Save AI Transcript"),
         ("T", "toggle_practice_terminal", "Practice Terminal"),
+        ("L", "open_practice_lab", "Practice Lab"),
     ]
 
     def __init__(self):
@@ -1787,6 +1977,9 @@ class TodoApp(App):
 
     def action_open_help(self):
         self.push_screen(HelpScreen())
+
+    def action_open_practice_lab(self):
+        self.push_screen(PracticeScreen())
 
     def action_replay_walkthrough(self):
         self.push_screen(OnboardingScreen())
