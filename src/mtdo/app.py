@@ -881,7 +881,7 @@ def kanban_column(row):
     status = row["block"].get("status", tc.STATUS_TODO)
     if status in (tc.STATUS_IN_PROGRESS, tc.STATUS_DONE):
         return status
-    if row["carried"]:
+    if row["carried"] and not row["block"].get("claimed"):
         return "backlog"
     return tc.STATUS_TODO
 
@@ -987,7 +987,13 @@ class KanbanBoard(Horizontal):
         item = message.item
         if not isinstance(item, CardItem):
             return
-        tc.advance_status(self.app_ref.state, item.date_key, item.category, item.idx)
+        blk = self.app_ref.state[item.date_key][item.category][item.idx]
+        if item.carried and not blk.get("claimed") and blk.get("status", tc.STATUS_TODO) == tc.STATUS_TODO:
+            # Currently showing in Backlog -- claim it into Todo first; don't skip
+            # straight to In Progress on the very first press.
+            tc.claim_backlog_card(self.app_ref.state, item.date_key, item.category, item.idx)
+        else:
+            tc.advance_status(self.app_ref.state, item.date_key, item.category, item.idx)
         tc.save_state(self.app_ref.state)
         self.rebuild()
         self.app_ref.refresh_side_panels()

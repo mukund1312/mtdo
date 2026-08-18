@@ -290,6 +290,22 @@ def _seconds_since(iso_ts):
     return max((datetime.datetime.now() - started).total_seconds(), 0.0)
 
 
+def claim_backlog_card(state, date_key, category, idx):
+    """The first "space" press on a card currently displaying in Backlog: claims it
+    into today's Todo column WITHOUT advancing its actual status (a second press,
+    now that it's showing as Todo, genuinely advances todo -> in_progress like any
+    other card -- see app.kanban_column() and app.KanbanBoard.on_list_view_selected).
+
+    The block stays under its original date_key -- nothing gets relocated, so any
+    report or CLI reference to that day+index stays valid -- so the existing
+    origin-date badge (app.CardItem, driven purely by date comparison) keeps showing
+    in Todo and In Progress too, not just Backlog. "claimed" never resets once set,
+    which is also why regressing back from In Progress lands on Todo, not Backlog
+    again: kanban_column()'s backlog check is "carried and not claimed", and this
+    stays claimed forever once it's been picked up."""
+    state[date_key][category][idx]["claimed"] = True
+
+
 def advance_status(state, date_key, category, idx):
     """Moves a block one step toward done: todo -> in_progress -> done.
     Starts/stops the block's focus-time clock on the in_progress transitions."""
