@@ -17,6 +17,7 @@ from . import config as appconfig
 from . import coaching
 from . import ai_backend
 from . import music
+from . import plan_wizard
 from .claude_panel import ClaudePanel
 from .errorlog import LOG_PATH, log as app_log
 
@@ -211,6 +212,39 @@ class AIBackendPickScreen(ModalScreen):
 
     def on_list_view_selected(self, event: ListView.Selected):
         self.dismiss(self.options[int(event.item.name)])
+
+    def on_key(self, event):
+        if event.key == "escape":
+            self.dismiss(None)
+
+
+class PersonaPickScreen(ModalScreen):
+    """Modal: first step of the plan-setup wizard (g) -- which of plan_wizard.PERSONAS
+    you are, since the curated question set that follows differs by stage of life.
+    Dismisses with the persona's key (e.g. "college"), or None on Escape."""
+
+    CSS = """
+    PersonaPickScreen { align: center middle; }
+    #persona-pick-box { width: 60; height: auto; border: round magenta; padding: 1 2; background: $panel; }
+    """
+
+    def compose(self) -> ComposeResult:
+        with Center():
+            with Middle():
+                with Vertical(id="persona-pick-box"):
+                    yield Static("Set up a plan -- which describes you best?")
+                    items = [
+                        ListItem(Label(label), name=key)
+                        for key, label in plan_wizard.PERSONAS
+                    ]
+                    yield VimListView(*items)
+                    yield Static("Enter to pick, Escape to cancel", classes="dim")
+
+    def on_mount(self):
+        self.query_one(VimListView).focus()
+
+    def on_list_view_selected(self, event: ListView.Selected):
+        self.dismiss(event.item.name)
 
     def on_key(self, event):
         if event.key == "escape":
@@ -585,6 +619,7 @@ HELP_SECTIONS = [
         ("A", "Add a new field (category) -- writes to goals.json, live-reloads immediately"),
         ("?", "Show this cheat sheet"),
         ("w", "Replay the first-launch walkthrough"),
+        ("g", "Set up a plan -- a short Q&A, then hands a crafted prompt to the AI panel to design your goals.json"),
     ]),
     ("Pomodoro", [
         ("p", "Start/pause the pomodoro timer"),
@@ -1367,6 +1402,7 @@ class TodoApp(App):
         ("A", "add_field", "Add Field"),
         ("C", "toggle_claude", "Claude Code"),
         ("w", "replay_walkthrough", "Walkthrough"),
+        ("g", "plan_wizard", "Setup Plan"),
     ]
 
     def __init__(self):
@@ -1724,6 +1760,48 @@ class TodoApp(App):
 
     def action_replay_walkthrough(self):
         self.push_screen(OnboardingScreen())
+
+    def action_plan_wizard(self):
+        def on_persona(persona):
+            if persona is None:
+                return
+            questions = list(plan_wizard.questions_for(persona))
+            self._ask_plan_wizard_questions(questions, {"persona": persona}, persona)
+
+        self.push_screen(PersonaPickScreen(), on_persona)
+
+    def _ask_plan_wizard_questions(self, questions, answers, persona):
+        if not questions:
+            self._finish_plan_wizard(persona, answers)
+            return
+        key, prompt_text = questions[0]
+        rest = questions[1:]
+
+        def on_answer(value):
+            if value is None:
+                self.toast("Plan setup cancelled -- nothing written.", style="dim")
+                return
+            answers[key] = value.strip()
+            self._ask_plan_wizard_questions(rest, answers, persona)
+
+        self.push_screen(TextPromptScreen(prompt_text, ""), on_answer)
+
+    def _finish_plan_wizard(self, persona, answers):
+        try:
+            prompt = plan_wizard.build_prompt(persona, answers)
+            path, copied = plan_wizard.save_and_copy(prompt)
+        except Exception:
+            app_log.exception("plan wizard failed to build/save prompt")
+            self.toast(f"Plan setup hit an error -- see {LOG_PATH}", style="bold red")
+            return
+        if copied:
+            self.toast(
+                f"Copied to your clipboard -- press C, paste it (Cmd+V) into the AI panel, "
+                f"and hit enter. Also saved to {path}.",
+                style="bold green",
+            )
+        else:
+            self.toast(f"Saved to {path} -- press C, then paste it into the AI panel.", style="bold yellow")
 
     def action_music_toggle(self):
         music.play_pause()
