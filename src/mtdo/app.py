@@ -128,6 +128,37 @@ class TextPromptScreen(ModalScreen):
             self.dismiss(None)
 
 
+class HintPromptScreen(ModalScreen):
+    """Popped up by TodoApp._check_dsa_hint_timer every 10 minutes spent on the
+    active DSA task. Dismisses with True/False -- the caller reveals the next
+    pre-generated hint only on True."""
+
+    BINDINGS = [("escape", "dismiss_no", "No")]
+
+    CSS = """
+    HintPromptScreen { align: center middle; }
+    #hint-box { width: 46; height: auto; border: round yellow; padding: 1 2; background: $panel; }
+    #hint-question { text-align: center; padding-bottom: 1; }
+    #hint-buttons { height: 3; align: center middle; }
+    #hint-buttons Button { margin: 0 1; }
+    """
+
+    def compose(self) -> ComposeResult:
+        with Center():
+            with Middle():
+                with Vertical(id="hint-box"):
+                    yield Static("10 minutes in on this one -- want a hint?", id="hint-question")
+                    with Horizontal(id="hint-buttons"):
+                        yield Button("Yes", id="hint-yes", variant="primary")
+                        yield Button("No", id="hint-no")
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        self.dismiss(event.button.id == "hint-yes")
+
+    def action_dismiss_no(self):
+        self.dismiss(False)
+
+
 class CategoryPickScreen(ModalScreen):
     """Modal: pick which field (category) a new card belongs to -- shown every time you
     press 'a', never inferred from whatever happens to be highlighted, so you always
@@ -686,39 +717,78 @@ HELP_SECTIONS = [
 ]
 
 
+_RUN_COMMAND_LABEL = {
+    "python": "python3 solution.py", "java": "java Solution",
+    "c": "./solution", "cpp": "./solution",
+}
+
+
+def _parse_complexity_response(text):
+    """Splits the AI's answer into (time_text, space_text) using the ===TIME===/
+    ===SPACE=== markers requested in PracticeScreen._analyze_worker's prompt. Falls
+    back to showing the whole answer in the Time panel (and a pointer in Space) if a
+    differently-formatted response comes back -- still worth showing, not discarding."""
+    if "===SPACE===" in text:
+        time_part, space_part = text.split("===SPACE===", 1)
+        return time_part.replace("===TIME===", "").strip(), space_part.strip()
+    return text.strip(), "(see Time Complexity -- response wasn't split into sections)"
+
+
 class PracticeScreen(Screen):
     """The "LeetCode-style" practice screen: a language picker, a real code editor
     (Textual's TextArea -- syntax-highlighted for Python/Java, which are the only
     two of the four with a built-in tree-sitter grammar shipped with Textual; C/C++
     still fully edit and run, just without color, see code_runner.TEXTAREA_LANGUAGE),
-    an output panel showing what the code actually printed plus how long it
-    genuinely took to run, and a separate complexity panel showing an AI's Big-O
-    estimate for time and space. Those two are kept in visibly separate panels on
+    an output panel formatted like a real terminal session (a "$ <command>" prompt
+    line, the program's actual output, then an exit-status line -- not a generic
+    OK/FAILED badge), and separate Time/Space Complexity panels showing an AI's Big-O
+    estimate for each. Output and complexity are kept in visibly separate panels on
     purpose: run time is a real measurement, complexity is an AI's estimate, and
-    blending them in one panel would make an estimate look like a fact.
+    blending them in one panel would make an estimate look like a fact -- and time and
+    space get their own panels rather than one shared "Complexity" panel so each keeps
+    its own explanation legible instead of one wall of text for both.
+
+    Styled deliberately dark/minimal (near-black background, thin grey borders, no
+    variant-colored button chrome) to read like a terminal session rather than a form
+    -- as close as a character-cell TUI gets to a Ghostty/Warp-style aesthetic. Two
+    things from that aesthetic genuinely don't translate here and are skipped rather
+    than faked: the actual font (JetBrains Mono, a glowing cursor, ...) is controlled
+    by the user's own terminal emulator, not by anything this app can set from inside
+    it; and a fixed "16:9" aspect ratio doesn't apply to a screen that already fills
+    whatever terminal window it's given.
 
     A full screen rather than squeezed into Focus Mode's row alongside the Learning
     Coach/AI panel/plain practice terminal -- a language picker + editor + output +
-    complexity genuinely needs more room than a 1/3-width column, the same reason
-    Career CRM and the Knowledge Vault are their own screens instead of panels."""
+    two complexity panels genuinely needs more room than a 1/3-width column, the same
+    reason Career CRM and the Knowledge Vault are their own screens instead of panels."""
 
     BINDINGS = [
         ("escape", "close", "Back"),
         ("q", "close", "Back"),
         ("ctrl+r", "run_code", "Run"),
         ("ctrl+b", "analyze_complexity", "Analyze Complexity"),  # "B" for Big-O -- ctrl+a is TextArea's own select-all binding and never reaches here while the editor has focus
+        ("ctrl+n", "reset_code", "Reset"),
     ]
 
     CSS = """
-    PracticeScreen { layout: vertical; }
-    #practice-lang-row { height: 3; dock: top; padding: 0 1; }
-    #practice-lang-row Button { margin: 0 1 0 0; min-width: 10; }
-    #practice-body { height: 1fr; }
+    PracticeScreen { layout: vertical; background: #0b0b0b; }
+    #practice-topbar {
+        height: 3; dock: top; background: #101010; border-bottom: solid #262626;
+        padding: 0 1; align: left middle;
+    }
+    #practice-lang-tag { width: auto; padding: 0 2 0 0; color: #39c26d; text-style: bold; }
+    #practice-topbar Button {
+        min-width: 9; height: 1; margin: 0 1 0 0; background: #161616; color: #8a8a8a; border: none;
+    }
+    #practice-topbar Button.-active-lang { color: #39c26d; text-style: bold; background: #1a1f1a; }
+    #practice-topbar-spacer { width: 1fr; }
+    #practice-reset-btn { color: #8a8a8a; }
+    #practice-body { height: 1fr; background: #0b0b0b; }
     #practice-editor-col { width: 2fr; }
     #practice-side-col { width: 1fr; }
-    #practice-editor { height: 1fr; }
-    #practice-output-scroll, #practice-complexity-scroll { height: 1fr; }
-    #practice-help { height: 1; dock: bottom; padding: 0 1; }
+    #practice-editor { height: 1fr; background: #0b0b0b; }
+    #practice-output-scroll, #practice-time-scroll, #practice-space-scroll { height: 1fr; }
+    #practice-help { height: 1; dock: bottom; padding: 0 1; background: #101010; color: #5a5a5a; }
     """
 
     _LANG_BUTTON_IDS = {"python": "lang-python", "java": "lang-java", "c": "lang-c", "cpp": "lang-cpp"}
@@ -729,13 +799,17 @@ class PracticeScreen(Screen):
         self.code_by_language = dict(code_runner.TEMPLATES)
 
     def compose(self) -> ComposeResult:
-        with Horizontal(id="practice-lang-row"):
+        with Horizontal(id="practice-topbar"):
+            self.lang_tag = Static(f"[{code_runner.LANGUAGE_LABELS[self.language]}]", id="practice-lang-tag")
+            yield self.lang_tag
             for lang in code_runner.LANGUAGES:
                 yield Button(
                     code_runner.LANGUAGE_LABELS[lang],
                     id=self._LANG_BUTTON_IDS[lang],
-                    variant="primary" if lang == self.language else "default",
+                    classes="-active-lang" if lang == self.language else "",
                 )
+            yield Static("", id="practice-topbar-spacer")
+            yield Button("↺ Reset", id="practice-reset-btn")
         with Horizontal(id="practice-body"):
             with Vertical(id="practice-editor-col"):
                 self.editor = TextArea(
@@ -749,10 +823,14 @@ class PracticeScreen(Screen):
                 with VerticalScroll(id="practice-output-scroll"):
                     self.output_panel = Static(self._idle_output(), id="practice-output")
                     yield self.output_panel
-                with VerticalScroll(id="practice-complexity-scroll"):
-                    self.complexity_panel = Static(self._idle_complexity(), id="practice-complexity")
-                    yield self.complexity_panel
-        yield Static("Ctrl+R run  ·  Ctrl+B analyze complexity  ·  Esc/q back", id="practice-help", classes="dim")
+                with VerticalScroll(id="practice-time-scroll"):
+                    self.time_panel = Static(self._idle_complexity("Time Complexity"), id="practice-time")
+                    yield self.time_panel
+                with VerticalScroll(id="practice-space-scroll"):
+                    self.space_panel = Static(self._idle_complexity("Space Complexity"), id="practice-space")
+                    yield self.space_panel
+        yield Static("Ctrl+R run  ·  Ctrl+B analyze complexity  ·  Ctrl+N reset  ·  Esc/q back",
+                      id="practice-help", classes="dim")
 
     def on_mount(self):
         self.editor.focus()
@@ -760,9 +838,17 @@ class PracticeScreen(Screen):
     def action_close(self):
         self.dismiss()
 
+    def action_reset_code(self):
+        self.code_by_language[self.language] = code_runner.TEMPLATES[self.language]
+        self.editor.text = self.code_by_language[self.language]
+        self.editor.focus()
+
     # -- language picker -------------------------------------------------
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "practice-reset-btn":
+            self.action_reset_code()
+            return
         for lang, btn_id in self._LANG_BUTTON_IDS.items():
             if event.button.id == btn_id:
                 self._switch_language(lang)
@@ -776,24 +862,28 @@ class PracticeScreen(Screen):
         self.language = lang
         self.editor.language = code_runner.TEXTAREA_LANGUAGE[lang]
         self.editor.text = self.code_by_language[lang]
+        self.lang_tag.update(f"[{code_runner.LANGUAGE_LABELS[lang]}]")
         for l, btn_id in self._LANG_BUTTON_IDS.items():
-            self.query_one(f"#{btn_id}", Button).variant = "primary" if l == lang else "default"
+            self.query_one(f"#{btn_id}", Button).set_class(l == lang, "-active-lang")
         self.editor.focus()
 
     # -- run ---------------------------------------------------------------
 
     def _idle_output(self):
         return Panel(
-            Text("Ctrl+R to run your code here.", style="dim italic", justify="center"),
-            title="Output", border_style="green", box=box.ROUNDED,
+            Text("$ " + _RUN_COMMAND_LABEL[self.language], style="bold #39c26d"),
+            title="Output", border_style="#3a3a3a", box=box.SQUARE,
         )
 
     def action_run_code(self):
         code = self.editor.text
         language = self.language
         self.output_panel.update(Panel(
-            Text("Running...", style="dim italic", justify="center"),
-            title="Output", border_style="green", box=box.ROUNDED,
+            Group(
+                Text(f"$ {_RUN_COMMAND_LABEL[language]}", style="bold #39c26d"),
+                Text("running...", style="dim italic"),
+            ),
+            title="Output", border_style="#3a3a3a", box=box.SQUARE,
         ))
         threading.Thread(target=self._run_code_worker, args=(language, code), daemon=True).start()
 
@@ -804,55 +894,61 @@ class PracticeScreen(Screen):
             app_log.exception("PracticeScreen run failed")
             self.app.call_from_thread(self._show_run_error, str(e))
             return
-        self.app.call_from_thread(self._show_run_result, result)
+        self.app.call_from_thread(self._show_run_result, language, result)
 
-    def _show_run_result(self, result):
-        status, color = ("OK", "bright_green") if result.ok else ("FAILED", "bright_red")
+    def _show_run_result(self, language, result):
+        status_color = "#39c26d" if result.ok else "#e06c75"
         body = Group(
-            Text(f"{status}  ·  {result.elapsed:.3f}s", style=f"bold {color}"),
+            Text(f"$ {_RUN_COMMAND_LABEL[language]}", style="bold #39c26d"),
             Text(""),
             Text(result.output or "(no output)"),
+            Text(""),
+            Text(f"[exit {'0' if result.ok else '1'} in {result.elapsed:.3f}s]", style=status_color),
         )
-        self.output_panel.update(Panel(body, title="Output", border_style="green", box=box.ROUNDED))
+        self.output_panel.update(Panel(body, title="Output", border_style="#3a3a3a", box=box.SQUARE))
 
     def _show_run_error(self, message):
         self.output_panel.update(Panel(
-            Text(f"Couldn't run that -- see {LOG_PATH}\n{message}", style="bold red"),
-            title="Output", border_style="red", box=box.ROUNDED,
+            Text(f"Couldn't run that -- see {LOG_PATH}\n{message}", style="bold #e06c75"),
+            title="Output", border_style="#e06c75", box=box.SQUARE,
         ))
 
     # -- complexity ----------------------------------------------------------
 
-    def _idle_complexity(self):
+    def _idle_complexity(self, title):
         return Panel(
-            Text(
-                "Ctrl+A to ask the AI for a time/space complexity estimate.\n"
-                "(An estimate, not a measurement -- see Output for real run time.)",
-                style="dim italic", justify="center",
-            ),
-            title="Complexity (AI estimate)", border_style="magenta", box=box.ROUNDED,
+            Text("Ctrl+B to ask the AI for an estimate.", style="dim italic", justify="center"),
+            title=title, border_style="#3a3a3a", box=box.SQUARE,
         )
 
     def action_analyze_complexity(self):
         code = self.editor.text
         if not code.strip():
-            self.complexity_panel.update(Panel(
-                Text("Write some code first.", style="dim italic", justify="center"),
-                title="Complexity (AI estimate)", border_style="magenta", box=box.ROUNDED,
-            ))
+            for panel, title in ((self.time_panel, "Time Complexity"), (self.space_panel, "Space Complexity")):
+                panel.update(Panel(
+                    Text("Write some code first.", style="dim italic", justify="center"),
+                    title=title, border_style="#3a3a3a", box=box.SQUARE,
+                ))
             return
         language_label = code_runner.LANGUAGE_LABELS[self.language]
-        self.complexity_panel.update(Panel(
-            Text("Analyzing...", style="dim italic", justify="center"),
-            title="Complexity (AI estimate)", border_style="magenta", box=box.ROUNDED,
-        ))
+        for panel, title in ((self.time_panel, "Time Complexity"), (self.space_panel, "Space Complexity")):
+            panel.update(Panel(
+                Text("Analyzing...", style="dim italic", justify="center"),
+                title=title, border_style="#3a3a3a", box=box.SQUARE,
+            ))
         threading.Thread(target=self._analyze_worker, args=(language_label, code), daemon=True).start()
 
     def _analyze_worker(self, language_label, code):
         prompt = (
-            f"Analyze the time and space complexity of this {language_label} code. "
-            "Be concise: state Big-O for both, each with a one-sentence justification. "
-            "No preamble, no code review, just the complexity analysis.\n\n" + code
+            f"Analyze the time and space complexity of this {language_label} code.\n\n"
+            "Format exactly like this, with these two section markers on their own lines "
+            "and nothing else outside them (no preamble, no code review):\n\n"
+            "===TIME===\n"
+            "Big-O: O(...)\n"
+            "<one-sentence justification>\n\n"
+            "===SPACE===\n"
+            "Big-O: O(...)\n"
+            "<one-sentence justification>\n\n" + code
         )
         try:
             answer, error = ai_ask.ask(prompt)
@@ -862,8 +958,16 @@ class PracticeScreen(Screen):
         self.app.call_from_thread(self._show_complexity_result, answer, error)
 
     def _show_complexity_result(self, answer, error):
-        body = Text(error, style="bold red") if (error and not answer) else Text(answer or "(no response)")
-        self.complexity_panel.update(Panel(body, title="Complexity (AI estimate)", border_style="magenta", box=box.ROUNDED))
+        if error and not answer:
+            for panel, title in ((self.time_panel, "Time Complexity"), (self.space_panel, "Space Complexity")):
+                panel.update(Panel(Text(error, style="bold #e06c75"), title=title,
+                                    border_style="#e06c75", box=box.SQUARE))
+            return
+        time_text, space_text = _parse_complexity_response(answer or "")
+        self.time_panel.update(Panel(Text(time_text or "(no response)"), title="Time Complexity",
+                                      border_style="#3a3a3a", box=box.SQUARE))
+        self.space_panel.update(Panel(Text(space_text or "(no response)"), title="Space Complexity",
+                                       border_style="#3a3a3a", box=box.SQUARE))
 
 
 class HelpScreen(Screen):
@@ -1473,19 +1577,114 @@ class LearningCoachPanel(Static):
     currently in progress, most-specific source wins (see coaching.build_coaching_content):
     the task's own metadata, then the field's personalized coaching_framework in
     goals.json, then a built-in topic-appropriate fallback. Fills remaining space
-    (height: 1fr)."""
+    (height: 1fr).
 
-    def update_content(self, state, today):
+    In Focus Mode specifically, a "dsa" topic_type task gets different treatment: instead
+    of the Focus On/Ask Yourself content above (which already assumes you understand the
+    problem), the AI generates a LeetCode-style problem statement for the task and shows
+    that instead -- the point is to make the person reason through it, not read the answer.
+    Hints are pre-generated alongside the problem (see coaching.build_dsa_problem_prompt)
+    and revealed one at a time, only when accepted via the popup TodoApp._check_dsa_hint_timer
+    raises every 10 minutes. The regular coaching content unlocks for that same task once
+    it's marked done -- app.current_dsa_ref keeps pointing at it after that so this panel
+    can still find it once it's no longer the "active" (in_progress) task. Outside Focus
+    Mode, DSA tasks get the regular coaching content like every other field, unchanged."""
+
+    def update_content(self, state, today, focus_mode):
+        app = self.app
         active = tc.current_active_task(state, today)
-        if active is None:
-            self.update(self._idle_panel())
+
+        if active is not None:
+            category_meta = tc.CATEGORY_META.get(active["category"])
+            if focus_mode and coaching.is_dsa_task(category_meta):
+                app.current_dsa_ref = (active["date_key"], active["category"], active["idx"])
+                self._render_dsa_mode(active["block"])
+                return
+            app.current_dsa_ref = None
+            if not coaching.has_coaching_setup(active["block"], category_meta):
+                self.update(self._no_coaching_panel(active["block"]["text"], category_meta))
+                return
+            content = coaching.build_coaching_content(active["block"], category_meta)
+            self.update(self._coach_panel(active["block"]["text"], content))
             return
-        category_meta = tc.CATEGORY_META.get(active["category"])
-        if not coaching.has_coaching_setup(active["block"], category_meta):
-            self.update(self._no_coaching_panel(active["block"]["text"], category_meta))
+
+        ref = app.current_dsa_ref
+        if ref is not None:
+            date_key, category, idx = ref
+            blocks = state.get(date_key, {}).get(category, [])
+            block = blocks[idx] if idx < len(blocks) else None
+            if block is not None and block.get("status") == tc.STATUS_DONE:
+                category_meta = tc.CATEGORY_META.get(category)
+                content = coaching.build_coaching_content(block, category_meta)
+                self.update(self._coach_panel(
+                    block["text"], content, note="Solved -- for further understanding",
+                ))
+                return
+
+        self.update(self._idle_panel())
+
+    # -- DSA problem mode (Focus Mode only) -----------------------------------
+
+    def _render_dsa_mode(self, block):
+        problem = block.get("dsa_problem")
+        if problem is None:
+            if id(block) not in self.app.dsa_generating:
+                self.app.dsa_generating.add(id(block))
+                threading.Thread(target=self._generate_worker, args=(block,), daemon=True).start()
+            self.update(self._generating_panel(block["text"]))
             return
-        content = coaching.build_coaching_content(active["block"], category_meta)
-        self.update(self._coach_panel(active["block"]["text"], content))
+        self.update(self._dsa_problem_panel(block["text"], problem))
+
+    def _generate_worker(self, block):
+        prompt = coaching.build_dsa_problem_prompt(block["text"])
+        try:
+            answer, error = ai_ask.ask(prompt, timeout=90)
+        except Exception as e:
+            app_log.exception("DSA problem generation failed")
+            answer, error = None, str(e)
+        self.app.call_from_thread(self._store_generated, block, answer, error)
+
+    def _store_generated(self, block, answer, error):
+        self.app.dsa_generating.discard(id(block))
+        if answer:
+            statement, hints = coaching.parse_dsa_problem_response(answer)
+        else:
+            statement, hints = f"Couldn't generate a problem: {error}", []
+        block["dsa_problem"] = {"statement": statement, "hints": hints, "revealed": 0, "next_hint_at": 10}
+        tc.save_state(self.app.state)
+        self.app.refresh_side_panels()
+
+    def _generating_panel(self, task_text):
+        body = Group(
+            Text(task_text, style="bold bright_white", justify="center", no_wrap=True, overflow="ellipsis"),
+            Text(""),
+            Text("Generating your problem...", style="dim italic", justify="center"),
+        )
+        return Panel(body, title="Learning Coach -- DSA Problem", border_style="magenta", box=box.ROUNDED)
+
+    def _dsa_problem_panel(self, task_text, problem):
+        rows = [
+            Text(task_text, style="bold bright_white", justify="center", no_wrap=True, overflow="ellipsis"),
+            Text(""),
+        ]
+        for line in problem["statement"].splitlines():
+            rows.append(Text(line, style="white"))
+        hints = problem.get("hints") or []
+        revealed = problem.get("revealed", 0)
+        if revealed:
+            rows.append(Text(""))
+            rows.append(Text("Hints revealed so far", style="bold cyan"))
+            for i, hint in enumerate(hints[:revealed], 1):
+                rows.append(Text(f"  {i}. {hint}", style="yellow"))
+        remaining = len(hints) - revealed
+        rows.append(Text(""))
+        if remaining > 0:
+            rows.append(Text(f"{remaining} more hint(s) available -- a popup offers one every "
+                              "10 minutes spent on this task.", style="dim italic", justify="center"))
+        rows.append(Text("Work it out yourself first -- the full coaching notes unlock",
+                          style="dim italic", justify="center"))
+        rows.append(Text("once you mark this done.", style="dim italic", justify="center"))
+        return Panel(Group(*rows), title="Learning Coach -- DSA Problem", border_style="magenta", box=box.ROUNDED)
 
     def _idle_panel(self):
         body = Group(
@@ -1515,11 +1714,13 @@ class LearningCoachPanel(Static):
         rows.append(Text(""))
         return rows
 
-    def _coach_panel(self, task_text, content):
+    def _coach_panel(self, task_text, content, note=None):
         rows = [
             Text(task_text, style="bold bright_white", justify="center", no_wrap=True, overflow="ellipsis"),
-            Text(""),
         ]
+        if note:
+            rows.append(Text(note, style="bold green", justify="center"))
+        rows.append(Text(""))
         rows += self._section("Focus On", content["focus_on"])
         rows += self._section("Ask Yourself", content["ask_yourself"])
         rows += self._section("Interview Check", content["interview_check"])
@@ -1615,6 +1816,16 @@ class TodoApp(App):
         self.state = tc.ensure_day_registered(self.state, self.today)
         self.focus_mode = False
         self.practice_terminal_enabled = appconfig.practice_terminal_enabled()
+        # DSA problem-generation bookkeeping (see LearningCoachPanel/_check_dsa_hint_timer):
+        # current_dsa_ref points at the (date_key, category, idx) of the DSA task the coach
+        # is currently showing a generated problem for, kept even after it's marked done so
+        # the coach can switch to the regular coaching content for THAT SAME task ("for
+        # further understanding") instead of just going idle. dsa_generating holds id(block)
+        # for tasks with a generation request in flight, so a fast refresh_side_panels tick
+        # doesn't fire a second redundant AI call before the first one returns.
+        self.current_dsa_ref = None
+        self.dsa_generating = set()
+        self._hint_prompt_open = False
         try:
             self._goals_mtime = os.path.getmtime(appconfig.GOALS_PATH)
         except OSError:
@@ -1680,7 +1891,7 @@ class TodoApp(App):
         self.active_task_panel.update_content(self.state, self.today)
         self.pomo_panel.render_panel(tc.get_pomodoro_count(self.state, self.today))
         self.music_panel.refresh_music_info()
-        self.coach_panel.update_content(self.state, self.today)
+        self.coach_panel.update_content(self.state, self.today, self.focus_mode)
 
     def _weekly_check_summary(self):
         """Saturday's completion checkpoint: this week's done/total per field, using the
@@ -1808,6 +2019,7 @@ class TodoApp(App):
         self.query_one(ClockHeader).update_clock()
         self.music_panel.refresh_music_info()
         self.active_task_panel.update_content(self.state, self.today)
+        self._check_dsa_hint_timer()
         if self.pomo_panel.running:
             if self.pomo_panel.remaining > 0:
                 self.pomo_panel.remaining -= 1
@@ -1822,6 +2034,45 @@ class TodoApp(App):
                     self.pomo_panel.running = False
                 self.refresh_side_panels()
             self.pomo_panel.render_panel(tc.get_pomodoro_count(self.state, self.today))
+
+    def _check_dsa_hint_timer(self):
+        """Every 10 minutes of real focus time spent on the active DSA task (see
+        core.task_elapsed_seconds -- wall-clock since it went in_progress, independent
+        of whether the Pomodoro is running), offers the next pre-generated hint via a
+        popup. Only fires in Focus Mode, once a problem has actually finished
+        generating (nothing to hint at before that), and never stacks a second popup
+        while one is already open."""
+        if not self.focus_mode or self._hint_prompt_open:
+            return
+        active = tc.current_active_task(self.state, self.today)
+        if active is None:
+            return
+        category_meta = tc.CATEGORY_META.get(active["category"])
+        if not coaching.is_dsa_task(category_meta):
+            return
+        block = active["block"]
+        problem = block.get("dsa_problem")
+        if not problem or not problem.get("hints"):
+            return
+        if problem.get("revealed", 0) >= len(problem["hints"]):
+            return
+        elapsed_minutes = tc.task_elapsed_seconds(block) // 60
+        threshold = problem.get("next_hint_at", 10)
+        if elapsed_minutes < threshold:
+            return
+        problem["next_hint_at"] = threshold + 10
+        tc.save_state(self.state)
+        self._hint_prompt_open = True
+
+        def on_answer(want_hint):
+            self._hint_prompt_open = False
+            if want_hint:
+                problem["revealed"] = problem.get("revealed", 0) + 1
+                tc.save_state(self.state)
+                self.toast("Hint revealed in the Learning Coach panel.", style="bold yellow")
+            self.refresh_side_panels()
+
+        self.push_screen(HintPromptScreen(), on_answer)
 
     def action_toggle_pomodoro(self):
         self.pomo_panel.running = not self.pomo_panel.running

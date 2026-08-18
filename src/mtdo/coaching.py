@@ -6,6 +6,7 @@ rule_9) with these generic fallbacks so every task, annotated or not, gets usefu
 content.
 """
 import random
+import re
 
 # ---- Universal framework (used when a task has no topic_type match / no own metadata) --
 
@@ -125,6 +126,78 @@ EXPERT_TIPS = [
     "Teach the concept aloud.",
     "If you cannot teach it, you do not understand it.",
 ]
+
+
+# ---- DSA problem generation (Focus Mode only, see app.LearningCoachPanel) -----------
+# For a "dsa" topic_type field, Focus Mode shows an AI-generated LeetCode-style problem
+# statement for the active task instead of the coaching content above, so the person
+# reasons through it themselves before the "Focus On/Ask Yourself/..." material (which
+# already assumes familiarity) unlocks on completion. The two section markers below are
+# instructed exactly so parse_dsa_problem_response can split them reliably regardless
+# of which backend answers -- free-form prose would make that split unreliable.
+
+_HINT_LINE_RE = re.compile(r"^\d+[.)]\s+(.*)")
+
+
+def build_dsa_problem_prompt(task_text):
+    return (
+        f'Write a LeetCode-style problem statement for a DSA practice problem titled '
+        f'"{task_text}".\n\n'
+        "Do NOT reveal the algorithm, approach, or solution -- only the problem "
+        "statement itself, exactly like a real interview platform shows BEFORE someone "
+        "starts solving it.\n\n"
+        "Format exactly like this, with these two section markers on their own lines "
+        "and nothing else outside them (no preamble, no \"Here's the problem\", no code):\n\n"
+        "===PROBLEM===\n"
+        "<Title>\n"
+        "Difficulty: <Easy/Medium/Hard -- your best guess>\n"
+        "\n"
+        "<Full problem description in 2-4 sentences>\n"
+        "\n"
+        "Example 1\n"
+        "Input: <input>\n"
+        "Output: <output>\n"
+        "Explanation: <explanation>\n"
+        "\n"
+        "Example 2\n"
+        "Input: <input>\n"
+        "Output: <output>\n"
+        "Explanation: <explanation>\n"
+        "\n"
+        "Constraints\n"
+        "<bullet list of constraints>\n"
+        "\n"
+        "===HINTS===\n"
+        "1. <a very small nudge -- points at the right general idea, no specifics>\n"
+        "2. <a bit more specific -- names the right data structure or technique>\n"
+        "3. <fairly specific -- describes the approach in words, but not code>\n"
+        "4. <almost the full approach in words, still no code>\n"
+    )
+
+
+def parse_dsa_problem_response(text):
+    """Splits the AI's raw response into (statement, hints_list). Falls back to
+    treating the whole response as the statement with no hints if the expected
+    ===PROBLEM===/===HINTS=== markers aren't there -- a differently-formatted
+    response is still worth showing rather than discarding outright."""
+    if "===HINTS===" in text:
+        problem_part, hints_part = text.split("===HINTS===", 1)
+    else:
+        problem_part, hints_part = text, ""
+    statement = problem_part.replace("===PROBLEM===", "").strip()
+    hints = []
+    for line in hints_part.splitlines():
+        m = _HINT_LINE_RE.match(line.strip())
+        if m:
+            hints.append(m.group(1).strip())
+    return statement, hints
+
+
+def is_dsa_task(category_meta):
+    """Whether a field's topic_type is "dsa" -- the gate for the Focus-Mode-only
+    generated-problem behavior in app.LearningCoachPanel. Every other topic_type
+    (backend/database/system_design/none) keeps the regular coaching content."""
+    return bool((category_meta or {}).get("topic_type") == "dsa")
 
 
 def has_coaching_setup(block, category_meta):
