@@ -135,8 +135,17 @@ def ollama_run_command(model):
     "could not connect to a running Ollama instance"). Starting it again when one's
     already running is harmless and fast -- it just fails to bind the port and exits,
     which is why this is safe to prepend unconditionally rather than trying to first
-    detect whether a server's already up."""
-    script = f"(ollama serve >/dev/null 2>&1 &) ; sleep 1 ; ollama run {shlex.quote(model)}"
+    detect whether a server's already up.
+
+    Actively polls readiness (`ollama list` succeeding) for up to 5s instead of a
+    blind sleep -- a fixed sleep is a race: fine most of the time, but a slower first
+    boot (cold disk cache, GPU detection) can still lose it, and the fix must be a
+    poll, not a longer guess."""
+    script = (
+        "(ollama serve >/dev/null 2>&1 &) ; "
+        "for i in $(seq 1 20); do ollama list >/dev/null 2>&1 && break; sleep 0.25; done ; "
+        f"ollama run {shlex.quote(model)}"
+    )
     return f"bash -lc {shlex.quote(script)}"
 
 
