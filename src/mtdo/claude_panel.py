@@ -342,6 +342,20 @@ class ClaudePanel(Widget):
 
     # -- input ----------------------------------------------------------------
 
+    def on_click(self, event) -> None:
+        """Mouse-click parity with pressing C -- if there's no session yet, clicking
+        the empty pane opens the same backend picker; if one's running but this pane
+        doesn't have focus, clicking it focuses it (so you can start typing right
+        away) instead of requiring the keyboard every time."""
+        try:
+            if self._pty_running:
+                if not self.has_focus:
+                    self.focus()
+            else:
+                self.app.action_toggle_claude()
+        except Exception:
+            log.exception("ClaudePanel on_click failed")
+
     def on_key(self, event: events.Key) -> None:
         try:
             self._on_key_impl(event)
