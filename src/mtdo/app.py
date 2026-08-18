@@ -667,7 +667,8 @@ HELP_SECTIONS = [
     ("Global", [
         ("q", "Quit the app"),
         ("r", "Refresh all panels"),
-        ("f", "Toggle Focus Mode -- hides the board + stats, keeps Active Task/Pomodoro/Spotify/Learning Coach"),
+        ("f", "Toggle Focus Mode -- hides the board + stats, keeps Active Task/Pomodoro/Spotify/Learning Coach + AI panel"),
+        ("C", "Open the AI assistant panel (auto-enters Focus Mode) -- pick Claude Code, a local Ollama model, or Claude/GPT/Gemini via API"),
         ("c", "Open the Career CRM"),
         ("v", "Open the Knowledge Vault"),
         ("A", "Add a new field (category) -- writes to goals.json, live-reloads immediately"),
@@ -685,8 +686,14 @@ HELP_SECTIONS = [
         ("+ / -", "Volume up/down"),
         ("P", "Paste a playlist/album/track link and play it"),
     ]),
-    ("Learning Coach (under the Spotify box, also visible in Focus Mode)", [
+    ("Learning Coach (under the Spotify box; shares a row with the AI panel in Focus Mode)", [
         ("space", "Start a card (in_progress) to activate the coach for it"),
+        ("scroll", "Mouse-wheel/trackpad scroll to see the full coaching content"),
+    ]),
+    ("AI Assistant panel (Focus Mode only)", [
+        ("C", "Start/focus it -- opens a picker the first time, remembers your last choice"),
+        ("esc esc", "Double-tap Escape to release keyboard focus without ending the session"),
+        ("F2", "Also releases focus (for keyboards that send real F-keys)"),
     ]),
     ("Kanban Board (Backlog / Todo / In Progress / Done)", [
         ("h / l", "Move focus between columns"),
