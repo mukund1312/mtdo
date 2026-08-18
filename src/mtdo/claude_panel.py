@@ -80,6 +80,7 @@ _DOUBLE_ESCAPE_WINDOW = 1.2  # seconds -- see _on_key_impl for why this got bump
 
 
 _SCROLLBACK_LINES = 2000
+TRANSCRIPT_DIR = os.path.expanduser("~/.mtdo/transcripts")
 
 
 class _PatchedScreen(pyte.HistoryScreen):
@@ -375,6 +376,42 @@ class ClaudePanel(Widget):
             self._screen.next_page()
             self.refresh()
         event.stop()
+
+    def save_transcript(self):
+        """Dumps everything currently captured (scrollback + visible screen, in
+        order) to a timestamped plain-text file under ~/.mtdo/transcripts/ and
+        returns its path. This is the workaround for a bare Ollama or API chat
+        having no memory across sessions and no file-write tools to fix that itself:
+        it can't fold anything into ~/.mtdo/memory.md on its own, but a saved
+        transcript can be handed to Claude Code (or read by hand) afterward to
+        distill whatever's worth remembering into that file. Raises if there's
+        nothing to save (no screen yet) -- the caller decides how to tell the user."""
+        if self._screen is None:
+            raise RuntimeError("no AI session to save a transcript from")
+        text = self._transcript_text()
+        os.makedirs(TRANSCRIPT_DIR, exist_ok=True)
+        path = os.path.join(TRANSCRIPT_DIR, f"{time.strftime('%Y%m%d_%H%M%S')}.txt")
+        with open(path, "w") as f:
+            f.write(text)
+        return path
+
+    def _transcript_text(self):
+        screen = self._screen
+        rows = list(screen.history.top)
+        rows += [screen.buffer[y] for y in range(screen.lines)]
+        rows += list(screen.history.bottom)
+        lines = []
+        for row in rows:
+            line = "".join(row[x].data for x in range(screen.columns))
+            lines.append(line.rstrip())
+        # Collapse runs of blank lines left by the pty's own redraws -- otherwise a
+        # short chat produces a mostly-empty multi-thousand-line file.
+        collapsed = []
+        for line in lines:
+            if line == "" and collapsed and collapsed[-1] == "":
+                continue
+            collapsed.append(line)
+        return "\n".join(collapsed).strip() + "\n"
 
     def on_key(self, event: events.Key) -> None:
         try:

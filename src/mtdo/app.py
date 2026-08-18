@@ -620,6 +620,7 @@ HELP_SECTIONS = [
         ("?", "Show this cheat sheet"),
         ("w", "Replay the first-launch walkthrough"),
         ("g", "Set up a plan -- a short Q&A, then hands a crafted prompt to the AI panel to design your goals.json"),
+        ("Shift+S", "Save the AI panel's transcript to a file -- a memory.md workaround for backends with no file access"),
     ]),
     ("Pomodoro", [
         ("p", "Start/pause the pomodoro timer"),
@@ -1409,6 +1410,7 @@ class TodoApp(App):
         ("C", "toggle_claude", "Claude Code"),
         ("w", "replay_walkthrough", "Walkthrough"),
         ("g", "plan_wizard", "Setup Plan"),
+        ("S", "save_ai_transcript", "Save AI Transcript"),
     ]
 
     def __init__(self):
@@ -1815,6 +1817,21 @@ class TodoApp(App):
             )
         else:
             self.toast(f"Saved to {path} -- press C, then paste it into the AI panel.", style="bold yellow")
+
+    def action_save_ai_transcript(self):
+        if not self.claude_panel.is_running:
+            self.toast("No AI session running to save a transcript from.", style="dim")
+            return
+        try:
+            path = self.claude_panel.save_transcript()
+        except Exception:
+            app_log.exception("action_save_ai_transcript failed")
+            self.toast(f"Couldn't save the transcript -- see {LOG_PATH}", style="bold red")
+            return
+        self.toast(
+            f"Saved -> {path}. Ask Claude Code to fold anything worth keeping into ~/.mtdo/memory.md.",
+            style="bold green",
+        )
 
     def action_music_toggle(self):
         music.play_pause()
