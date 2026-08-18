@@ -79,6 +79,36 @@ _RELEASE_KEYS = {"f2"}
 _DOUBLE_ESCAPE_WINDOW = 0.6  # seconds
 
 
+class _PatchedScreen(pyte.Screen):
+    """Two fixes over stock pyte 0.8.2:
+
+    1. Screen.report_device_status() doesn't accept the `private` kwarg that
+       streams.py always passes for DEC-private CSI sequences (e.g. `CSI ? 6 n`).
+       Any app that sends one throws mid-parse, and _read_loop_impl's per-chunk
+       try/except then silently drops the *rest* of that read() chunk -- not a rare
+       edge case, claude's Ink-based UI sends these routinely, so a session could
+       look like it "just stops updating" for no visible reason.
+    2. write_process_input() is pyte's hook for terminal -> app replies (device
+       status / cursor position reports) but does nothing by default. Wired here to
+       actually write back into the pty, like a real terminal would, in case
+       anything running in the pane blocks waiting on one.
+    """
+
+    def __init__(self, *args, on_reply=None, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._on_reply = on_reply
+
+    def report_device_status(self, mode, **kwargs):
+        try:
+            super().report_device_status(mode)
+        except Exception:
+            pass
+
+    def write_process_input(self, data):
+        if self._on_reply:
+            self._on_reply(data)
+
+
 def _rich_color(name):
     if not name or name == "default":
         return None
@@ -114,13 +144,15 @@ class ClaudePanel(Widget):
     }
     """
 
-    def __init__(self, command=None, **kwargs):
+    def __init__(self, command=None, label=None, **kwargs):
         """command=None (the default) means auto-detect a backend fresh on every
         start() via ai_backend.detect() -- Claude Code, else a local Ollama model, else
         an API-key-based chat, else a message explaining what to set up. Pass an
-        explicit command to pin one backend instead."""
+        explicit command (and its display label) to pin one backend instead --
+        see start_with(), which is what the backend-picker modal calls."""
         super().__init__(**kwargs)
         self.command = command
+        self._chosen_label = label
         self._master_fd = None
         self._pid = None
         self._proc = None
@@ -131,13 +163,24 @@ class ClaudePanel(Widget):
         self._error = None
         self._last_escape_at = 0.0
         self.border_title = "Claude Code"
-        self.border_subtitle = "C to start · Esc Esc to leave"
+        self.border_subtitle = "C to choose a backend"
+
+    @property
+    def is_running(self):
+        return self._pty_running
 
     # -- process lifecycle -------------------------------------------------
 
+    def start_with(self, command, label):
+        """Pins the backend to run next, then starts it -- used by the backend-picker
+        modal so the user's explicit choice is honored instead of auto-detection."""
+        self.command = command
+        self._chosen_label = label
+        self.start()
+
     def start(self):
-        """Spawns `claude` in a fresh pty sized to the widget's current content area.
-        No-op if a session is already running."""
+        """Spawns the assistant in a fresh pty sized to the widget's current content
+        area. No-op if a session is already running."""
         if self._pty_running:
             return
         try:
@@ -151,7 +194,7 @@ class ClaudePanel(Widget):
 
     def _start_impl(self):
         if self.command is not None:
-            command, label = self.command, None
+            command, label = self.command, self._chosen_label
         else:
             command, label = ai_backend.detect()
         if command is None:
@@ -161,7 +204,7 @@ class ClaudePanel(Widget):
             return
 
         cols, rows = self._pty_size()
-        self._screen = pyte.Screen(cols, rows)
+        self._screen = _PatchedScreen(cols, rows, on_reply=self._write_reply)
         self._stream = pyte.ByteStream(self._screen)
         self._ended = False
         self._error = None
@@ -185,6 +228,7 @@ class ClaudePanel(Widget):
         self._master_fd = master_fd
         self._pty_running = True
         self.border_title = label or "Claude Code"
+        self.border_subtitle = "Esc Esc (or F2) to leave"
         threading.Thread(target=self._read_loop, daemon=True).start()
         self.refresh()
 
@@ -196,6 +240,7 @@ class ClaudePanel(Widget):
 
     def _stop_impl(self):
         self._pty_running = False
+        self.border_subtitle = "C to choose a backend"
         if self._pid is not None:
             try:
                 os.killpg(os.getpgid(self._pid), signal.SIGTERM)
@@ -228,6 +273,14 @@ class ClaudePanel(Widget):
         except OSError:
             pass
 
+    def _write_reply(self, data):
+        if self._master_fd is None:
+            return
+        try:
+            os.write(self._master_fd, data.encode())
+        except OSError:
+            pass
+
     def _read_loop(self):
         try:
             self._read_loop_impl()
@@ -236,9 +289,13 @@ class ClaudePanel(Widget):
         self._pty_running = False
         self._ended = True
         try:
-            self.app.call_from_thread(self.refresh)
+            self.app.call_from_thread(self._mark_ended)
         except Exception:
             pass
+
+    def _mark_ended(self):
+        self.border_subtitle = "C to choose a backend"
+        self.refresh()
 
     def _read_loop_impl(self):
         while self._pty_running:

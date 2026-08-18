@@ -20,26 +20,43 @@ import shutil
 import subprocess
 
 
-def detect():
+NOTHING_CONFIGURED_MESSAGE = (
+    "No AI backend found. Set up one of:\n\n"
+    "  Claude Code -- npm install -g @anthropic-ai/claude-code\n"
+    "  Ollama      -- install from ollama.com, then: ollama pull <model>\n"
+    "  API chat    -- export ANTHROPIC_API_KEY=... or OPENAI_API_KEY=...\n\n"
+    "Press C to try again after setting one up."
+)
+
+
+def list_available():
+    """Every backend that's actually usable right now, most-preferred first -- what
+    the backend-picker modal shows so the user chooses among real options instead of
+    a wishlist. Each entry is (command, label)."""
+    options = []
     if shutil.which("claude"):
-        return "claude", "Claude Code"
+        options.append(("claude", "Claude Code"))
 
     model = _first_ollama_model()
     if model:
-        return f"ollama run {model}", f"Ollama ({model})"
+        options.append((f"ollama run {model}", f"Ollama ({model})"))
 
     if os.environ.get("ANTHROPIC_API_KEY"):
-        return "python3 -m mtdo.web_chat anthropic", "Claude (API)"
+        options.append(("python3 -m mtdo.web_chat anthropic", "Claude (API)"))
     if os.environ.get("OPENAI_API_KEY"):
-        return "python3 -m mtdo.web_chat openai", "GPT (API)"
+        options.append(("python3 -m mtdo.web_chat openai", "GPT (API)"))
 
-    return None, (
-        "No AI backend found. Set up one of:\n\n"
-        "  Claude Code -- npm install -g @anthropic-ai/claude-code\n"
-        "  Ollama      -- install from ollama.com, then: ollama pull <model>\n"
-        "  API chat    -- export ANTHROPIC_API_KEY=... or OPENAI_API_KEY=...\n\n"
-        "Press C to try again after setting one up."
-    )
+    return options
+
+
+def detect():
+    """The single best available backend, for callers that don't want to prompt --
+    e.g. ClaudePanel.start() when no explicit command was pinned. Returns (command,
+    label), or (None, NOTHING_CONFIGURED_MESSAGE) if nothing is usable."""
+    options = list_available()
+    if options:
+        return options[0]
+    return None, NOTHING_CONFIGURED_MESSAGE
 
 
 def _first_ollama_model():

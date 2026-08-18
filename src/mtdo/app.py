@@ -15,6 +15,7 @@ import subprocess
 from . import core as tc
 from . import config as appconfig
 from . import coaching
+from . import ai_backend
 from .claude_panel import ClaudePanel
 from .errorlog import LOG_PATH, log as app_log
 
@@ -251,6 +252,52 @@ class CategoryPickScreen(ModalScreen):
 
     def on_list_view_selected(self, event: ListView.Selected):
         self.dismiss(event.item.name)
+
+    def on_key(self, event):
+        if event.key == "escape":
+            self.dismiss(None)
+
+
+class AIBackendPickScreen(ModalScreen):
+    """Modal: choose which AI backend runs in the Focus Mode assistant panel, shown
+    every time C starts a fresh session -- Claude Code, a local Ollama model, or an
+    API-key web chat are never silently auto-picked, so you always know and choose
+    what's about to run. Only lists options ai_backend.list_available() confirms are
+    actually usable right now (rather than a wishlist); if none are, shows the same
+    "what to set up" guidance the panel itself would. Dismisses with the chosen
+    (command, label) tuple, or None on Escape."""
+
+    CSS = """
+    AIBackendPickScreen { align: center middle; }
+    #ai-pick-box { width: 60; height: auto; max-height: 20; border: round green; padding: 1 2; background: $panel; }
+    """
+
+    def __init__(self, options):
+        super().__init__()
+        self.options = options
+
+    def compose(self) -> ComposeResult:
+        with Center():
+            with Middle():
+                with Vertical(id="ai-pick-box"):
+                    if self.options:
+                        yield Static("Start which AI assistant?")
+                        items = [
+                            ListItem(Label(label), name=str(i))
+                            for i, (_command, label) in enumerate(self.options)
+                        ]
+                        yield VimListView(*items)
+                        yield Static("Enter to pick, Escape to cancel", classes="dim")
+                    else:
+                        yield Static(ai_backend.NOTHING_CONFIGURED_MESSAGE)
+                        yield Static("Escape to close", classes="dim")
+
+    def on_mount(self):
+        if self.options:
+            self.query_one(VimListView).focus()
+
+    def on_list_view_selected(self, event: ListView.Selected):
+        self.dismiss(self.options[int(event.item.name)])
 
     def on_key(self, event):
         if event.key == "escape":
@@ -1498,8 +1545,22 @@ class TodoApp(App):
             if self.claude_panel.has_focus:
                 self.claude_panel.blur()
                 return
-            self.claude_panel.start()
-            self.claude_panel.focus()
+            if self.claude_panel.is_running:
+                self.claude_panel.focus()
+                return
+
+            def on_choice(choice):
+                if choice is None:
+                    return
+                try:
+                    command, label = choice
+                    self.claude_panel.start_with(command, label)
+                    self.claude_panel.focus()
+                except Exception:
+                    app_log.exception("starting chosen AI backend failed")
+                    self.toast(f"Claude Code panel hit an error -- see {LOG_PATH}", style="bold red")
+
+            self.push_screen(AIBackendPickScreen(ai_backend.list_available()), on_choice)
         except Exception:
             app_log.exception("action_toggle_claude failed")
             self.toast(f"Claude Code panel hit an error -- see {LOG_PATH}", style="bold red")
