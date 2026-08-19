@@ -3,8 +3,10 @@
 A terminal task board built around a 4-column Kanban (Backlog / Todo / In Progress / Done),
 with a Pomodoro timer, streaks + a GitHub-style heatmap, a Focus Mode, a Career CRM for job
 applications, a Knowledge Vault for notes, a Learning Coach panel that surfaces study and
-interview-prep guidance for whatever task is in progress, and Spotify playback controls --
-all keyboard-first, no mouse required.
+interview-prep guidance (and, for DSA/SQL, generates an actual practice problem) for
+whatever task is in progress, an embedded AI assistant panel that already knows what
+you're working on, a real Practice Lab (Python/Java/C/C++/SQL, real execution, a real
+sqlite3 database), and now-playing music controls -- all keyboard-first, no mouse required.
 
 MTDO is built for deliberate practice, not entertainment -- every panel exists to help you
 learn, retain, and get interview-ready faster. There's no animation/video panel and never
@@ -131,6 +133,14 @@ mtdo status                      # print today's basket as markdown -- for scrip
 mtdo done <task_id> [date]       # mark a task done by ID (IDs come from `status`)
 ```
 
+## Focus Mode
+
+Press `f` to hide the board and weekly stats and give the whole screen to deep work: your
+Active Task, Pomodoro (auto-starts a 45/10 work/break split), Music, the Learning Coach,
+and an optional row alongside the Coach for the embedded **AI Assistant panel** (`C`) and
+the **Practice Lab** (`Shift+T`). `f` again to leave; nothing running gets stopped, it's
+just hidden until you come back.
+
 ## Learning Coach panel
 
 MTDO isn't for entertainment -- there's no animation, GIF, or video panel, and there never
@@ -153,14 +163,75 @@ fill in. Tasks without that metadata still get a full, topic-appropriate coachin
 framework automatically (set a category's `topic_type` to `dsa`, `backend`, `database`, or
 `system_design` in `goals.json` to pick which one) -- so the coach never has nothing to say.
 
+**DSA and SQL (`database`) fields get more than guidance in Focus Mode:** instead of the
+content above, the Coach has the AI generate an actual practice problem for the task -- a
+LeetCode-style problem for DSA, or a plain-English SQL question answerable against the
+Practice Lab's own sample database for `database`. It won't hand you the solution, only
+the problem. Every 10 minutes spent on it, a popup offers the next hint (never forced,
+never the answer outright) from a set generated alongside the problem. The regular
+coaching content above unlocks once the card is marked done, for review.
+
+## AI Assistant panel
+
+Press `C` in Focus Mode to start (or refocus) a real, embedded terminal session --
+[Claude Code](https://claude.com/product/claude-code) if it's installed, else a local
+[Ollama](https://ollama.com) model, else a minimal API-key chat against
+Claude/ChatGPT/Gemini directly, your pick from a menu the first time. Double-tap `Escape`
+(or `F2`) to release keyboard focus back to mtdo without ending the session.
+
+It doesn't start cold: the moment a session starts, or you switch which task is active,
+mtdo sends it the active task's text, field, and the generated DSA/SQL problem if there is
+one -- typed into the same visible chat, nothing hidden or out-of-band -- so you never have
+to explain your own problem to it. It's also told, once, how to teach: don't hand over the
+answer immediately, ask guiding questions first, teach from problem to need to solution
+rather than definition-first, and use progressive hints (a nudge, then a technique, then
+the approach, only the full answer as a last resort) -- adapted to whatever you're actually
+working on (DSA/SQL/backend/system design).
+
+## Practice Lab
+
+An optional column next to the Learning Coach and AI panel in Focus Mode (`Shift+T` to
+show/hide it) -- a real language picker (Python / Java / C / C++ / SQL), a code editor,
+and real execution, nothing simulated:
+
+- `Ctrl+R` -- run the code (or query) and see real output and real run time.
+- `Ctrl+B` -- for code, an AI time/space complexity estimate; for SQL, a **real**
+  `EXPLAIN QUERY PLAN` plus a real row count from sqlite3 instead (Big-O doesn't mean much
+  for a query the way it does for an algorithm).
+- `Ctrl+A` -- send the current code to the AI panel next to it for a review: not a verdict
+  or a fix, a nudge toward wherever your approach is going wrong.
+- `Ctrl+N` -- reset the current language's buffer to its starter template.
+
+SQL runs against a real SQLite database, seeded once at `~/.mtdo/practice/sample.db` with
+sample `departments` / `employees` / `orders` tables (deliberate duplicate salaries and
+employees with zero orders, so interview-style questions like "2nd highest salary per
+department" are actually meaningful) -- `sqlite3` is the real engine, not something mtdo
+reimplements.
+
 ## Platform notes
 
 Core features (Kanban, Pomodoro, streaks, Career CRM, Knowledge Vault, Learning Coach) are
-plain Python/Textual and should run anywhere Textual runs. Spotify controls use
-AppleScript, so they're **macOS + Spotify desktop app only** -- they no-op safely
-everywhere else.
+plain Python/Textual and should run anywhere Textual runs.
+
+Music controls use [nowplaying-cli](https://github.com/kirtan-shah/nowplaying-cli)
+(`brew install nowplaying-cli`) if it's installed, which works for whatever app currently
+owns "Now Playing" on macOS -- YouTube Music, Apple Music, Spotify, anything. Without it,
+they fall back to Spotify-specific AppleScript. Either way, **macOS only** -- they no-op
+safely everywhere else.
+
+The AI panel needs at least one backend actually available: the `claude` CLI installed, a
+running [Ollama](https://ollama.com) with a model pulled, or an API key for
+Anthropic/OpenAI/Gemini (it'll offer to install the SDK and prompt for the key the first
+time you pick that option). The Practice Lab's Run/Ctrl+B need the relevant tool on PATH
+per language -- `python3`; `javac`+`java`; `gcc`/`g++`; `sqlite3` for SQL (preinstalled on
+most Mac/Linux systems, otherwise `brew install sqlite3` / `apt install sqlite3`) -- and
+tells you plainly what's missing rather than failing silently if one isn't.
 
 ## Data
 
 State lives in `~/.mtdo/state.json`, config in `~/.mtdo/config.yaml`, daily reports in
-`~/.mtdo/reports/`. Nothing leaves your machine.
+`~/.mtdo/reports/`. The board, streaks, Career CRM, and Knowledge Vault never leave your
+machine. The one exception is the AI Assistant panel: if you pick an API-based backend
+(Claude/ChatGPT/Gemini) or Claude Code, whatever you send it -- including the task context
+mtdo primes it with -- goes to that provider, same as using their CLI/API directly. A local
+Ollama model keeps everything on-machine.

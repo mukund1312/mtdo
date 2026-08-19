@@ -672,9 +672,16 @@ HELP_SECTIONS = [
     ("Learning Coach (under the Now Playing box; shares a row with the AI panel in Focus Mode)", [
         ("space", "Start a card (in_progress) to activate the coach for it"),
         ("scroll", "Mouse-wheel/trackpad scroll to see the full coaching content"),
+        ("(DSA/SQL, Focus Mode)", "AI generates an actual practice problem instead of the "
+                                  "usual guidance -- no solution, just the problem. A popup offers "
+                                  "the next hint every 10 minutes; the regular guidance unlocks once "
+                                  "you mark the card done."),
     ]),
     ("AI Assistant panel (Focus Mode only)", [
         ("C", "Start/focus it -- opens a picker the first time, remembers your last choice"),
+        ("(automatic)", "It's primed with the active task, field, and generated problem (if any) "
+                         "the moment it starts or you switch tasks -- no need to explain your "
+                         "problem to it yourself. Told to teach via questions/hints, not just answer."),
         ("esc esc", "Double-tap Escape to release keyboard focus without ending the session"),
         ("F2", "Also releases focus (for keyboards that send real F-keys)"),
     ]),
@@ -704,9 +711,9 @@ HELP_SECTIONS = [
         ("esc / q", "Back to the board"),
     ]),
     ("Practice Lab (Shift+T to show it, in the row alongside the Learning Coach/AI panel in Focus Mode)", [
-        ("click", "Pick Python / Java / C / C++ from the language row"),
-        ("ctrl+r", "Run the code, see real output and real run time"),
-        ("ctrl+b", "Ask the AI for a time/space complexity estimate (\"B\" for Big-O)"),
+        ("click", "Pick Python / Java / C / C++ / SQL from the language row"),
+        ("ctrl+r", "Run the code (or query), see real output and real run time -- SQL runs against a real sqlite3 sample.db"),
+        ("ctrl+b", "AI time/space complexity estimate (\"B\" for Big-O) -- for SQL, a real EXPLAIN QUERY PLAN + row count instead"),
         ("ctrl+a", "Send your code to the AI panel for a Socratic review -- hints toward the fix, not the fix itself"),
         ("ctrl+n", "Reset the current language's buffer to its starter template"),
     ]),
@@ -791,16 +798,39 @@ ONBOARDING_STEPS = [
     ("Learning Coach", [
         "Whatever card is In Progress, the Coach shows guidance for it -- what to "
         "focus on, questions to ask yourself, common mistakes, mental models.",
+        "For a DSA or SQL field, in Focus Mode specifically: instead of that "
+        "guidance up front, the AI generates an actual practice problem for the "
+        "task (a LeetCode-style problem for DSA, a plain-English question "
+        "answerable against the Practice Lab's real sample database for SQL) -- "
+        "it won't hand you the solution, just the problem to work out yourself.",
+        "A popup offers the next hint every 10 minutes you spend on it -- never "
+        "forced, and never the answer outright, just a nudge in the right "
+        "direction. The regular guidance above unlocks once you mark it done, "
+        "for review.",
         "Not entertainment -- every panel here earns its space by helping you get "
-        "better at what you're actually studying.",
-        "Content can run long -- scroll it with your mouse wheel or trackpad.",
+        "better at what you're actually studying. Content can run long -- scroll "
+        "it with your mouse wheel or trackpad.",
     ]),
     ("AI Assistant Panel", [
         ("Shift+C", "start or focus the AI panel (auto-enters Focus Mode)"),
         "A real terminal session embedded right in the app -- Claude Code, a local "
         "Ollama model, or Claude/ChatGPT/Gemini over their own API, your pick from a menu.",
+        "It already knows what you're working on: the moment it starts (or you "
+        "switch tasks), mtdo sends it the active task, field, and the generated "
+        "problem if there is one -- you don't have to explain your problem to it "
+        "yourself. It's told to teach, not just answer: guide you toward the "
+        "solution with questions and hints rather than handing it over outright.",
         ("esc esc", "double-tap Escape to release keyboard focus without ending the session"),
-        ("Shift+T", "toggle an optional Practice Lab column too -- language picker, editor, run, AI time/space complexity"),
+    ]),
+    ("Practice Lab", [
+        ("Shift+T", "toggle the optional Practice Lab column, alongside the Coach and AI panel"),
+        "A real language picker (Python / Java / C / C++ / SQL), a code editor, "
+        "and real execution -- nothing simulated. SQL runs against a real sqlite3 "
+        "database seeded with sample tables, right there in the Practice Lab.",
+        ("ctrl+r", "run the code (or query) and see real output"),
+        ("ctrl+b", "AI time/space estimate for code -- for SQL, a real EXPLAIN QUERY PLAN + row count instead"),
+        ("ctrl+a", "send your code to the AI panel next to it for a review -- hints toward the issue, not the fix"),
+        ("ctrl+n", "reset the current language's buffer to its starter template"),
     ]),
     ("Pomodoro & Music", [
         ("p / x / t", "start-pause / reset / edit the pomodoro's work-break length"),
