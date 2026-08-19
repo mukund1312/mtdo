@@ -298,19 +298,47 @@ class PtyPanel(Widget):
         except OSError:
             pass
 
-    def send_text(self, text):
-        """Writes `text` into the pty followed by Enter, as if typed -- used to prime a
-        freshly-started (or just-refocused) AI session with context before the user
-        types anything themselves (see app.TodoApp._prime_ai_context_if_needed).
-        Embedded newlines are collapsed to spaces first: a pty is normally in
-        canonical/line-buffered mode, so each raw "\\n" would be released to the child
-        as its own submitted line -- for a plain readline-based REPL (Ollama's, e.g.)
-        that means several premature partial sends instead of one message, not just a
-        cosmetic multi-line paste. No-op if nothing's running."""
+    def send_text(self, text, submit=True, submit_delay=0.4, flatten=True):
+        """Writes `text` into the pty, as if typed -- used to prime a freshly-started
+        (or just-refocused) AI session with context (app.TodoApp._prime_ai_context_if_needed)
+        and to hand it code for review (practice_lab_panel.PracticeLabPanel.action_evaluate_code)
+        without the user having to type or press Enter themselves.
+
+        Enter is sent as its own SEPARATE write, submit_delay seconds later, rather
+        than one atomic write ending in "\\r" -- confirmed by hand that the atomic
+        version leaves the text sitting typed in the input box without actually
+        submitting: an interactive CLI's raw-mode keypress handler (Claude Code's
+        Ink-based UI included) can attach asynchronously on startup and either miss a
+        same-chunk trailing "\\r" outright, or not yet distinguish "still typing"
+        from "submit" within one burst. Splitting the two, with a real pause between
+        them, mirrors how a human actually types (type, brief pause, press Enter) and
+        is reliably recognized as submit where the atomic version often silently
+        wasn't. Pass submit=False to just fill the input box without sending Enter.
+
+        flatten=True (the default) collapses embedded newlines to spaces first: a pty
+        in canonical/line-buffered mode releases each raw newline to the child as its
+        own submitted line, so for a plain readline-based REPL (Ollama's, e.g.) an
+        un-flattened multi-line message would arrive as several premature partial
+        sends instead of one. Pass flatten=False for a payload where the newlines
+        themselves are meaningful -- code, where collapsing them would silently break
+        the content (Python indentation, e.g.) -- and accept the same multi-line-paste
+        behavior a human would get pasting that same code into any of these backends
+        directly. No-op if nothing's running."""
+        if not self._pty_running or self._master_fd is None:
+            return
+        payload = text.replace("\n", " ") if flatten else text
+        try:
+            os.write(self._master_fd, payload.encode("utf-8"))
+        except OSError:
+            return
+        if submit:
+            self.set_timer(submit_delay, self._send_enter)
+
+    def _send_enter(self):
         if not self._pty_running or self._master_fd is None:
             return
         try:
-            os.write(self._master_fd, text.replace("\n", " ").encode("utf-8") + b"\r")
+            os.write(self._master_fd, b"\r")
         except OSError:
             pass
 

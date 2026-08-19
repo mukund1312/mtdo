@@ -266,6 +266,24 @@ def build_focus_context_message(task_text, category_label, dsa_problem=None):
     return " ".join(part.replace("\n", " ") for part in parts)
 
 
+def build_code_review_message(language_label, code):
+    """The message sent into the AI panel when the student presses Ctrl+A in the
+    Practice Lab (see practice_lab_panel.PracticeLabPanel.action_evaluate_code) --
+    asks for a Socratic review of their current code instead of a verdict or a fix.
+    Unlike TUTOR_FRAMEWORK/build_focus_context_message, real newlines are kept here:
+    flattening code into one line would silently break it (Python indentation,
+    e.g.) -- see PtyPanel.send_text's flatten parameter."""
+    return (
+        f"Here's the {language_label} code I've written so far for this problem. "
+        "Please review it the way the tutor framework above asks: don't give me the "
+        "correct solution or rewrite my code for me, and don't just say right or "
+        "wrong -- look at where my current approach or reasoning is likely going "
+        "wrong, or about to hit a wall, and ask me questions or give the smallest "
+        "possible nudge that helps me see it myself and think in the right "
+        "direction.\n\nMy code:\n" + code
+    )
+
+
 def has_coaching_setup(block, category_meta):
     """Whether there's any real coaching content for this task, or only the fully
     generic fallback would apply. A task's own rich metadata, a field-level

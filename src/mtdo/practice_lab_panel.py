@@ -44,6 +44,7 @@ from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.widgets import Static, TextArea, Button, Rule
 
 from . import ai_ask
+from . import coaching
 from . import code_runner
 from .errorlog import LOG_PATH, log as app_log
 
@@ -79,6 +80,29 @@ def _split_bigo(raw):
     return "?", raw.strip()
 
 
+class _EditorTextArea(TextArea):
+    """TextArea subclass so Ctrl+A triggers "send this code to the AI panel for a
+    review" (PracticeLabPanel.action_evaluate_code) instead of TextArea's own
+    built-in cursor-line-start binding. A focused TextArea's own BINDINGS always win
+    over an ancestor widget's BINDINGS for the same key (confirmed by hand earlier --
+    see the Ctrl+B/Big-O history), so simply adding ctrl+a to PracticeLabPanel's own
+    BINDINGS would never be reached while the editor has focus. Intercepting inside
+    TextArea's own _on_key, before its normal insert/binding handling runs, is what
+    actually works."""
+
+    def __init__(self, *args, on_evaluate=None, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._on_evaluate = on_evaluate
+
+    async def _on_key(self, event) -> None:
+        if event.key == "ctrl+a" and self._on_evaluate:
+            event.stop()
+            event.prevent_default()
+            self._on_evaluate()
+            return
+        await super()._on_key(event)
+
+
 class PracticeLabPanel(Vertical):
     """Embeddable version of the practice lab -- see module docstring."""
 
@@ -86,8 +110,9 @@ class PracticeLabPanel(Vertical):
 
     BINDINGS = [
         ("ctrl+r", "run_code", "Run"),
-        ("ctrl+b", "analyze_complexity", "Analyze Complexity"),  # "B" for Big-O -- ctrl+a is TextArea's own select-all binding and never reaches here while the editor has focus
+        ("ctrl+b", "analyze_complexity", "Analyze Complexity"),  # "B" for Big-O
         ("ctrl+n", "reset_code", "Reset"),
+        ("ctrl+a", "evaluate_code", "Evaluate Code"),  # actually caught by _EditorTextArea._on_key while the editor has focus -- see that class's docstring
     ]
 
     DEFAULT_CSS = """
@@ -138,11 +163,12 @@ class PracticeLabPanel(Vertical):
             self.tab_chip = Static(f"[{code_runner.FILE_NAMES[self.language]}]", id="practice-tab-chip")
             yield self.tab_chip
         yield Rule()
-        self.editor = TextArea(
+        self.editor = _EditorTextArea(
             self.code_by_language[self.language],
             language=code_runner.TEXTAREA_LANGUAGE[self.language],
             show_line_numbers=True,
             id="practice-editor",
+            on_evaluate=self.action_evaluate_code,
         )
         yield self.editor
         yield Rule()
@@ -160,7 +186,7 @@ class PracticeLabPanel(Vertical):
         with VerticalScroll(classes="practice-section-scroll"):
             self.space_panel = Static(self._idle_complexity(), id="practice-space")
             yield self.space_panel
-        yield Static("^R run  ·  ^B complexity  ·  ^N reset", id="practice-help", classes="dim")
+        yield Static("^R run  ·  ^B complexity  ·  ^A evaluate  ·  ^N reset", id="practice-help", classes="dim")
 
     def action_reset_code(self):
         self.code_by_language[self.language] = code_runner.TEMPLATES[self.language]
@@ -170,6 +196,34 @@ class PracticeLabPanel(Vertical):
     def action_copy_code(self):
         self.app.copy_to_clipboard(self.editor.text)
         self.app.toast("Copied to clipboard (OSC 52 -- needs a terminal that supports it).", style="dim cyan")
+
+    def action_evaluate_code(self):
+        """Ctrl+A: sends the current code to the AI panel sitting right next to this
+        one for a Socratic review -- not a verdict, not a fix, just where the
+        student's current approach is likely going wrong and a nudge toward thinking
+        it through themselves (see coaching.build_code_review_message). This is a
+        live chat message into the running AI session, not a one-shot ai_ask.ask()
+        call like Ctrl+B's complexity estimate -- the point is a back-and-forth
+        conversation the student can keep going, in the same panel already primed
+        with the tutor framework and this task's context (see
+        app.TodoApp._prime_ai_context_if_needed)."""
+        code = self.editor.text
+        if not code.strip():
+            self.app.toast("Write some code first.", style="dim italic")
+            return
+        if not self.app.claude_panel.is_running:
+            self.app.toast(
+                "Start the AI panel first (press C), then Ctrl+A to have it review your code.",
+                style="bold yellow",
+            )
+            return
+        self.app._prime_ai_context_if_needed()  # safety net if it somehow hasn't been primed yet
+        language_label = code_runner.LANGUAGE_LABELS[self.language]
+        message = coaching.build_code_review_message(language_label, code)
+        self.app.claude_panel.send_text(message, flatten=False)
+        self.app.claude_panel.focus()
+        self.app.toast("Sent your code to the AI panel -- it'll point you in a direction, not hand you the answer.",
+                        style="bold cyan")
 
     # -- language picker -------------------------------------------------
 

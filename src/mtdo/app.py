@@ -707,6 +707,7 @@ HELP_SECTIONS = [
         ("click", "Pick Python / Java / C / C++ from the language row"),
         ("ctrl+r", "Run the code, see real output and real run time"),
         ("ctrl+b", "Ask the AI for a time/space complexity estimate (\"B\" for Big-O)"),
+        ("ctrl+a", "Send your code to the AI panel for a Socratic review -- hints toward the fix, not the fix itself"),
         ("ctrl+n", "Reset the current language's buffer to its starter template"),
     ]),
     ("Text prompt popups", [
