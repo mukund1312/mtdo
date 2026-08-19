@@ -23,9 +23,12 @@ framework has no volume control, so when it's the active path, volume commands
 nudge the system's actual output volume (which affects whatever's playing, which is
 arguably more "universal" anyway) instead of a single app's internal volume.
 """
+import datetime
+import json
 import re
 import shutil
 import subprocess
+import time
 
 NOWPLAYING_INSTALL_HINT = "brew install nowplaying-cli"
 
@@ -163,26 +166,63 @@ def play_spotify_url(value):
 
 # -- nowplaying-cli path ---------------------------------------------------------
 
+def _parse_mediaremote_timestamp(value):
+    """kMRMediaRemoteNowPlayingInfoTimestamp comes back either as a raw epoch number
+    or as Foundation's default NSDate string description ("2026-08-20 12:34:56 +0000")
+    depending on the source app -- try both rather than assuming one."""
+    if isinstance(value, (int, float)):
+        return float(value)
+    for fmt in ("%Y-%m-%d %H:%M:%S %z", "%Y-%m-%dT%H:%M:%S%z"):
+        try:
+            return datetime.datetime.strptime(str(value), fmt).timestamp()
+        except ValueError:
+            continue
+    raise ValueError(f"unrecognized MediaRemote timestamp: {value!r}")
+
+
 def _nowplaying_cli_info():
+    """Uses `get-raw` (the full MediaRemote dict), not `get --json <keys>` -- confirmed
+    by hand that the shorthand key-selection path is broken for elapsedTime
+    specifically: it reliably reports 0 even while a track is actively playing,
+    while get-raw's kMRMediaRemoteNowPlayingInfoElapsedTime has the real value at the
+    same instant. That mismatch is also the real explanation for a "frozen" position
+    in general, not just the always-zero case: MediaRemote's ElapsedTime is a
+    snapshot updated only on discrete events (play/pause/seek/track change), not a
+    continuously ticking clock. Some sources also publish Timestamp + PlaybackRate
+    specifically so a consumer can extrapolate "right now" from that snapshot --
+    used below when present. Spotify's own entries don't include either (confirmed
+    by hand), so for Spotify specifically this still only advances when Spotify
+    itself pushes a new snapshot, not every second -- there's no data to extrapolate
+    from, not a bug in this extrapolation."""
     try:
         result = subprocess.run(
-            ["nowplaying-cli", "get", "--json", "title", "artist", "elapsedTime", "duration", "playbackRate"],
-            capture_output=True, text=True, timeout=3,
+            ["nowplaying-cli", "get-raw"], capture_output=True, text=True, timeout=3,
         )
-        import json
         data = json.loads(result.stdout)
     except Exception:
         return dict(_EMPTY)
 
-    title = data.get("title")
+    title = data.get("kMRMediaRemoteNowPlayingInfoTitle")
     if not title:
         return dict(_EMPTY)
-    playing = (data.get("playbackRate") or 0) > 0
+
+    elapsed = float(data.get("kMRMediaRemoteNowPlayingInfoElapsedTime") or 0)
+    rate = data.get("kMRMediaRemoteNowPlayingInfoPlaybackRate")
+    timestamp = data.get("kMRMediaRemoteNowPlayingInfoTimestamp")
+    position = elapsed
+    if rate is not None and timestamp is not None:
+        try:
+            since_snapshot = time.time() - _parse_mediaremote_timestamp(timestamp)
+            position = elapsed + since_snapshot * float(rate)
+        except (ValueError, TypeError):
+            position = elapsed
+
+    playing = rate is None or float(rate) > 0  # no rate published (e.g. Spotify) -- assume playing
     return {
         "song": title,
-        "artist": data.get("artist") or "",
-        "position": float(data.get("elapsedTime") or 0),
-        "duration": float(data.get("duration") or 0),
+        "artist": data.get("kMRMediaRemoteNowPlayingInfoArtist") or "",
+        "position": max(0.0, position),
+        "duration": float(data.get("kMRMediaRemoteNowPlayingInfoDuration") or 0),
         "state": "playing" if playing else "paused",
         "volume": None,  # not controllable via MediaRemote -- see _nudge_volume
     }
