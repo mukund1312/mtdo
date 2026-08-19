@@ -27,7 +27,7 @@ from .errorlog import LOG_PATH, log as app_log
 
 from textual.app import App, ComposeResult
 from textual.containers import Horizontal, Vertical, VerticalScroll, Center, Middle
-from textual.widgets import Static, ListView, ListItem, Label, Input, Footer, TextArea, Button
+from textual.widgets import Static, ListView, ListItem, Label, Input, Footer, TextArea, Button, Rule
 from textual.screen import ModalScreen, Screen
 from textual.reactive import reactive
 from rich.text import Text
@@ -726,7 +726,7 @@ _RUN_COMMAND_LABEL = {
 def _parse_complexity_response(text):
     """Splits the AI's answer into (time_text, space_text) using the ===TIME===/
     ===SPACE=== markers requested in PracticeScreen._analyze_worker's prompt. Falls
-    back to showing the whole answer in the Time panel (and a pointer in Space) if a
+    back to showing the whole answer in the Time section (and a pointer in Space) if a
     differently-formatted response comes back -- still worth showing, not discarding."""
     if "===SPACE===" in text:
         time_part, space_part = text.split("===SPACE===", 1)
@@ -734,33 +734,48 @@ def _parse_complexity_response(text):
     return text.strip(), "(see Time Complexity -- response wasn't split into sections)"
 
 
-class PracticeScreen(Screen):
-    """The "LeetCode-style" practice screen: a language picker, a real code editor
-    (Textual's TextArea -- syntax-highlighted for Python/Java, which are the only
-    two of the four with a built-in tree-sitter grammar shipped with Textual; C/C++
-    still fully edit and run, just without color, see code_runner.TEXTAREA_LANGUAGE),
-    an output panel formatted like a real terminal session (a "$ <command>" prompt
-    line, the program's actual output, then an exit-status line -- not a generic
-    OK/FAILED badge), and separate Time/Space Complexity panels showing an AI's Big-O
-    estimate for each. Output and complexity are kept in visibly separate panels on
-    purpose: run time is a real measurement, complexity is an AI's estimate, and
-    blending them in one panel would make an estimate look like a fact -- and time and
-    space get their own panels rather than one shared "Complexity" panel so each keeps
-    its own explanation legible instead of one wall of text for both.
+def _split_bigo(raw):
+    """Splits one "Big-O: O(...)\\n<justification>" section (see the prompt in
+    PracticeScreen._analyze_worker) into (bigo, explanation), matching the terminal
+    mockup's "O(n)" heading + "Explanation:" body layout. Falls back to showing the
+    raw text as the explanation if the AI didn't use the requested "Big-O:" prefix."""
+    lines = raw.strip().splitlines()
+    if lines and lines[0].lower().startswith("big-o:"):
+        bigo = lines[0].split(":", 1)[1].strip()
+        explanation = "\n".join(lines[1:]).strip()
+        return bigo, explanation
+    return "?", raw.strip()
 
-    Styled deliberately dark/minimal (near-black background, thin grey borders, no
-    variant-colored button chrome) to read like a terminal session rather than a form
-    -- as close as a character-cell TUI gets to a Ghostty/Warp-style aesthetic. Two
-    things from that aesthetic genuinely don't translate here and are skipped rather
-    than faked: the actual font (JetBrains Mono, a glowing cursor, ...) is controlled
-    by the user's own terminal emulator, not by anything this app can set from inside
-    it; and a fixed "16:9" aspect ratio doesn't apply to a screen that already fills
-    whatever terminal window it's given.
+
+class PracticeScreen(Screen):
+    """The "LeetCode-style" practice screen: a language tag/picker, a real code editor
+    (Textual's TextArea -- syntax-highlighted for Python/Java, which are the only two
+    of the four with a built-in tree-sitter grammar shipped with Textual; C/C++ still
+    fully edit and run, just without color, see code_runner.TEXTAREA_LANGUAGE), an
+    output section formatted like a real terminal session (a "$ <command>" prompt
+    line, the program's actual output, then a dim exit-status line), and separate Time
+    Complexity / Space Complexity sections each showing an AI's Big-O estimate plus a
+    one-line explanation. Output and complexity are kept visibly separate on purpose:
+    run time is a real measurement, complexity is an AI's estimate, and blending them
+    would make an estimate look like a fact -- and time/space get their own sections
+    rather than one shared block so each explanation stays legible on its own.
+
+    Laid out as a single top-to-bottom stack -- TOP BAR / TABS / EDITOR / OUTPUT / TIME
+    COMPLEXITY / SPACE COMPLEXITY, each full width and separated by a Rule -- rather
+    than an editor-plus-sidebar split, to match a real terminal session scrolling
+    downward instead of a form with side panels. Flat Static text instead of bordered
+    boxes throughout ("no cards"), near-black background, thin grey Rule dividers
+    standing in for "clean ASCII separators", minimal button chrome. Two things from
+    that aesthetic genuinely don't translate onto a character-cell TUI and are skipped
+    rather than faked: the actual font (JetBrains Mono, a glowing cursor, ...) is
+    controlled by the user's own terminal emulator, not by anything this app can set
+    from inside it; and a fixed "16:9" aspect ratio doesn't apply to a screen that
+    already fills whatever terminal window it's given.
 
     A full screen rather than squeezed into Focus Mode's row alongside the Learning
-    Coach/AI panel/plain practice terminal -- a language picker + editor + output +
-    two complexity panels genuinely needs more room than a 1/3-width column, the same
-    reason Career CRM and the Knowledge Vault are their own screens instead of panels."""
+    Coach/AI panel/plain practice terminal -- this stack genuinely needs more vertical
+    room than a 1/3-width column, the same reason Career CRM and the Knowledge Vault
+    are their own screens instead of panels."""
 
     BINDINGS = [
         ("escape", "close", "Back"),
@@ -772,23 +787,22 @@ class PracticeScreen(Screen):
 
     CSS = """
     PracticeScreen { layout: vertical; background: #0b0b0b; }
-    #practice-topbar {
-        height: 3; dock: top; background: #101010; border-bottom: solid #262626;
-        padding: 0 1; align: left middle;
-    }
+    #practice-topbar { height: 1; dock: top; padding: 0 1; align: left middle; background: #0b0b0b; }
     #practice-lang-tag { width: auto; padding: 0 2 0 0; color: #39c26d; text-style: bold; }
     #practice-topbar Button {
-        min-width: 9; height: 1; margin: 0 1 0 0; background: #161616; color: #8a8a8a; border: none;
+        min-width: 6; height: 1; margin: 0 1 0 0; background: #0b0b0b; color: #6a6a6a; border: none;
     }
-    #practice-topbar Button.-active-lang { color: #39c26d; text-style: bold; background: #1a1f1a; }
+    #practice-topbar Button.-active-lang { color: #39c26d; text-style: bold; }
     #practice-topbar-spacer { width: 1fr; }
-    #practice-reset-btn { color: #8a8a8a; }
-    #practice-body { height: 1fr; background: #0b0b0b; }
-    #practice-editor-col { width: 2fr; }
-    #practice-side-col { width: 1fr; }
+    .practice-icon-btn { min-width: 4; color: #8a8a8a; }
+    #practice-run-btn { min-width: 10; color: #39c26d; text-style: bold; }
+    #practice-tabs { height: 1; padding: 0 1; background: #0b0b0b; }
+    #practice-tab-chip { color: #d0d0d0; }
+    Rule { color: #262626; }
     #practice-editor { height: 1fr; background: #0b0b0b; }
-    #practice-output-scroll, #practice-time-scroll, #practice-space-scroll { height: 1fr; }
-    #practice-help { height: 1; dock: bottom; padding: 0 1; background: #101010; color: #5a5a5a; }
+    .practice-section-heading { height: 1; padding: 0 1; color: #6a6a6a; text-style: bold; }
+    .practice-section-scroll { height: auto; max-height: 6; padding: 0 1 1 1; }
+    #practice-help { height: 1; dock: bottom; padding: 0 1; background: #0b0b0b; color: #4a4a4a; }
     """
 
     _LANG_BUTTON_IDS = {"python": "lang-python", "java": "lang-java", "c": "lang-c", "cpp": "lang-cpp"}
@@ -809,26 +823,36 @@ class PracticeScreen(Screen):
                     classes="-active-lang" if lang == self.language else "",
                 )
             yield Static("", id="practice-topbar-spacer")
-            yield Button("↺ Reset", id="practice-reset-btn")
-        with Horizontal(id="practice-body"):
-            with Vertical(id="practice-editor-col"):
-                self.editor = TextArea(
-                    self.code_by_language[self.language],
-                    language=code_runner.TEXTAREA_LANGUAGE[self.language],
-                    show_line_numbers=True,
-                    id="practice-editor",
-                )
-                yield self.editor
-            with Vertical(id="practice-side-col"):
-                with VerticalScroll(id="practice-output-scroll"):
-                    self.output_panel = Static(self._idle_output(), id="practice-output")
-                    yield self.output_panel
-                with VerticalScroll(id="practice-time-scroll"):
-                    self.time_panel = Static(self._idle_complexity("Time Complexity"), id="practice-time")
-                    yield self.time_panel
-                with VerticalScroll(id="practice-space-scroll"):
-                    self.space_panel = Static(self._idle_complexity("Space Complexity"), id="practice-space")
-                    yield self.space_panel
+            yield Button("📋", id="practice-copy-btn", classes="practice-icon-btn")
+            yield Button("↺", id="practice-reset-btn", classes="practice-icon-btn")
+            yield Button("🚀 Run", id="practice-run-btn")
+        yield Rule()
+        with Horizontal(id="practice-tabs"):
+            self.tab_chip = Static(f"[{code_runner.FILE_NAMES[self.language]}]", id="practice-tab-chip")
+            yield self.tab_chip
+        yield Rule()
+        self.editor = TextArea(
+            self.code_by_language[self.language],
+            language=code_runner.TEXTAREA_LANGUAGE[self.language],
+            show_line_numbers=True,
+            id="practice-editor",
+        )
+        yield self.editor
+        yield Rule()
+        yield Static("OUTPUT", classes="practice-section-heading")
+        with VerticalScroll(classes="practice-section-scroll"):
+            self.output_panel = Static(self._idle_output(), id="practice-output")
+            yield self.output_panel
+        yield Rule()
+        yield Static("TIME COMPLEXITY", classes="practice-section-heading")
+        with VerticalScroll(classes="practice-section-scroll"):
+            self.time_panel = Static(self._idle_complexity(), id="practice-time")
+            yield self.time_panel
+        yield Rule()
+        yield Static("SPACE COMPLEXITY", classes="practice-section-heading")
+        with VerticalScroll(classes="practice-section-scroll"):
+            self.space_panel = Static(self._idle_complexity(), id="practice-space")
+            yield self.space_panel
         yield Static("Ctrl+R run  ·  Ctrl+B analyze complexity  ·  Ctrl+N reset  ·  Esc/q back",
                       id="practice-help", classes="dim")
 
@@ -843,14 +867,25 @@ class PracticeScreen(Screen):
         self.editor.text = self.code_by_language[self.language]
         self.editor.focus()
 
+    def action_copy_code(self):
+        self.app.copy_to_clipboard(self.editor.text)
+        self.app.toast("Copied to clipboard (OSC 52 -- needs a terminal that supports it).", style="dim cyan")
+
     # -- language picker -------------------------------------------------
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
-        if event.button.id == "practice-reset-btn":
+        bid = event.button.id
+        if bid == "practice-copy-btn":
+            self.action_copy_code()
+            return
+        if bid == "practice-reset-btn":
             self.action_reset_code()
             return
+        if bid == "practice-run-btn":
+            self.action_run_code()
+            return
         for lang, btn_id in self._LANG_BUTTON_IDS.items():
-            if event.button.id == btn_id:
+            if bid == btn_id:
                 self._switch_language(lang)
                 return
 
@@ -863,6 +898,7 @@ class PracticeScreen(Screen):
         self.editor.language = code_runner.TEXTAREA_LANGUAGE[lang]
         self.editor.text = self.code_by_language[lang]
         self.lang_tag.update(f"[{code_runner.LANGUAGE_LABELS[lang]}]")
+        self.tab_chip.update(f"[{code_runner.FILE_NAMES[lang]}]")
         for l, btn_id in self._LANG_BUTTON_IDS.items():
             self.query_one(f"#{btn_id}", Button).set_class(l == lang, "-active-lang")
         self.editor.focus()
@@ -870,20 +906,14 @@ class PracticeScreen(Screen):
     # -- run ---------------------------------------------------------------
 
     def _idle_output(self):
-        return Panel(
-            Text("$ " + _RUN_COMMAND_LABEL[self.language], style="bold #39c26d"),
-            title="Output", border_style="#3a3a3a", box=box.SQUARE,
-        )
+        return Text("$ " + _RUN_COMMAND_LABEL[self.language], style="bold #39c26d")
 
     def action_run_code(self):
         code = self.editor.text
         language = self.language
-        self.output_panel.update(Panel(
-            Group(
-                Text(f"$ {_RUN_COMMAND_LABEL[language]}", style="bold #39c26d"),
-                Text("running...", style="dim italic"),
-            ),
-            title="Output", border_style="#3a3a3a", box=box.SQUARE,
+        self.output_panel.update(Group(
+            Text(f"$ {_RUN_COMMAND_LABEL[language]}", style="bold #39c26d"),
+            Text("running...", style="dim italic"),
         ))
         threading.Thread(target=self._run_code_worker, args=(language, code), daemon=True).start()
 
@@ -898,44 +928,41 @@ class PracticeScreen(Screen):
 
     def _show_run_result(self, language, result):
         status_color = "#39c26d" if result.ok else "#e06c75"
-        body = Group(
+        self.output_panel.update(Group(
             Text(f"$ {_RUN_COMMAND_LABEL[language]}", style="bold #39c26d"),
             Text(""),
             Text(result.output or "(no output)"),
-            Text(""),
-            Text(f"[exit {'0' if result.ok else '1'} in {result.elapsed:.3f}s]", style=status_color),
-        )
-        self.output_panel.update(Panel(body, title="Output", border_style="#3a3a3a", box=box.SQUARE))
+            Text(f"[exit {'0' if result.ok else '1'} in {result.elapsed:.3f}s]", style=f"dim {status_color}"),
+        ))
 
     def _show_run_error(self, message):
-        self.output_panel.update(Panel(
-            Text(f"Couldn't run that -- see {LOG_PATH}\n{message}", style="bold #e06c75"),
-            title="Output", border_style="#e06c75", box=box.SQUARE,
-        ))
+        self.output_panel.update(Text(f"Couldn't run that -- see {LOG_PATH}\n{message}", style="bold #e06c75"))
 
     # -- complexity ----------------------------------------------------------
 
-    def _idle_complexity(self, title):
-        return Panel(
-            Text("Ctrl+B to ask the AI for an estimate.", style="dim italic", justify="center"),
-            title=title, border_style="#3a3a3a", box=box.SQUARE,
+    def _idle_complexity(self):
+        return Text("Ctrl+B to ask the AI for an estimate.", style="dim italic")
+
+    def _complexity_body(self, raw):
+        bigo, explanation = _split_bigo(raw)
+        return Group(
+            Text(bigo, style="bold #39c26d"),
+            Text(""),
+            Text("Explanation:", style="dim"),
+            Text(explanation or "(no explanation given)"),
         )
 
     def action_analyze_complexity(self):
         code = self.editor.text
         if not code.strip():
-            for panel, title in ((self.time_panel, "Time Complexity"), (self.space_panel, "Space Complexity")):
-                panel.update(Panel(
-                    Text("Write some code first.", style="dim italic", justify="center"),
-                    title=title, border_style="#3a3a3a", box=box.SQUARE,
-                ))
+            msg = Text("Write some code first.", style="dim italic")
+            self.time_panel.update(msg)
+            self.space_panel.update(msg)
             return
         language_label = code_runner.LANGUAGE_LABELS[self.language]
-        for panel, title in ((self.time_panel, "Time Complexity"), (self.space_panel, "Space Complexity")):
-            panel.update(Panel(
-                Text("Analyzing...", style="dim italic", justify="center"),
-                title=title, border_style="#3a3a3a", box=box.SQUARE,
-            ))
+        msg = Text("Analyzing...", style="dim italic")
+        self.time_panel.update(msg)
+        self.space_panel.update(msg)
         threading.Thread(target=self._analyze_worker, args=(language_label, code), daemon=True).start()
 
     def _analyze_worker(self, language_label, code):
@@ -959,15 +986,13 @@ class PracticeScreen(Screen):
 
     def _show_complexity_result(self, answer, error):
         if error and not answer:
-            for panel, title in ((self.time_panel, "Time Complexity"), (self.space_panel, "Space Complexity")):
-                panel.update(Panel(Text(error, style="bold #e06c75"), title=title,
-                                    border_style="#e06c75", box=box.SQUARE))
+            err = Text(error, style="bold #e06c75")
+            self.time_panel.update(err)
+            self.space_panel.update(err)
             return
         time_text, space_text = _parse_complexity_response(answer or "")
-        self.time_panel.update(Panel(Text(time_text or "(no response)"), title="Time Complexity",
-                                      border_style="#3a3a3a", box=box.SQUARE))
-        self.space_panel.update(Panel(Text(space_text or "(no response)"), title="Space Complexity",
-                                       border_style="#3a3a3a", box=box.SQUARE))
+        self.time_panel.update(self._complexity_body(time_text))
+        self.space_panel.update(self._complexity_body(space_text))
 
 
 class HelpScreen(Screen):
@@ -2019,6 +2044,7 @@ class TodoApp(App):
         self.query_one(ClockHeader).update_clock()
         self.music_panel.refresh_music_info()
         self.active_task_panel.update_content(self.state, self.today)
+        self.coach_panel.update_content(self.state, self.today, self.focus_mode)
         self._check_dsa_hint_timer()
         if self.pomo_panel.running:
             if self.pomo_panel.remaining > 0:
@@ -2137,6 +2163,7 @@ class TodoApp(App):
                 self.practice_panel.blur()
         self.toast("Focus Mode ON -- 45/10 pomodoro started, press f to exit" if self.focus_mode else "Focus Mode off",
                    style="bold bright_green" if self.focus_mode else "dim")
+        self.refresh_side_panels()
 
     def action_toggle_claude(self):
         if not self.focus_mode:
