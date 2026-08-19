@@ -1416,7 +1416,7 @@ class LearningCoachPanel(Static):
             Text(""),
             Text("Generating your problem...", style="dim italic", justify="center"),
         )
-        return Panel(body, title="Learning Coach -- DSA Problem", border_style="magenta", box=box.ROUNDED)
+        return Panel(body, title="Learning Coach", border_style="magenta", box=box.ROUNDED)
 
     def _dsa_problem_panel(self, task_text, problem):
         rows = [
@@ -1440,7 +1440,7 @@ class LearningCoachPanel(Static):
         rows.append(Text("Work it out yourself first -- the full coaching notes unlock",
                           style="dim italic", justify="center"))
         rows.append(Text("once you mark this done.", style="dim italic", justify="center"))
-        return Panel(Group(*rows), title="Learning Coach -- DSA Problem", border_style="magenta", box=box.ROUNDED)
+        return Panel(Group(*rows), title="Learning Coach", border_style="magenta", box=box.ROUNDED)
 
     def _idle_panel(self):
         body = Group(
