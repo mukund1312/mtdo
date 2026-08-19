@@ -348,6 +348,51 @@ class PtyPanel(Widget):
         except OSError:
             pass
 
+    def send_text_when_idle(self, text, max_wait=12.0, poll_interval=0.3, **send_kwargs):
+        """Like send_text, but waits for the pty's visible output to stop changing
+        before sending, instead of firing after a fixed delay chosen by the caller.
+
+        A fixed delay (this used to be a flat 2.0s before a freshly-started AI
+        session got its context primer) is a guess about how long the backend takes
+        to boot -- and confirmed in practice to be too short often enough to matter:
+        Claude Code's actual startup time varies a lot (auth checks, MCP server
+        startup, ...), and _pty_running goes True the instant the subprocess is
+        spawned, long before its own raw-mode input handler is actually attached and
+        listening. Text written before that handler attaches can be silently
+        dropped entirely, not just left unsubmitted -- which is exactly why the
+        primer sometimes never reached the assistant at all, not just arrived
+        un-sent (see send_text's docstring for that separate, already-fixed half of
+        this).
+
+        Polls the rendered screen buffer every poll_interval seconds; once two
+        consecutive snapshots are identical (nothing animating/loading anymore --
+        a generic readiness signal that doesn't need to know any one backend's
+        specific banner text), sends immediately. Gives up waiting and sends anyway
+        after max_wait seconds, so a backend that keeps redrawing (a spinner, e.g.)
+        doesn't mean the primer never goes out at all."""
+        self._wait_for_idle_then_send(text, send_kwargs, elapsed=0.0, last_snapshot=None,
+                                       max_wait=max_wait, poll_interval=poll_interval)
+
+    def _wait_for_idle_then_send(self, text, send_kwargs, elapsed, last_snapshot, max_wait, poll_interval):
+        if not self._pty_running:
+            return
+        snapshot = self._screen_snapshot()
+        if (snapshot and snapshot == last_snapshot) or elapsed >= max_wait:
+            self.send_text(text, **send_kwargs)
+            return
+        self.set_timer(
+            poll_interval,
+            lambda: self._wait_for_idle_then_send(
+                text, send_kwargs, elapsed + poll_interval, snapshot, max_wait, poll_interval,
+            ),
+        )
+
+    def _screen_snapshot(self):
+        if self._screen is None:
+            return ""
+        rows = (self._screen.buffer[y] for y in range(self._screen.lines))
+        return "\n".join("".join(row[x].data for x in range(self._screen.columns)) for row in rows)
+
     def _write_reply(self, data):
         if self._master_fd is None:
             return

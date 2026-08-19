@@ -213,7 +213,7 @@ class PracticeLabPanel(Vertical):
         self.app._prime_ai_context_if_needed()  # safety net if it somehow hasn't been primed yet
         language_label = code_runner.LANGUAGE_LABELS[self.language]
         message = coaching.build_code_review_message(language_label, code)
-        self.app.claude_panel.send_text(message, flatten=False)
+        self.app.claude_panel.send_text_when_idle(message, flatten=False)
         self.app.claude_panel.focus()
         self.app.toast("Sent your code to the AI panel -- it'll point you in a direction, not hand you the answer.",
                         style="bold cyan")

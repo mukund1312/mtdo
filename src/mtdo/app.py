@@ -1835,7 +1835,7 @@ class TodoApp(App):
 
         self.push_screen(HintPromptScreen(), on_answer)
 
-    def _prime_ai_context_if_needed(self, delay=0.0):
+    def _prime_ai_context_if_needed(self):
         """Sends the active focus task's context (+ the Socratic tutor framework, see
         coaching.build_focus_context_message) into the running AI panel as if typed, so
         whichever backend the user picked -- Claude Code, a local Ollama model, or an
@@ -1845,7 +1845,15 @@ class TodoApp(App):
         again when the active task actually changed since the last prime (self.ai_primed_ref),
         so refocusing the same task/session doesn't spam the conversation -- but a
         freshly started process always gets one, since start_backend() clears
-        ai_primed_ref first for exactly that case."""
+        ai_primed_ref first for exactly that case.
+
+        Sent via send_text_when_idle, not send_text directly: a freshly-spawned
+        backend's is_running goes True the instant the subprocess exists, well
+        before its own input handler is actually listening, and text written before
+        that can be silently dropped rather than just arriving unsubmitted -- this
+        used to fire after a flat 2s delay, which was confirmed too short often
+        enough (Claude Code's real startup time varies) that the assistant sometimes
+        ended up with zero context at all, not just late context."""
         if not self.focus_mode:
             return
         active = tc.current_active_task(self.state, self.today)
@@ -1863,15 +1871,8 @@ class TodoApp(App):
             multiline=raw_capable,
         )
         self.ai_primed_ref = ref
-
-        def send():
-            if self.claude_panel.is_running:
-                self.claude_panel.send_text(message, flatten=not raw_capable)
-
-        if delay > 0:
-            self.set_timer(delay, send)
-        else:
-            send()
+        if self.claude_panel.is_running:
+            self.claude_panel.send_text_when_idle(message, flatten=not raw_capable)
 
     def action_toggle_pomodoro(self):
         self.pomo_panel.running = not self.pomo_panel.running
@@ -1975,7 +1976,7 @@ class TodoApp(App):
                     self.ai_primed_ref = None  # fresh process -- (re)prime even the same task
                     self.claude_panel.start_with(command, label)
                     self.claude_panel.focus()
-                    self._prime_ai_context_if_needed(delay=2.0)
+                    self._prime_ai_context_if_needed()
                 except Exception:
                     app_log.exception("starting chosen AI backend failed")
                     self.toast(f"Claude Code panel hit an error -- see {LOG_PATH}", style="bold red")
