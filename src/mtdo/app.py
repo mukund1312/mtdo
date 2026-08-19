@@ -18,16 +18,15 @@ from . import config as appconfig
 from . import coaching
 from . import ai_backend
 from . import ai_ask
-from . import code_runner
 from . import music
 from . import plan_wizard
 from .claude_panel import ClaudePanel
-from .practice_terminal import PracticeTerminalPanel
+from .practice_lab_panel import PracticeLabPanel
 from .errorlog import LOG_PATH, log as app_log
 
 from textual.app import App, ComposeResult
 from textual.containers import Horizontal, Vertical, VerticalScroll, Center, Middle
-from textual.widgets import Static, ListView, ListItem, Label, Input, Footer, TextArea, Button, Rule
+from textual.widgets import Static, ListView, ListItem, Label, Input, Footer, TextArea, Button
 from textual.screen import ModalScreen, Screen
 from textual.reactive import reactive
 from rich.text import Text
@@ -656,7 +655,7 @@ HELP_SECTIONS = [
         ("w", "Replay the first-launch walkthrough"),
         ("g", "Set up a plan -- a short Q&A, then hands a crafted prompt to the AI panel to design your goals.json"),
         ("Shift+S", "Save the AI panel's transcript to a file -- a memory.md workaround for backends with no file access"),
-        ("Shift+T", "Toggle the optional Practice Terminal column in Focus Mode (Python/Java/C/C++/anything, via a real shell)"),
+        ("Shift+T", "Toggle the optional Practice Lab column in Focus Mode -- language picker, editor, run, AI time/space complexity"),
     ]),
     ("Pomodoro", [
         ("p", "Start/pause the pomodoro timer"),
@@ -704,295 +703,17 @@ HELP_SECTIONS = [
         ("d", "Delete the highlighted note"),
         ("esc / q", "Back to the board"),
     ]),
-    ("Practice Lab (press Shift+L to open -- language picker, editor, run, AI complexity estimate)", [
+    ("Practice Lab (Shift+T to show it, in the row alongside the Learning Coach/AI panel in Focus Mode)", [
         ("click", "Pick Python / Java / C / C++ from the language row"),
         ("ctrl+r", "Run the code, see real output and real run time"),
         ("ctrl+b", "Ask the AI for a time/space complexity estimate (\"B\" for Big-O)"),
-        ("esc / q", "Back to the board"),
+        ("ctrl+n", "Reset the current language's buffer to its starter template"),
     ]),
     ("Text prompt popups", [
         ("enter", "Save"),
         ("escape", "Cancel"),
     ]),
 ]
-
-
-_RUN_COMMAND_LABEL = {
-    "python": "python3 solution.py", "java": "java Solution",
-    "c": "./solution", "cpp": "./solution",
-}
-
-
-def _parse_complexity_response(text):
-    """Splits the AI's answer into (time_text, space_text) using the ===TIME===/
-    ===SPACE=== markers requested in PracticeScreen._analyze_worker's prompt. Falls
-    back to showing the whole answer in the Time section (and a pointer in Space) if a
-    differently-formatted response comes back -- still worth showing, not discarding."""
-    if "===SPACE===" in text:
-        time_part, space_part = text.split("===SPACE===", 1)
-        return time_part.replace("===TIME===", "").strip(), space_part.strip()
-    return text.strip(), "(see Time Complexity -- response wasn't split into sections)"
-
-
-def _split_bigo(raw):
-    """Splits one "Big-O: O(...)\\n<justification>" section (see the prompt in
-    PracticeScreen._analyze_worker) into (bigo, explanation), matching the terminal
-    mockup's "O(n)" heading + "Explanation:" body layout. Falls back to showing the
-    raw text as the explanation if the AI didn't use the requested "Big-O:" prefix."""
-    lines = raw.strip().splitlines()
-    if lines and lines[0].lower().startswith("big-o:"):
-        bigo = lines[0].split(":", 1)[1].strip()
-        explanation = "\n".join(lines[1:]).strip()
-        return bigo, explanation
-    return "?", raw.strip()
-
-
-class PracticeScreen(Screen):
-    """The "LeetCode-style" practice screen: a language tag/picker, a real code editor
-    (Textual's TextArea -- syntax-highlighted for Python/Java, which are the only two
-    of the four with a built-in tree-sitter grammar shipped with Textual; C/C++ still
-    fully edit and run, just without color, see code_runner.TEXTAREA_LANGUAGE), an
-    output section formatted like a real terminal session (a "$ <command>" prompt
-    line, the program's actual output, then a dim exit-status line), and separate Time
-    Complexity / Space Complexity sections each showing an AI's Big-O estimate plus a
-    one-line explanation. Output and complexity are kept visibly separate on purpose:
-    run time is a real measurement, complexity is an AI's estimate, and blending them
-    would make an estimate look like a fact -- and time/space get their own sections
-    rather than one shared block so each explanation stays legible on its own.
-
-    Laid out as a single top-to-bottom stack -- TOP BAR / TABS / EDITOR / OUTPUT / TIME
-    COMPLEXITY / SPACE COMPLEXITY, each full width and separated by a Rule -- rather
-    than an editor-plus-sidebar split, to match a real terminal session scrolling
-    downward instead of a form with side panels. Flat Static text instead of bordered
-    boxes throughout ("no cards"), near-black background, thin grey Rule dividers
-    standing in for "clean ASCII separators", minimal button chrome. Two things from
-    that aesthetic genuinely don't translate onto a character-cell TUI and are skipped
-    rather than faked: the actual font (JetBrains Mono, a glowing cursor, ...) is
-    controlled by the user's own terminal emulator, not by anything this app can set
-    from inside it; and a fixed "16:9" aspect ratio doesn't apply to a screen that
-    already fills whatever terminal window it's given.
-
-    A full screen rather than squeezed into Focus Mode's row alongside the Learning
-    Coach/AI panel/plain practice terminal -- this stack genuinely needs more vertical
-    room than a 1/3-width column, the same reason Career CRM and the Knowledge Vault
-    are their own screens instead of panels."""
-
-    BINDINGS = [
-        ("escape", "close", "Back"),
-        ("q", "close", "Back"),
-        ("ctrl+r", "run_code", "Run"),
-        ("ctrl+b", "analyze_complexity", "Analyze Complexity"),  # "B" for Big-O -- ctrl+a is TextArea's own select-all binding and never reaches here while the editor has focus
-        ("ctrl+n", "reset_code", "Reset"),
-    ]
-
-    CSS = """
-    PracticeScreen { layout: vertical; background: #0b0b0b; }
-    #practice-topbar { height: 1; dock: top; padding: 0 1; align: left middle; background: #0b0b0b; }
-    #practice-lang-tag { width: auto; padding: 0 2 0 0; color: #39c26d; text-style: bold; }
-    #practice-topbar Button {
-        min-width: 6; height: 1; margin: 0 1 0 0; background: #0b0b0b; color: #6a6a6a; border: none;
-    }
-    #practice-topbar Button.-active-lang { color: #39c26d; text-style: bold; }
-    #practice-topbar-spacer { width: 1fr; }
-    .practice-icon-btn { min-width: 4; color: #8a8a8a; }
-    #practice-run-btn { min-width: 10; color: #39c26d; text-style: bold; }
-    #practice-tabs { height: 1; padding: 0 1; background: #0b0b0b; }
-    #practice-tab-chip { color: #d0d0d0; }
-    Rule { color: #262626; }
-    #practice-editor { height: 1fr; background: #0b0b0b; }
-    .practice-section-heading { height: 1; padding: 0 1; color: #6a6a6a; text-style: bold; }
-    .practice-section-scroll { height: auto; max-height: 6; padding: 0 1 1 1; }
-    #practice-help { height: 1; dock: bottom; padding: 0 1; background: #0b0b0b; color: #4a4a4a; }
-    """
-
-    _LANG_BUTTON_IDS = {"python": "lang-python", "java": "lang-java", "c": "lang-c", "cpp": "lang-cpp"}
-
-    def __init__(self):
-        super().__init__()
-        self.language = "python"
-        self.code_by_language = dict(code_runner.TEMPLATES)
-
-    def compose(self) -> ComposeResult:
-        with Horizontal(id="practice-topbar"):
-            self.lang_tag = Static(f"[{code_runner.LANGUAGE_LABELS[self.language]}]", id="practice-lang-tag")
-            yield self.lang_tag
-            for lang in code_runner.LANGUAGES:
-                yield Button(
-                    code_runner.LANGUAGE_LABELS[lang],
-                    id=self._LANG_BUTTON_IDS[lang],
-                    classes="-active-lang" if lang == self.language else "",
-                )
-            yield Static("", id="practice-topbar-spacer")
-            yield Button("📋", id="practice-copy-btn", classes="practice-icon-btn")
-            yield Button("↺", id="practice-reset-btn", classes="practice-icon-btn")
-            yield Button("🚀 Run", id="practice-run-btn")
-        yield Rule()
-        with Horizontal(id="practice-tabs"):
-            self.tab_chip = Static(f"[{code_runner.FILE_NAMES[self.language]}]", id="practice-tab-chip")
-            yield self.tab_chip
-        yield Rule()
-        self.editor = TextArea(
-            self.code_by_language[self.language],
-            language=code_runner.TEXTAREA_LANGUAGE[self.language],
-            show_line_numbers=True,
-            id="practice-editor",
-        )
-        yield self.editor
-        yield Rule()
-        yield Static("OUTPUT", classes="practice-section-heading")
-        with VerticalScroll(classes="practice-section-scroll"):
-            self.output_panel = Static(self._idle_output(), id="practice-output")
-            yield self.output_panel
-        yield Rule()
-        yield Static("TIME COMPLEXITY", classes="practice-section-heading")
-        with VerticalScroll(classes="practice-section-scroll"):
-            self.time_panel = Static(self._idle_complexity(), id="practice-time")
-            yield self.time_panel
-        yield Rule()
-        yield Static("SPACE COMPLEXITY", classes="practice-section-heading")
-        with VerticalScroll(classes="practice-section-scroll"):
-            self.space_panel = Static(self._idle_complexity(), id="practice-space")
-            yield self.space_panel
-        yield Static("Ctrl+R run  ·  Ctrl+B analyze complexity  ·  Ctrl+N reset  ·  Esc/q back",
-                      id="practice-help", classes="dim")
-
-    def on_mount(self):
-        self.editor.focus()
-
-    def action_close(self):
-        self.dismiss()
-
-    def action_reset_code(self):
-        self.code_by_language[self.language] = code_runner.TEMPLATES[self.language]
-        self.editor.text = self.code_by_language[self.language]
-        self.editor.focus()
-
-    def action_copy_code(self):
-        self.app.copy_to_clipboard(self.editor.text)
-        self.app.toast("Copied to clipboard (OSC 52 -- needs a terminal that supports it).", style="dim cyan")
-
-    # -- language picker -------------------------------------------------
-
-    def on_button_pressed(self, event: Button.Pressed) -> None:
-        bid = event.button.id
-        if bid == "practice-copy-btn":
-            self.action_copy_code()
-            return
-        if bid == "practice-reset-btn":
-            self.action_reset_code()
-            return
-        if bid == "practice-run-btn":
-            self.action_run_code()
-            return
-        for lang, btn_id in self._LANG_BUTTON_IDS.items():
-            if bid == btn_id:
-                self._switch_language(lang)
-                return
-
-    def _switch_language(self, lang):
-        if lang == self.language:
-            self.editor.focus()
-            return
-        self.code_by_language[self.language] = self.editor.text
-        self.language = lang
-        self.editor.language = code_runner.TEXTAREA_LANGUAGE[lang]
-        self.editor.text = self.code_by_language[lang]
-        self.lang_tag.update(f"[{code_runner.LANGUAGE_LABELS[lang]}]")
-        self.tab_chip.update(f"[{code_runner.FILE_NAMES[lang]}]")
-        for l, btn_id in self._LANG_BUTTON_IDS.items():
-            self.query_one(f"#{btn_id}", Button).set_class(l == lang, "-active-lang")
-        self.editor.focus()
-
-    # -- run ---------------------------------------------------------------
-
-    def _idle_output(self):
-        return Text("$ " + _RUN_COMMAND_LABEL[self.language], style="bold #39c26d")
-
-    def action_run_code(self):
-        code = self.editor.text
-        language = self.language
-        self.output_panel.update(Group(
-            Text(f"$ {_RUN_COMMAND_LABEL[language]}", style="bold #39c26d"),
-            Text("running...", style="dim italic"),
-        ))
-        threading.Thread(target=self._run_code_worker, args=(language, code), daemon=True).start()
-
-    def _run_code_worker(self, language, code):
-        try:
-            result = code_runner.run(language, code)
-        except Exception as e:
-            app_log.exception("PracticeScreen run failed")
-            self.app.call_from_thread(self._show_run_error, str(e))
-            return
-        self.app.call_from_thread(self._show_run_result, language, result)
-
-    def _show_run_result(self, language, result):
-        status_color = "#39c26d" if result.ok else "#e06c75"
-        self.output_panel.update(Group(
-            Text(f"$ {_RUN_COMMAND_LABEL[language]}", style="bold #39c26d"),
-            Text(""),
-            Text(result.output or "(no output)"),
-            Text(f"[exit {'0' if result.ok else '1'} in {result.elapsed:.3f}s]", style=f"dim {status_color}"),
-        ))
-
-    def _show_run_error(self, message):
-        self.output_panel.update(Text(f"Couldn't run that -- see {LOG_PATH}\n{message}", style="bold #e06c75"))
-
-    # -- complexity ----------------------------------------------------------
-
-    def _idle_complexity(self):
-        return Text("Ctrl+B to ask the AI for an estimate.", style="dim italic")
-
-    def _complexity_body(self, raw):
-        bigo, explanation = _split_bigo(raw)
-        return Group(
-            Text(bigo, style="bold #39c26d"),
-            Text(""),
-            Text("Explanation:", style="dim"),
-            Text(explanation or "(no explanation given)"),
-        )
-
-    def action_analyze_complexity(self):
-        code = self.editor.text
-        if not code.strip():
-            msg = Text("Write some code first.", style="dim italic")
-            self.time_panel.update(msg)
-            self.space_panel.update(msg)
-            return
-        language_label = code_runner.LANGUAGE_LABELS[self.language]
-        msg = Text("Analyzing...", style="dim italic")
-        self.time_panel.update(msg)
-        self.space_panel.update(msg)
-        threading.Thread(target=self._analyze_worker, args=(language_label, code), daemon=True).start()
-
-    def _analyze_worker(self, language_label, code):
-        prompt = (
-            f"Analyze the time and space complexity of this {language_label} code.\n\n"
-            "Format exactly like this, with these two section markers on their own lines "
-            "and nothing else outside them (no preamble, no code review):\n\n"
-            "===TIME===\n"
-            "Big-O: O(...)\n"
-            "<one-sentence justification>\n\n"
-            "===SPACE===\n"
-            "Big-O: O(...)\n"
-            "<one-sentence justification>\n\n" + code
-        )
-        try:
-            answer, error = ai_ask.ask(prompt)
-        except Exception as e:
-            app_log.exception("PracticeScreen complexity analysis failed")
-            answer, error = None, str(e)
-        self.app.call_from_thread(self._show_complexity_result, answer, error)
-
-    def _show_complexity_result(self, answer, error):
-        if error and not answer:
-            err = Text(error, style="bold #e06c75")
-            self.time_panel.update(err)
-            self.space_panel.update(err)
-            return
-        time_text, space_text = _parse_complexity_response(answer or "")
-        self.time_panel.update(self._complexity_body(time_text))
-        self.space_panel.update(self._complexity_body(space_text))
 
 
 class HelpScreen(Screen):
@@ -1078,7 +799,7 @@ ONBOARDING_STEPS = [
         "A real terminal session embedded right in the app -- Claude Code, a local "
         "Ollama model, or Claude/ChatGPT/Gemini over their own API, your pick from a menu.",
         ("esc esc", "double-tap Escape to release keyboard focus without ending the session"),
-        ("Shift+T", "toggle an optional Practice Terminal column too -- a real shell for DSA practice"),
+        ("Shift+T", "toggle an optional Practice Lab column too -- language picker, editor, run, AI time/space complexity"),
     ]),
     ("Pomodoro & Music", [
         ("p / x / t", "start-pause / reset / edit the pomodoro's work-break length"),
@@ -1804,7 +1525,7 @@ class TodoApp(App):
     #coach-scroll { width: 1fr; height: 1fr; }
     LearningCoachPanel { height: auto; }
     ClaudePanel { width: 1fr; display: none; }
-    PracticeTerminalPanel { width: 1fr; display: none; }
+    PracticeLabPanel { width: 1fr; display: none; }
     ClockHeader { height: 1; dock: top; }
     ToastLine { height: 1; dock: top; padding: 0 1; }
     ListItem { padding: 0; }
@@ -1830,8 +1551,7 @@ class TodoApp(App):
         ("w", "replay_walkthrough", "Walkthrough"),
         ("g", "plan_wizard", "Setup Plan"),
         ("S", "save_ai_transcript", "Save AI Transcript"),
-        ("T", "toggle_practice_terminal", "Practice Terminal"),
-        ("L", "open_practice_lab", "Practice Lab"),
+        ("T", "toggle_practice_terminal", "Practice Lab"),
     ]
 
     def __init__(self):
@@ -1889,7 +1609,7 @@ class TodoApp(App):
                         yield self.coach_panel
                     self.claude_panel = ClaudePanel()
                     yield self.claude_panel
-                    self.practice_panel = PracticeTerminalPanel()
+                    self.practice_panel = PracticeLabPanel()
                     yield self.practice_panel
         yield Footer()
 
@@ -2200,8 +1920,12 @@ class TodoApp(App):
                 self._set_pomodoro_length(tc.DEFAULT_POMODORO_MINUTES, tc.DEFAULT_BREAK_MINUTES)
             if self.claude_panel.has_focus:
                 self.claude_panel.blur()
-            if self.practice_panel.has_focus:
-                self.practice_panel.blur()
+            if self.practice_panel.has_focus_within:
+                # PracticeLabPanel is a plain container (the editor/buttons inside it
+                # are what actually take focus), not a pty widget that owns focus
+                # itself like ClaudePanel -- has_focus_within + clearing focus on the
+                # screen is the equivalent of "blur" here.
+                self.screen.set_focus(None)
         self.toast("Focus Mode ON -- 45/10 pomodoro started, press f to exit" if self.focus_mode else "Focus Mode off",
                    style="bold bright_green" if self.focus_mode else "dim")
         self.refresh_side_panels()
@@ -2278,10 +2002,6 @@ class TodoApp(App):
             self.claude_panel.stop()
         except Exception:
             app_log.exception("failed to stop claude panel on quit")
-        try:
-            self.practice_panel.stop()
-        except Exception:
-            app_log.exception("failed to stop practice terminal panel on quit")
         self.exit()
 
     def _handle_exception(self, error: Exception) -> None:
@@ -2300,9 +2020,6 @@ class TodoApp(App):
 
     def action_open_help(self):
         self.push_screen(HelpScreen())
-
-    def action_open_practice_lab(self):
-        self.push_screen(PracticeScreen())
 
     def action_replay_walkthrough(self):
         self.push_screen(OnboardingScreen())
@@ -2365,18 +2082,20 @@ class TodoApp(App):
         )
 
     def action_toggle_practice_terminal(self):
-        """Turns the optional third column (Coach / AI / Practice Terminal) on or
-        off, persisted so the choice survives a restart. Doesn't stop a session
-        that's already running when turned off -- same "keep it alive while hidden"
-        behavior as the AI panel already has, so turning it back on later finds it
-        exactly where it was left."""
+        """Turns the optional third column (Coach / AI / Practice Lab) on or off,
+        persisted so the choice survives a restart. The Practice Lab widget itself
+        (language picker, editor, run, AI time/space complexity -- see
+        practice_lab_panel.py) stays mounted either way, code and results intact --
+        this just shows or hides it, same "keep it alive while hidden" idea as the AI
+        panel already has, so turning it back on later finds it exactly where it was
+        left."""
         self.practice_terminal_enabled = not self.practice_terminal_enabled
         appconfig.set_practice_terminal_enabled(self.practice_terminal_enabled)
         if self.focus_mode:
             self.practice_panel.display = self.practice_terminal_enabled
         self.toast(
-            "Practice Terminal on -- click it in Focus Mode to start a shell" if self.practice_terminal_enabled
-            else "Practice Terminal off",
+            "Practice Lab on -- language picker, editor, run, AI complexity, right in Focus Mode"
+            if self.practice_terminal_enabled else "Practice Lab off",
             style="bold green" if self.practice_terminal_enabled else "dim",
         )
 

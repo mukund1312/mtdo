@@ -2,9 +2,9 @@
 half of the row that opens up once the kanban board and stats/calendar panels are
 hidden (the Learning Coach and, optionally, a practice terminal share that row too --
 see app.py's #coach-claude-row). Runs the assistant in a real pty and uses pyte to
-turn its raw output into a screen buffer, via the generic machinery in pty_panel.py
-(also used by practice_terminal.py) -- this module only adds what's actually
-AI-specific: which backend to run and what the pane looks like when it's empty.
+turn its raw output into a screen buffer, via the generic machinery in pty_panel.py --
+this module only adds what's actually AI-specific: which backend to run and what the
+pane looks like when it's empty.
 
 Which assistant actually runs is decided by ai_backend.detect() on every start()
 (or pinned explicitly via start_with(), which is what the backend-picker modal calls):

@@ -1,21 +1,23 @@
-"""The generic pty-backed terminal widget shared by the AI panel (claude_panel.py) and
-the practice terminal (practice_terminal.py) -- extracted after both needed the exact
-same machinery and duplicating it would double the maintenance cost of every pty/pyte
-bug this app has already hit and fixed by hand: pyte 0.8.2's report_device_status()
+"""The generic pty-backed terminal widget behind the AI panel (claude_panel.py) --
+originally extracted so it could be shared with a second pty-backed subclass (a plain
+practice terminal, since retired in favor of practice_lab_panel.PracticeLabPanel,
+which is a normal Textual widget with a real editor, not a pty). Kept as its own
+module rather than folded back into claude_panel.py: it's still where every pty/pyte
+bug this app has hit and fixed by hand lives -- pyte 0.8.2's report_device_status()
 signature bug, the resize-while-hidden-kills-the-child bug, a naming collision with
 Textual's own internal MessagePump._running, the Ctrl+Q priority-binding trap, and the
-too-tight double-Escape timing window. None of that is specific to running `claude`,
-so it belongs here once, not copied.
+too-tight double-Escape timing window -- none of which is specific to running
+`claude`, and a future second pty-backed panel should get all of it for free again.
 
-Subclasses (ClaudePanel, PracticeTerminalPanel) provide only what's actually
-different: which command to run and what to show when the pane is idle. See the hook
-methods below (_resolve_command, _idle_subtitle, _running_subtitle, _empty_message,
-_on_empty_click, _cwd) -- everything else (spawning via os.openpty() + subprocess.Popen
-with preexec_fn=os.setsid rather than pty.fork()/os.fork(), since Textual's own
-background input thread makes raw fork() of a multithreaded process a real deadlock
-risk on macOS; the read loop; scrollback via pyte.HistoryScreen and the mouse wheel;
-resize handling; double-Escape/F2 release; key forwarding; rendering; transcript
-saving) is generic pty-terminal behavior.
+Subclasses (currently just ClaudePanel) provide only what's actually different: which
+command to run and what to show when the pane is idle. See the hook methods below
+(_resolve_command, _idle_subtitle, _running_subtitle, _empty_message, _on_empty_click,
+_cwd) -- everything else (spawning via os.openpty() + subprocess.Popen with
+preexec_fn=os.setsid rather than pty.fork()/os.fork(), since Textual's own background
+input thread makes raw fork() of a multithreaded process a real deadlock risk on
+macOS; the read loop; scrollback via pyte.HistoryScreen and the mouse wheel; resize
+handling; double-Escape/F2 release; key forwarding; rendering; transcript saving) is
+generic pty-terminal behavior.
 """
 import fcntl
 import os

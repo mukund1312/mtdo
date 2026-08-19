@@ -1,14 +1,14 @@
-"""Compiles/runs a code snippet for the practice screen (app.PracticeScreen) and
-captures its output plus how long it actually took to run. This automates exactly the
-commands already documented for the plain practice terminal (practice_terminal.py):
-`python3 file.py`, `javac X.java && java X`, `gcc -o a file.c && ./a`, `g++ ...` --
-nothing new is invented, this just saves typing them by hand every run.
+"""Compiles/runs a code snippet for the Practice Lab (practice_lab_panel.PracticeLabPanel)
+and captures its output plus how long it actually took to run. This automates exactly
+the commands you'd otherwise type by hand: `python3 file.py`, `javac X.java && java X`,
+`gcc -o a file.c && ./a`, `g++ ...` -- nothing new is invented, this just saves typing
+them out every run.
 
 Not a sandbox: this runs with the same permissions as mtdo itself, same as typing the
-commands directly into the practice terminal would. A hard wall-clock timeout guards
-against an infinite loop hanging the run, which is common enough in DSA practice to
-be worth guarding against specifically, but this is not a security boundary against
-genuinely malicious code -- don't paste code here you wouldn't otherwise just run.
+commands directly into a shell would. A hard wall-clock timeout guards against an
+infinite loop hanging the run, which is common enough in DSA practice to be worth
+guarding against specifically, but this is not a security boundary against genuinely
+malicious code -- don't paste code here you wouldn't otherwise just run.
 """
 import os
 import subprocess

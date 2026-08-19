@@ -1,4 +1,4 @@
-"""One-shot, non-interactive AI queries -- used by the practice screen's "Analyze
+"""One-shot, non-interactive AI queries -- used by the Practice Lab's "Analyze
 Complexity" action, where a single request/response is what's needed, not a live
 embedded terminal session (that's what claude_panel.py is for). Reuses the same
 backend priority as the AI panel (ai_backend.detect()) but calls each one in
@@ -15,8 +15,8 @@ non-interactive mode instead of spawning an interactive pty:
 
 Runs a real subprocess/HTTP call that can take several seconds to tens of seconds,
 so callers must not call ask() from the main thread -- see
-app.PracticeScreen.action_analyze_complexity for the background-thread pattern
-already used throughout this app for exactly this reason.
+practice_lab_panel.PracticeLabPanel.action_analyze_complexity for the
+background-thread pattern already used throughout this app for exactly this reason.
 """
 import subprocess
 
