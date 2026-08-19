@@ -1326,16 +1326,19 @@ class LearningCoachPanel(Static):
     goals.json, then a built-in topic-appropriate fallback. Fills remaining space
     (height: 1fr).
 
-    In Focus Mode specifically, a "dsa" topic_type task gets different treatment: instead
-    of the Focus On/Ask Yourself content above (which already assumes you understand the
-    problem), the AI generates a LeetCode-style problem statement for the task and shows
-    that instead -- the point is to make the person reason through it, not read the answer.
-    Hints are pre-generated alongside the problem (see coaching.build_dsa_problem_prompt)
-    and revealed one at a time, only when accepted via the popup TodoApp._check_dsa_hint_timer
-    raises every 10 minutes. The regular coaching content unlocks for that same task once
-    it's marked done -- app.current_dsa_ref keeps pointing at it after that so this panel
-    can still find it once it's no longer the "active" (in_progress) task. Outside Focus
-    Mode, DSA tasks get the regular coaching content like every other field, unchanged."""
+    In Focus Mode specifically, a "dsa" or "database" topic_type task gets different
+    treatment: instead of the Focus On/Ask Yourself content above (which already
+    assumes you understand the problem), the AI generates a problem for the task --
+    LeetCode-style for dsa, a SQL question answerable against the Practice Lab's real
+    sample.db for database (see coaching.build_problem_prompt) -- and shows that
+    instead -- the point is to make the person reason through it, not read the
+    answer. Hints are pre-generated alongside the problem and revealed one at a time,
+    only when accepted via the popup TodoApp._check_dsa_hint_timer raises every 10
+    minutes. The regular coaching content unlocks for that same task once it's marked
+    done -- app.current_dsa_ref keeps pointing at it after that so this panel can
+    still find it once it's no longer the "active" (in_progress) task. Outside Focus
+    Mode, these tasks get the regular coaching content like every other field,
+    unchanged."""
 
     def update_content(self, state, today, focus_mode):
         app = self.app
@@ -1343,9 +1346,9 @@ class LearningCoachPanel(Static):
 
         if active is not None:
             category_meta = tc.CATEGORY_META.get(active["category"])
-            if focus_mode and coaching.is_dsa_task(category_meta):
+            if focus_mode and coaching.has_generated_problem_support(category_meta):
                 app.current_dsa_ref = (active["date_key"], active["category"], active["idx"])
-                self._render_dsa_mode(active["block"])
+                self._render_dsa_mode(active["block"], category_meta.get("topic_type"))
                 return
             app.current_dsa_ref = None
             if not coaching.has_coaching_setup(active["block"], category_meta):
@@ -1370,20 +1373,20 @@ class LearningCoachPanel(Static):
 
         self.update(self._idle_panel())
 
-    # -- DSA problem mode (Focus Mode only) -----------------------------------
+    # -- Generated problem mode (Focus Mode only) -----------------------------
 
-    def _render_dsa_mode(self, block):
+    def _render_dsa_mode(self, block, topic_type):
         problem = block.get("dsa_problem")
         if problem is None:
             if id(block) not in self.app.dsa_generating:
                 self.app.dsa_generating.add(id(block))
-                threading.Thread(target=self._generate_worker, args=(block,), daemon=True).start()
+                threading.Thread(target=self._generate_worker, args=(block, topic_type), daemon=True).start()
             self.update(self._generating_panel(block["text"]))
             return
         self.update(self._dsa_problem_panel(block["text"], problem))
 
-    def _generate_worker(self, block):
-        prompt = coaching.build_dsa_problem_prompt(block["text"])
+    def _generate_worker(self, block, topic_type):
+        prompt = coaching.build_problem_prompt(block["text"], topic_type)
         try:
             answer, error = ai_ask.ask(prompt, timeout=90)
         except Exception as e:
@@ -1394,7 +1397,7 @@ class LearningCoachPanel(Static):
     def _store_generated(self, block, answer, error):
         self.app.dsa_generating.discard(id(block))
         if answer:
-            statement, hints = coaching.parse_dsa_problem_response(answer)
+            statement, hints = coaching.parse_problem_response(answer)
         else:
             statement, hints = f"Couldn't generate a problem: {error}", []
         block["dsa_problem"] = {"statement": statement, "hints": hints, "revealed": 0, "next_hint_at": 10}
@@ -1794,19 +1797,19 @@ class TodoApp(App):
             self.pomo_panel.render_panel(tc.get_pomodoro_count(self.state, self.today))
 
     def _check_dsa_hint_timer(self):
-        """Every 10 minutes of real focus time spent on the active DSA task (see
-        core.task_elapsed_seconds -- wall-clock since it went in_progress, independent
-        of whether the Pomodoro is running), offers the next pre-generated hint via a
-        popup. Only fires in Focus Mode, once a problem has actually finished
-        generating (nothing to hint at before that), and never stacks a second popup
-        while one is already open."""
+        """Every 10 minutes of real focus time spent on the active dsa/database task
+        (see core.task_elapsed_seconds -- wall-clock since it went in_progress,
+        independent of whether the Pomodoro is running), offers the next
+        pre-generated hint via a popup. Only fires in Focus Mode, once a problem has
+        actually finished generating (nothing to hint at before that), and never
+        stacks a second popup while one is already open."""
         if not self.focus_mode or self._hint_prompt_open:
             return
         active = tc.current_active_task(self.state, self.today)
         if active is None:
             return
         category_meta = tc.CATEGORY_META.get(active["category"])
-        if not coaching.is_dsa_task(category_meta):
+        if not coaching.has_generated_problem_support(category_meta):
             return
         block = active["block"]
         problem = block.get("dsa_problem")

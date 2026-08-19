@@ -128,15 +128,27 @@ EXPERT_TIPS = [
 ]
 
 
-# ---- DSA problem generation (Focus Mode only, see app.LearningCoachPanel) -----------
-# For a "dsa" topic_type field, Focus Mode shows an AI-generated LeetCode-style problem
-# statement for the active task instead of the coaching content above, so the person
-# reasons through it themselves before the "Focus On/Ask Yourself/..." material (which
-# already assumes familiarity) unlocks on completion. The two section markers below are
-# instructed exactly so parse_dsa_problem_response can split them reliably regardless
-# of which backend answers -- free-form prose would make that split unreliable.
+# ---- Generated practice problems (Focus Mode only, see app.LearningCoachPanel) -----
+# For a "dsa" or "database" topic_type field, Focus Mode shows an AI-generated problem
+# (LeetCode-style for dsa, a SQL question answerable against the Practice Lab's real
+# sample.db for database -- see code_runner.SAMPLE_DB_PATH) for the active task instead
+# of the coaching content above, so the person reasons through it themselves before the
+# "Focus On/Ask Yourself/..." material (which already assumes familiarity) unlocks on
+# completion. The two section markers in each prompt are instructed exactly so
+# parse_problem_response can split them reliably regardless of which backend answers --
+# free-form prose would make that split unreliable.
 
 _HINT_LINE_RE = re.compile(r"^\d+[.)]\s+(.*)")
+
+PROBLEM_GENERATION_TOPIC_TYPES = {"dsa", "database"}
+
+# Keep in sync with code_runner._SAMPLE_SCHEMA_SQL -- this is what's actually loaded
+# in the Practice Lab, so a generated SQL question has to be answerable against it.
+SAMPLE_SQL_SCHEMA = (
+    "departments(id, name); "
+    "employees(id, name, department_id, salary, hire_date); "
+    "orders(id, employee_id, amount, order_date)"
+)
 
 
 def build_dsa_problem_prompt(task_text):
@@ -175,11 +187,48 @@ def build_dsa_problem_prompt(task_text):
     )
 
 
-def parse_dsa_problem_response(text):
-    """Splits the AI's raw response into (statement, hints_list). Falls back to
-    treating the whole response as the statement with no hints if the expected
-    ===PROBLEM===/===HINTS=== markers aren't there -- a differently-formatted
-    response is still worth showing rather than discarding outright."""
+def build_sql_problem_prompt(task_text):
+    return (
+        f'Write a SQL practice question for a topic/skill titled "{task_text}", answerable '
+        f"against this exact schema -- a real SQLite database already loaded and ready to "
+        f"query, right in the Practice Lab: {SAMPLE_SQL_SCHEMA}\n\n"
+        "Do NOT reveal the query or the approach -- only the question itself, exactly like a "
+        "real interview platform shows BEFORE someone starts solving it. Only reference the "
+        "tables/columns listed above -- nothing else exists in this database.\n\n"
+        "Format exactly like this, with these two section markers on their own lines and "
+        "nothing else outside them (no preamble, no \"Here's the question\", no SQL):\n\n"
+        "===PROBLEM===\n"
+        "<Title>\n"
+        "Difficulty: <Easy/Medium/Hard -- your best guess>\n"
+        "\n"
+        "<The question in plain English, 1-3 sentences>\n"
+        "\n"
+        "Expected output\n"
+        "<a short description of the result shape -- which columns, roughly how many rows>\n"
+        "\n"
+        "===HINTS===\n"
+        "1. <a very small nudge -- which table(s)/columns are relevant, no clause names yet>\n"
+        "2. <names the right SQL clause or technique -- GROUP BY, a window function, a self-join, ...>\n"
+        "3. <fairly specific -- describes the query structure in words, but not SQL>\n"
+        "4. <almost the full approach in words, still no SQL>\n"
+    )
+
+
+def build_problem_prompt(task_text, topic_type):
+    """Dispatches to the right generated-problem prompt for this field's topic_type
+    -- see PROBLEM_GENERATION_TOPIC_TYPES for which ones get this treatment at all."""
+    if topic_type == "database":
+        return build_sql_problem_prompt(task_text)
+    return build_dsa_problem_prompt(task_text)
+
+
+def parse_problem_response(text):
+    """Splits the AI's raw response into (statement, hints_list) -- shared by both
+    build_dsa_problem_prompt and build_sql_problem_prompt, which use the same
+    ===PROBLEM===/===HINTS=== markers. Falls back to treating the whole response as
+    the statement with no hints if those markers aren't there -- a
+    differently-formatted response is still worth showing rather than discarding
+    outright."""
     if "===HINTS===" in text:
         problem_part, hints_part = text.split("===HINTS===", 1)
     else:
@@ -193,11 +242,12 @@ def parse_dsa_problem_response(text):
     return statement, hints
 
 
-def is_dsa_task(category_meta):
-    """Whether a field's topic_type is "dsa" -- the gate for the Focus-Mode-only
-    generated-problem behavior in app.LearningCoachPanel. Every other topic_type
-    (backend/database/system_design/none) keeps the regular coaching content."""
-    return bool((category_meta or {}).get("topic_type") == "dsa")
+def has_generated_problem_support(category_meta):
+    """Whether a field's topic_type gets the Focus-Mode-only generated-problem
+    behavior in app.LearningCoachPanel (dsa: a LeetCode-style problem; database: a
+    SQL question against the Practice Lab's real sample.db). Every other topic_type
+    (backend/system_design/none) keeps the regular coaching content."""
+    return (category_meta or {}).get("topic_type") in PROBLEM_GENERATION_TOPIC_TYPES
 
 
 # ---- AI panel context priming (Focus Mode, any topic) --------------------------------

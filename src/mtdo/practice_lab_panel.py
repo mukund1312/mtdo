@@ -53,10 +53,10 @@ from .errorlog import LOG_PATH, log as app_log
 
 _RUN_COMMAND_LABEL = {
     "python": "python3 solution.py", "java": "java Solution",
-    "c": "./solution", "cpp": "./solution",
+    "c": "./solution", "cpp": "./solution", "sql": "sqlite3 sample.db",
 }
 
-_LANG_SHORT_LABEL = {"python": "Py", "java": "Java", "c": "C", "cpp": "C++"}
+_LANG_SHORT_LABEL = {"python": "Py", "java": "Java", "c": "C", "cpp": "C++", "sql": "SQL"}
 
 
 def _parse_complexity_response(text):
@@ -137,7 +137,10 @@ class PracticeLabPanel(Vertical):
     #practice-help { height: 1; dock: bottom; padding: 0 1; background: #050505; color: #4a4a4a; }
     """
 
-    _LANG_BUTTON_IDS = {"python": "lab-lang-python", "java": "lab-lang-java", "c": "lab-lang-c", "cpp": "lab-lang-cpp"}
+    _LANG_BUTTON_IDS = {
+        "python": "lab-lang-python", "java": "lab-lang-java", "c": "lab-lang-c",
+        "cpp": "lab-lang-cpp", "sql": "lab-lang-sql",
+    }
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
@@ -244,6 +247,10 @@ class PracticeLabPanel(Vertical):
         self.filename_label.update(code_runner.FILE_NAMES[lang])
         for l, btn_id in self._LANG_BUTTON_IDS.items():
             self.query_one(f"#{btn_id}", Button).set_class(l == lang, "-active-lang")
+        self.output_panel.update(self._idle_output())
+        cap1, cap2 = self._complexity_captions()
+        self.time_panel.update(self._idle_complexity(cap1))
+        self.space_panel.update(self._idle_complexity(cap2))
         self.editor.focus()
 
     # -- run ---------------------------------------------------------------
@@ -288,13 +295,22 @@ class PracticeLabPanel(Vertical):
             Text(f"Couldn't run that -- see {LOG_PATH}\n{message}", style="bold #e06c75"),
         ))
 
-    # -- complexity ----------------------------------------------------------
+    # -- complexity / query plan ----------------------------------------------
+
+    def _complexity_captions(self):
+        """SQL doesn't have a meaningful Big-O the way an algorithm does -- for it,
+        Ctrl+B swaps the AI's time/space estimate for a REAL sqlite3 EXPLAIN QUERY
+        PLAN + row count instead (see code_runner.explain_sql), so these two slots
+        get relabeled to match whichever is actually showing."""
+        return ("QUERY PLAN", "ROW COUNT") if self.language == "sql" else ("TIME COMPLEXITY", "SPACE COMPLEXITY")
 
     def _complexity_message(self, caption, text, style="dim italic"):
         return Group(Text(caption, style="bold #6a6a6a"), Text(text, style=style))
 
     def _idle_complexity(self, caption):
-        return self._complexity_message(caption, "Ctrl+B to ask the AI for an estimate.")
+        hint = "Ctrl+B for the real EXPLAIN QUERY PLAN + row count." if self.language == "sql" \
+            else "Ctrl+B to ask the AI for an estimate."
+        return self._complexity_message(caption, hint)
 
     def _complexity_body(self, caption, raw):
         bigo, explanation = _split_bigo(raw)
@@ -306,13 +322,20 @@ class PracticeLabPanel(Vertical):
 
     def action_analyze_complexity(self):
         code = self.editor.text
+        cap1, cap2 = self._complexity_captions()
         if not code.strip():
-            self.time_panel.update(self._complexity_message("TIME COMPLEXITY", "Write some code first."))
-            self.space_panel.update(self._complexity_message("SPACE COMPLEXITY", "Write some code first."))
+            empty_msg = "Write a query first." if self.language == "sql" else "Write some code first."
+            self.time_panel.update(self._complexity_message(cap1, empty_msg))
+            self.space_panel.update(self._complexity_message(cap2, empty_msg))
+            return
+        if self.language == "sql":
+            self.time_panel.update(self._complexity_message(cap1, "Running EXPLAIN QUERY PLAN..."))
+            self.space_panel.update(self._complexity_message(cap2, "Counting rows..."))
+            threading.Thread(target=self._explain_sql_worker, args=(code,), daemon=True).start()
             return
         language_label = code_runner.LANGUAGE_LABELS[self.language]
-        self.time_panel.update(self._complexity_message("TIME COMPLEXITY", "Analyzing..."))
-        self.space_panel.update(self._complexity_message("SPACE COMPLEXITY", "Analyzing..."))
+        self.time_panel.update(self._complexity_message(cap1, "Analyzing..."))
+        self.space_panel.update(self._complexity_message(cap2, "Analyzing..."))
         threading.Thread(target=self._analyze_worker, args=(language_label, code), daemon=True).start()
 
     def _analyze_worker(self, language_label, code):
@@ -342,3 +365,22 @@ class PracticeLabPanel(Vertical):
         time_text, space_text = _parse_complexity_response(answer or "")
         self.time_panel.update(self._complexity_body("TIME COMPLEXITY", time_text))
         self.space_panel.update(self._complexity_body("SPACE COMPLEXITY", space_text))
+
+    def _explain_sql_worker(self, code):
+        try:
+            plan, row_count, ok = code_runner.explain_sql(code)
+        except Exception as e:
+            app_log.exception("PracticeLabPanel SQL explain failed")
+            plan, row_count, ok = str(e), str(e), False
+        self.app.call_from_thread(self._show_sql_explain_result, plan, row_count, ok)
+
+    def _show_sql_explain_result(self, plan, row_count, ok):
+        if not ok:
+            self.time_panel.update(self._complexity_message("QUERY PLAN", plan, style="bold #e06c75"))
+            self.space_panel.update(self._complexity_message("ROW COUNT", row_count, style="bold #e06c75"))
+            return
+        self.time_panel.update(Group(Text("QUERY PLAN", style="bold #6a6a6a"), Text(plan)))
+        self.space_panel.update(Group(
+            Text("ROW COUNT", style="bold #6a6a6a"),
+            Text(row_count, style="bold #00ff66"),
+        ))
