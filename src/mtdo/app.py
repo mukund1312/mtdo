@@ -2032,10 +2032,28 @@ class TodoApp(App):
                     return
                 start_backend(command, label)
 
-            self.push_screen(
-                AIBackendPickScreen(ai_backend.list_available(), remembered=ai_backend.load_choice()),
-                on_choice,
-            )
+            # ai_backend.list_available() can genuinely block for seconds (an Ollama
+            # `ollama list` probe with retries, up to ~40s worst case if the service
+            # is down and slow to answer) -- confirmed by hand this used to run
+            # straight on the UI thread here, which froze the ENTIRE app (Textual is
+            # single-threaded), not just the AI panel, for as long as the probe took.
+            # Computing it in the background and only pushing the picker once it's
+            # back keeps the app responsive the whole time.
+            self.toast("Checking available AI backends...", style="dim")
+            remembered = ai_backend.load_choice()
+
+            def show_picker(options):
+                self.push_screen(AIBackendPickScreen(options, remembered=remembered), on_choice)
+
+            def load_backends():
+                try:
+                    options = ai_backend.list_available()
+                except Exception:
+                    app_log.exception("ai_backend.list_available failed")
+                    options = []
+                self.call_from_thread(show_picker, options)
+
+            threading.Thread(target=load_backends, daemon=True).start()
         except Exception:
             app_log.exception("action_toggle_claude failed")
             self.toast(f"Claude Code panel hit an error -- see {LOG_PATH}", style="bold red")
