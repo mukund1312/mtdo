@@ -20,15 +20,18 @@ AI's estimate, and blending them would make an estimate look like a fact -- and
 time/space get their own sections rather than one shared block so each explanation
 stays legible on its own.
 
-Laid out as a single top-to-bottom stack -- TOP BAR / TABS / EDITOR / OUTPUT / TIME
-COMPLEXITY / SPACE COMPLEXITY, each full width and separated by a Rule -- rather than
-an editor-plus-sidebar split, to read like a real terminal session scrolling downward.
-Flat Static text instead of bordered boxes throughout ("no cards"), near-black
-background, thin grey Rule dividers standing in for "clean ASCII separators", minimal
-button chrome. Unlike the old full-screen version this now shares roughly a third of
-the terminal's width with its row siblings, so button labels stay short (language
-buttons show 2-4 characters, not full names) and every section keeps its own bounded
-scroll area instead of assuming a wide layout.
+Laid out to maximize code visibility over UI chrome: a single-row toolbar (language
+buttons + inline filename + copy/reset/run) pinned to the top, a single-line shortcut
+footer pinned to the bottom, and everything in between -- editor, output, time/space
+complexity -- inside ONE scrollable region with ONE scrollbar, instead of a separate
+bounded scroll box per section. The editor gets a fixed height (~18 rows, enough to
+see a real solution without scrolling) and is first in that scroll region, so it's
+what's in view by default; output and complexity sit right below it and only need
+scrolling into view on a short terminal. Flat Static text instead of bordered boxes
+("no cards"), near-black background (#050505), thin dark-grey Rule dividers, a single
+bright accent green (#00ff66) reserved for the active language/prompt/Big-O values.
+Time/Space Complexity are each a two-line block -- a dim caption then one line with
+the Big-O value and its explanation together -- not a heading-plus-paragraph card.
 
 Just a normal Textual widget, not a pty-backed one (contrast with the AI panel/old
 practice terminal): there's no subprocess to start or stop, so hiding it (display =
@@ -116,24 +119,22 @@ class PracticeLabPanel(Vertical):
     ]
 
     DEFAULT_CSS = """
-    PracticeLabPanel { border: round grey; background: #0b0b0b; }
-    PracticeLabPanel:focus-within { border: round green; }
-    #practice-topbar { height: 1; padding: 0 1; align: left middle; background: #0b0b0b; }
-    #practice-lang-tag { width: auto; padding: 0 1 0 0; color: #39c26d; text-style: bold; }
+    PracticeLabPanel { border: round #1e1e1e; background: #050505; layout: vertical; }
+    PracticeLabPanel:focus-within { border: round #00ff66; }
+    #practice-topbar { height: 1; dock: top; padding: 0 1; align: left middle; background: #050505; }
     #practice-topbar Button {
-        min-width: 4; height: 1; margin: 0 1 0 0; background: #0b0b0b; color: #6a6a6a; border: none;
+        min-width: 4; height: 1; margin: 0 1 0 0; background: #050505; color: #8a8a8a; border: none;
     }
-    #practice-topbar Button.-active-lang { color: #39c26d; text-style: bold; }
+    #practice-topbar Button.-active-lang { color: #00ff66; text-style: bold; }
+    #practice-filename { width: auto; padding: 0 1; color: #5a5a5a; }
     #practice-topbar-spacer { width: 1fr; }
-    .practice-icon-btn { min-width: 3; color: #8a8a8a; }
-    #practice-run-btn { min-width: 5; color: #39c26d; text-style: bold; }
-    #practice-tabs { height: 1; padding: 0 1; background: #0b0b0b; }
-    #practice-tab-chip { color: #d0d0d0; }
-    PracticeLabPanel Rule { color: #262626; }
-    #practice-editor { height: 1fr; background: #0b0b0b; }
-    .practice-section-heading { height: 1; padding: 0 1; color: #6a6a6a; text-style: bold; }
-    .practice-section-scroll { height: auto; max-height: 5; padding: 0 1 1 1; }
-    #practice-help { height: 1; padding: 0 1; background: #0b0b0b; color: #4a4a4a; }
+    .practice-icon-btn { min-width: 6; color: #8a8a8a; }
+    #practice-run-btn { min-width: 6; color: #00ff66; text-style: bold; }
+    PracticeLabPanel Rule { color: #1e1e1e; margin: 0; }
+    #practice-scroll { height: 1fr; scrollbar-size-vertical: 1; }
+    #practice-editor { height: 18; background: #050505; }
+    #practice-output, #practice-time, #practice-space { height: auto; padding: 0 1; }
+    #practice-help { height: 1; dock: bottom; padding: 0 1; background: #050505; color: #4a4a4a; }
     """
 
     _LANG_BUTTON_IDS = {"python": "lab-lang-python", "java": "lab-lang-java", "c": "lab-lang-c", "cpp": "lab-lang-cpp"}
@@ -146,45 +147,34 @@ class PracticeLabPanel(Vertical):
 
     def compose(self) -> ComposeResult:
         with Horizontal(id="practice-topbar"):
-            self.lang_tag = Static(f"[{code_runner.LANGUAGE_LABELS[self.language]}]", id="practice-lang-tag")
-            yield self.lang_tag
             for lang in code_runner.LANGUAGES:
                 yield Button(
                     _LANG_SHORT_LABEL[lang],
                     id=self._LANG_BUTTON_IDS[lang],
                     classes="-active-lang" if lang == self.language else "",
                 )
+            self.filename_label = Static(code_runner.FILE_NAMES[self.language], id="practice-filename")
+            yield self.filename_label
             yield Static("", id="practice-topbar-spacer")
-            yield Button("📋", id="practice-copy-btn", classes="practice-icon-btn")
-            yield Button("↺", id="practice-reset-btn", classes="practice-icon-btn")
-            yield Button("🚀", id="practice-run-btn")
-        yield Rule()
-        with Horizontal(id="practice-tabs"):
-            self.tab_chip = Static(f"[{code_runner.FILE_NAMES[self.language]}]", id="practice-tab-chip")
-            yield self.tab_chip
-        yield Rule()
-        self.editor = _EditorTextArea(
-            self.code_by_language[self.language],
-            language=code_runner.TEXTAREA_LANGUAGE[self.language],
-            show_line_numbers=True,
-            id="practice-editor",
-            on_evaluate=self.action_evaluate_code,
-        )
-        yield self.editor
-        yield Rule()
-        yield Static("OUTPUT", classes="practice-section-heading")
-        with VerticalScroll(classes="practice-section-scroll"):
+            yield Button("Copy", id="practice-copy-btn", classes="practice-icon-btn")
+            yield Button("Reset", id="practice-reset-btn", classes="practice-icon-btn")
+            yield Button("Run 🚀", id="practice-run-btn")
+        with VerticalScroll(id="practice-scroll"):
+            self.editor = _EditorTextArea(
+                self.code_by_language[self.language],
+                language=code_runner.TEXTAREA_LANGUAGE[self.language],
+                show_line_numbers=True,
+                id="practice-editor",
+                on_evaluate=self.action_evaluate_code,
+            )
+            yield self.editor
+            yield Rule()
             self.output_panel = Static(self._idle_output(), id="practice-output")
             yield self.output_panel
-        yield Rule()
-        yield Static("TIME COMPLEXITY", classes="practice-section-heading")
-        with VerticalScroll(classes="practice-section-scroll"):
-            self.time_panel = Static(self._idle_complexity(), id="practice-time")
+            yield Rule()
+            self.time_panel = Static(self._idle_complexity("TIME COMPLEXITY"), id="practice-time")
             yield self.time_panel
-        yield Rule()
-        yield Static("SPACE COMPLEXITY", classes="practice-section-heading")
-        with VerticalScroll(classes="practice-section-scroll"):
-            self.space_panel = Static(self._idle_complexity(), id="practice-space")
+            self.space_panel = Static(self._idle_complexity("SPACE COMPLEXITY"), id="practice-space")
             yield self.space_panel
         yield Static("^R run  ·  ^B complexity  ·  ^A evaluate  ·  ^N reset", id="practice-help", classes="dim")
 
@@ -251,8 +241,7 @@ class PracticeLabPanel(Vertical):
         self.language = lang
         self.editor.language = code_runner.TEXTAREA_LANGUAGE[lang]
         self.editor.text = self.code_by_language[lang]
-        self.lang_tag.update(f"[{code_runner.LANGUAGE_LABELS[lang]}]")
-        self.tab_chip.update(f"[{code_runner.FILE_NAMES[lang]}]")
+        self.filename_label.update(code_runner.FILE_NAMES[lang])
         for l, btn_id in self._LANG_BUTTON_IDS.items():
             self.query_one(f"#{btn_id}", Button).set_class(l == lang, "-active-lang")
         self.editor.focus()
@@ -260,13 +249,17 @@ class PracticeLabPanel(Vertical):
     # -- run ---------------------------------------------------------------
 
     def _idle_output(self):
-        return Text("$ " + _RUN_COMMAND_LABEL[self.language], style="bold #39c26d")
+        return Group(
+            Text("OUTPUT", style="bold #6a6a6a"),
+            Text("$ " + _RUN_COMMAND_LABEL[self.language], style="bold #00ff66"),
+        )
 
     def action_run_code(self):
         code = self.editor.text
         language = self.language
         self.output_panel.update(Group(
-            Text(f"$ {_RUN_COMMAND_LABEL[language]}", style="bold #39c26d"),
+            Text("OUTPUT", style="bold #6a6a6a"),
+            Text(f"$ {_RUN_COMMAND_LABEL[language]}", style="bold #00ff66"),
             Text("running...", style="dim italic"),
         ))
         threading.Thread(target=self._run_code_worker, args=(language, code), daemon=True).start()
@@ -281,42 +274,45 @@ class PracticeLabPanel(Vertical):
         self.app.call_from_thread(self._show_run_result, language, result)
 
     def _show_run_result(self, language, result):
-        status_color = "#39c26d" if result.ok else "#e06c75"
+        status_color = "#00ff66" if result.ok else "#e06c75"
         self.output_panel.update(Group(
-            Text(f"$ {_RUN_COMMAND_LABEL[language]}", style="bold #39c26d"),
-            Text(""),
+            Text("OUTPUT", style="bold #6a6a6a"),
+            Text(f"$ {_RUN_COMMAND_LABEL[language]}", style="bold #00ff66"),
             Text(result.output or "(no output)"),
             Text(f"[exit {'0' if result.ok else '1'} in {result.elapsed:.3f}s]", style=f"dim {status_color}"),
         ))
 
     def _show_run_error(self, message):
-        self.output_panel.update(Text(f"Couldn't run that -- see {LOG_PATH}\n{message}", style="bold #e06c75"))
+        self.output_panel.update(Group(
+            Text("OUTPUT", style="bold #6a6a6a"),
+            Text(f"Couldn't run that -- see {LOG_PATH}\n{message}", style="bold #e06c75"),
+        ))
 
     # -- complexity ----------------------------------------------------------
 
-    def _idle_complexity(self):
-        return Text("Ctrl+B to ask the AI for an estimate.", style="dim italic")
+    def _complexity_message(self, caption, text, style="dim italic"):
+        return Group(Text(caption, style="bold #6a6a6a"), Text(text, style=style))
 
-    def _complexity_body(self, raw):
+    def _idle_complexity(self, caption):
+        return self._complexity_message(caption, "Ctrl+B to ask the AI for an estimate.")
+
+    def _complexity_body(self, caption, raw):
         bigo, explanation = _split_bigo(raw)
-        return Group(
-            Text(bigo, style="bold #39c26d"),
-            Text(""),
-            Text("Explanation:", style="dim"),
-            Text(explanation or "(no explanation given)"),
-        )
+        line = Text()
+        line.append(bigo, style="bold #00ff66")
+        line.append("  •  ", style="dim")
+        line.append(explanation or "(no explanation given)")
+        return Group(Text(caption, style="bold #6a6a6a"), line)
 
     def action_analyze_complexity(self):
         code = self.editor.text
         if not code.strip():
-            msg = Text("Write some code first.", style="dim italic")
-            self.time_panel.update(msg)
-            self.space_panel.update(msg)
+            self.time_panel.update(self._complexity_message("TIME COMPLEXITY", "Write some code first."))
+            self.space_panel.update(self._complexity_message("SPACE COMPLEXITY", "Write some code first."))
             return
         language_label = code_runner.LANGUAGE_LABELS[self.language]
-        msg = Text("Analyzing...", style="dim italic")
-        self.time_panel.update(msg)
-        self.space_panel.update(msg)
+        self.time_panel.update(self._complexity_message("TIME COMPLEXITY", "Analyzing..."))
+        self.space_panel.update(self._complexity_message("SPACE COMPLEXITY", "Analyzing..."))
         threading.Thread(target=self._analyze_worker, args=(language_label, code), daemon=True).start()
 
     def _analyze_worker(self, language_label, code):
@@ -340,10 +336,9 @@ class PracticeLabPanel(Vertical):
 
     def _show_complexity_result(self, answer, error):
         if error and not answer:
-            err = Text(error, style="bold #e06c75")
-            self.time_panel.update(err)
-            self.space_panel.update(err)
+            self.time_panel.update(self._complexity_message("TIME COMPLEXITY", error, style="bold #e06c75"))
+            self.space_panel.update(self._complexity_message("SPACE COMPLEXITY", error, style="bold #e06c75"))
             return
         time_text, space_text = _parse_complexity_response(answer or "")
-        self.time_panel.update(self._complexity_body(time_text))
-        self.space_panel.update(self._complexity_body(space_text))
+        self.time_panel.update(self._complexity_body("TIME COMPLEXITY", time_text))
+        self.space_panel.update(self._complexity_body("SPACE COMPLEXITY", space_text))

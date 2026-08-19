@@ -205,16 +205,27 @@ def is_dsa_task(category_meta):
 # whatever backend the user picked (Claude Code, a local Ollama model, or an API chat)
 # has zero awareness of what's on the board. TodoApp._prime_ai_context_if_needed sends
 # the message below into that pty as if typed, once per active task, so the assistant
-# starts from the right context instead of a cold, generic chat. Kept as ONE line (no
-# embedded newlines) -- see PtyPanel.send_text for why a pty in canonical mode makes
-# multi-line paste unsafe for a plain readline-based REPL like Ollama's.
+# starts from the right context instead of a cold, generic chat, and so the user isn't
+# the one who has to explain the problem to it themselves every time. It's sent as a
+# perfectly normal, visible chat message -- typed into the exact same input box the
+# user's own messages go through, nothing hidden or out-of-band -- so what's asked on
+# the user's behalf is always right there to read in the transcript, not a secret.
+#
+# TUTOR_FRAMEWORK_PARAGRAPHS is a tuple, not one pre-joined string, so it can be
+# rendered either way: real paragraph breaks (multiline=True) for a raw-mode backend
+# that reads and displays them correctly (see ai_backend.supports_raw_multiline_paste),
+# or space-joined into one line for a plain canonical-mode REPL (Ollama's/web_chat's),
+# where PtyPanel.send_text's flatten=True would otherwise turn real newlines into
+# several premature partial sends.
 
-TUTOR_FRAMEWORK = (
+TUTOR_FRAMEWORK_PARAGRAPHS = (
     "You are acting as my personal tutor for this focus session, not a solution generator -- "
     "please follow this teaching framework for everything I ask about the task below (and "
-    "anything related I bring up) until I say otherwise. "
+    "anything related I bring up) until I say otherwise.",
+
     "MISSION: my success is whether I can solve a similar problem alone afterward, not whether "
-    "I get today's answer -- optimize for my independent ability, not today's answer. "
+    "I get today's answer -- optimize for my independent ability, not today's answer.",
+
     "CORE RULES: "
     "1) Never give the final answer, code, query, or architecture immediately when I ask a "
     "question or get stuck -- first understand my current thinking, find my exact point of "
@@ -228,41 +239,54 @@ TUTOR_FRAMEWORK = (
     "actively. "
     "5) Use progressive hinting, one level at a time, only advancing when I'm still stuck: "
     "(a) a guiding question, (b) narrow the focus, (c) suggest a direction, (d) mention a "
-    "technique, (e) only then, the solution. "
+    "technique, (e) only then, the solution.",
+
     "Personality: patient, curious, encouraging, challenging, Socratic -- not a solution dump, "
-    "not a lecturer, not a passive assistant. "
+    "not a lecturer, not a passive assistant.",
+
     "If what I ask about is DSA: restate the problem, find the brute force, analyze its "
     "complexity, find the bottleneck, discover the optimization, generalize the pattern -- ask "
-    "what's the brute force, what's expensive, what info would help, what pattern this resembles. "
+    "what's the brute force, what's expensive, what info would help, what pattern this resembles.",
+
     "If it's SQL: have me visualize the table, restate the question in plain English, solve it "
-    "manually first, then convert to SQL, then handle edge cases -- start with logic, not syntax. "
+    "manually first, then convert to SQL, then handle edge cases -- start with logic, not syntax.",
+
     "If it's backend/systems work: understand the business problem, inputs, outputs, data flow, "
     "API contract, security, and scale before code -- ask who uses this, what data enters/leaves, "
-    "where it's stored, what can go wrong. "
+    "where it's stored, what can go wrong.",
+
     "If it's system design: clarify requirements and scale first, then data model, APIs, "
     "architecture, bottlenecks, trade-offs -- ask what we're building, how many users, "
-    "read/write ratio, what breaks first. "
+    "read/write ratio, what breaks first.",
+
     "After a topic feels done, check I can actually explain it in my own words, why it works, "
     "when to use it, when NOT to, and the alternatives/trade-offs -- if I can't, keep teaching, "
-    "don't move on."
+    "don't move on.",
 )
 
+# Kept for anything that still wants the old single-string, always-flattened form.
+TUTOR_FRAMEWORK = " ".join(TUTOR_FRAMEWORK_PARAGRAPHS)
 
-def build_focus_context_message(task_text, category_label, dsa_problem=None):
-    """The one-line message sent into the AI panel when priming it -- see TUTOR_FRAMEWORK
-    above for why it has to stay single-line. Includes the already-generated DSA problem
-    statement verbatim when there is one (see app.LearningCoachPanel), so the assistant
-    doesn't improvise a different version of the same problem the student is looking at."""
-    parts = [
-        TUTOR_FRAMEWORK,
-        f"Right now, in my Focus Mode session, I'm working on this task: \"{task_text}\" (field: {category_label}).",
-    ]
+
+def build_focus_context_message(task_text, category_label, dsa_problem=None, multiline=False):
+    """The message sent into the AI panel when priming it. multiline=True renders it
+    with real paragraph breaks (readable, for a raw-mode backend -- see
+    ai_backend.supports_raw_multiline_paste); multiline=False (the default) collapses
+    it to one line, safe for a plain canonical-mode REPL (Ollama's/web_chat's) via
+    PtyPanel.send_text's flatten=True. Includes the already-generated DSA problem
+    statement verbatim when there is one (see app.LearningCoachPanel), so the
+    assistant doesn't improvise a different version of the same problem the student
+    is looking at."""
+    parts = list(TUTOR_FRAMEWORK_PARAGRAPHS)
+    parts.append(f"Right now, in my Focus Mode session, I'm working on this task: \"{task_text}\" (field: {category_label}).")
     if dsa_problem and dsa_problem.get("statement"):
         parts.append(
             "Here's the exact problem statement already shown to me for this task -- use "
-            "this one, don't restate or change it: " + dsa_problem["statement"]
+            "this one, don't restate or change it:" + ("\n" if multiline else " ") + dsa_problem["statement"]
         )
     parts.append("Please apply the framework above to whatever I ask from here about this task, or related topics.")
+    if multiline:
+        return "\n\n".join(parts)
     return " ".join(part.replace("\n", " ") for part in parts)
 
 

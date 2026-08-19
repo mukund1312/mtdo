@@ -122,6 +122,25 @@ def detect():
     return None, NOTHING_CONFIGURED_MESSAGE
 
 
+def supports_raw_multiline_paste(command):
+    """Whether this backend's own CLI reads its terminal input in raw mode -- where
+    every keystroke reaches the app immediately and the app itself decides whether an
+    embedded newline means "insert a line" or "submit" -- as opposed to canonical/
+    line-buffered mode, where the kernel's own tty driver releases each raw "\\n" to
+    the reader as its own line the instant it arrives, regardless of what the app
+    wants. Used by app.TodoApp._prime_ai_context_if_needed and
+    practice_lab_panel.PracticeLabPanel.action_evaluate_code to decide whether a
+    message with real line breaks (readable, and necessary for code -- flattening
+    would break Python indentation, e.g.) is safe to send, or whether it needs
+    PtyPanel.send_text's flatten=True instead to avoid fragmenting into several
+    premature partial sends.
+
+    Only Claude Code's Ink-based UI is known to behave this way. A local Ollama
+    model's REPL and the API-chat REPL (web_chat.py, a plain input() loop) are both
+    canonical/line-buffered."""
+    return command == "claude"
+
+
 def save_choice(command, label):
     """Remembers the last backend picked in AIBackendPickScreen, so next time it's
     pre-selected in the list instead of always defaulting back to the top -- picking

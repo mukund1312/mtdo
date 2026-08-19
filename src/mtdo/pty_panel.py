@@ -315,18 +315,24 @@ class PtyPanel(Widget):
         is reliably recognized as submit where the atomic version often silently
         wasn't. Pass submit=False to just fill the input box without sending Enter.
 
-        flatten=True (the default) collapses embedded newlines to spaces first: a pty
-        in canonical/line-buffered mode releases each raw newline to the child as its
-        own submitted line, so for a plain readline-based REPL (Ollama's, e.g.) an
-        un-flattened multi-line message would arrive as several premature partial
-        sends instead of one. Pass flatten=False for a payload where the newlines
-        themselves are meaningful -- code, where collapsing them would silently break
-        the content (Python indentation, e.g.) -- and accept the same multi-line-paste
+        flatten=True (the default) replaces embedded newlines with a literal "\\n"
+        (backslash-n, two visible characters, not an actual line break) before
+        sending: a pty in canonical/line-buffered mode releases each raw newline to
+        the child as its own submitted line, so for a plain readline-based REPL
+        (Ollama's/web_chat's input() loop, e.g.) an un-flattened multi-line message
+        would arrive as several premature partial sends instead of one. A literal
+        "\\n" marker keeps the message on one line (safe to submit whole) while still
+        showing where each line break was, unlike collapsing to a bare space, which
+        loses that structure entirely. Pass flatten=False for a backend confirmed
+        raw-mode (see ai_backend.supports_raw_multiline_paste) or any payload where
+        real line breaks matter more than one-shot-submit safety -- code, where even
+        a "\\n" marker would break the content itself (Python indentation, e.g.), so
+        callers there choose real newlines and accept the same multi-line-paste
         behavior a human would get pasting that same code into any of these backends
         directly. No-op if nothing's running."""
         if not self._pty_running or self._master_fd is None:
             return
-        payload = text.replace("\n", " ") if flatten else text
+        payload = text.replace("\n", "\\n") if flatten else text
         try:
             os.write(self._master_fd, payload.encode("utf-8"))
         except OSError:

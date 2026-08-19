@@ -1399,7 +1399,13 @@ class LearningCoachPanel(Static):
             statement, hints = f"Couldn't generate a problem: {error}", []
         block["dsa_problem"] = {"statement": statement, "hints": hints, "revealed": 0, "next_hint_at": 10}
         tc.save_state(self.app.state)
+        # If the AI panel was already primed for this same task before generation
+        # finished, that priming message went out without the problem statement --
+        # force a fresh one now that it exists, so the assistant actually knows what
+        # problem is being discussed instead of the student having to paste it in.
+        self.app.ai_primed_ref = None
         self.app.refresh_side_panels()
+        self.app._prime_ai_context_if_needed()
 
     def _generating_panel(self, task_text):
         body = Group(
@@ -1846,16 +1852,18 @@ class TodoApp(App):
         if ref == self.ai_primed_ref:
             return
         category_meta = tc.CATEGORY_META.get(active["category"]) or {}
+        raw_capable = ai_backend.supports_raw_multiline_paste(self.claude_panel.command)
         message = coaching.build_focus_context_message(
             active["block"]["text"],
             category_meta.get("label", active["category"]),
             active["block"].get("dsa_problem"),
+            multiline=raw_capable,
         )
         self.ai_primed_ref = ref
 
         def send():
             if self.claude_panel.is_running:
-                self.claude_panel.send_text(message)
+                self.claude_panel.send_text(message, flatten=not raw_capable)
 
         if delay > 0:
             self.set_timer(delay, send)
