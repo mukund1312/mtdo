@@ -296,6 +296,22 @@ class PtyPanel(Widget):
         except OSError:
             pass
 
+    def send_text(self, text):
+        """Writes `text` into the pty followed by Enter, as if typed -- used to prime a
+        freshly-started (or just-refocused) AI session with context before the user
+        types anything themselves (see app.TodoApp._prime_ai_context_if_needed).
+        Embedded newlines are collapsed to spaces first: a pty is normally in
+        canonical/line-buffered mode, so each raw "\\n" would be released to the child
+        as its own submitted line -- for a plain readline-based REPL (Ollama's, e.g.)
+        that means several premature partial sends instead of one message, not just a
+        cosmetic multi-line paste. No-op if nothing's running."""
+        if not self._pty_running or self._master_fd is None:
+            return
+        try:
+            os.write(self._master_fd, text.replace("\n", " ").encode("utf-8") + b"\r")
+        except OSError:
+            pass
+
     def _write_reply(self, data):
         if self._master_fd is None:
             return

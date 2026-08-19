@@ -1851,6 +1851,11 @@ class TodoApp(App):
         self.current_dsa_ref = None
         self.dsa_generating = set()
         self._hint_prompt_open = False
+        # AI-panel context priming (see coaching.build_focus_context_message /
+        # _prime_ai_context_if_needed): the (date_key, category, idx) of the active task
+        # last sent into the running AI panel, so switching tasks re-primes it but
+        # refocusing the same task/session doesn't spam the conversation.
+        self.ai_primed_ref = None
         try:
             self._goals_mtime = os.path.getmtime(appconfig.GOALS_PATH)
         except OSError:
@@ -2100,6 +2105,42 @@ class TodoApp(App):
 
         self.push_screen(HintPromptScreen(), on_answer)
 
+    def _prime_ai_context_if_needed(self, delay=0.0):
+        """Sends the active focus task's context (+ the Socratic tutor framework, see
+        coaching.build_focus_context_message) into the running AI panel as if typed, so
+        whichever backend the user picked -- Claude Code, a local Ollama model, or an
+        API chat, it's all the same pty underneath -- already knows what's on the board
+        instead of starting cold. Applies to any field, not just DSA: the framework
+        itself branches on topic (DSA/SQL/backend/system design/generic). Only primes
+        again when the active task actually changed since the last prime (self.ai_primed_ref),
+        so refocusing the same task/session doesn't spam the conversation -- but a
+        freshly started process always gets one, since start_backend() clears
+        ai_primed_ref first for exactly that case."""
+        if not self.focus_mode:
+            return
+        active = tc.current_active_task(self.state, self.today)
+        if active is None:
+            return
+        ref = (active["date_key"], active["category"], active["idx"])
+        if ref == self.ai_primed_ref:
+            return
+        category_meta = tc.CATEGORY_META.get(active["category"]) or {}
+        message = coaching.build_focus_context_message(
+            active["block"]["text"],
+            category_meta.get("label", active["category"]),
+            active["block"].get("dsa_problem"),
+        )
+        self.ai_primed_ref = ref
+
+        def send():
+            if self.claude_panel.is_running:
+                self.claude_panel.send_text(message)
+
+        if delay > 0:
+            self.set_timer(delay, send)
+        else:
+            send()
+
     def action_toggle_pomodoro(self):
         self.pomo_panel.running = not self.pomo_panel.running
         self.pomo_panel.render_panel(tc.get_pomodoro_count(self.state, self.today))
@@ -2164,6 +2205,7 @@ class TodoApp(App):
         self.toast("Focus Mode ON -- 45/10 pomodoro started, press f to exit" if self.focus_mode else "Focus Mode off",
                    style="bold bright_green" if self.focus_mode else "dim")
         self.refresh_side_panels()
+        self._prime_ai_context_if_needed()
 
     def action_toggle_claude(self):
         if not self.focus_mode:
@@ -2189,12 +2231,15 @@ class TodoApp(App):
                 try:
                     if self.claude_panel.is_running and command == self.claude_panel.command:
                         self.claude_panel.focus()
+                        self._prime_ai_context_if_needed()
                         return
                     ai_backend.save_choice(command, label)
                     if self.claude_panel.is_running:
                         self.claude_panel.stop()
+                    self.ai_primed_ref = None  # fresh process -- (re)prime even the same task
                     self.claude_panel.start_with(command, label)
                     self.claude_panel.focus()
+                    self._prime_ai_context_if_needed(delay=2.0)
                 except Exception:
                     app_log.exception("starting chosen AI backend failed")
                     self.toast(f"Claude Code panel hit an error -- see {LOG_PATH}", style="bold red")
