@@ -6,9 +6,17 @@ import datetime
 import getpass
 import json
 import os
+import shutil
+import sys
 
 from . import config as appconfig
 from . import profiles as pf
+
+# Whichever of the two installed commands actually launched this process ("mtdo" or
+# "mtdo-sandbox", see sandbox_entry.py) -- used in messages that tell the user to run
+# the app again, so a sandbox session doesn't tell them to run plain `mtdo` (which
+# would silently switch them back to real prod data instead of the sandbox they're in).
+_PROG = os.path.basename(sys.argv[0]) if sys.argv else "mtdo"
 
 
 def cmd_init(args):
@@ -18,7 +26,7 @@ def cmd_init(args):
     path = appconfig.init_config(fresh=args.fresh)
     kind = "empty template" if args.fresh else "demo plan (a real working example, not empty)"
     print(f"Created {path} from the {kind}.")
-    print("Edit that file to make it yours, then run `mtdo` to start.")
+    print(f"Edit that file to make it yours, then run `{_PROG}` to start.")
 
 
 def cmd_template(args):
@@ -190,6 +198,14 @@ class _AuthFailed(Exception):
     pass
 
 
+# The live goals/state paths, displayed with the home directory collapsed to "~" --
+# reads as "~/.mtdo/goals.json" for a normal install, or "~/.mtdo-sandbox/goals.json"
+# under `mtdo-sandbox` (see sandbox_entry.py/config.APP_DIR), so these messages never
+# claim to be touching real data when they're actually operating on the sandbox.
+_GOALS_DISPLAY = appconfig.GOALS_PATH.replace(os.path.expanduser("~"), "~", 1)
+_STATE_DISPLAY = appconfig.STATE_PATH.replace(os.path.expanduser("~"), "~", 1)
+
+
 def _resolve_profile(name):
     """Matches a profile by slug or by display name (case-insensitive) -- so `mtdo
     profile switch "DSA Track"` and `mtdo profile switch dsa_track` both work."""
@@ -221,7 +237,7 @@ def _get_password_for(slug, name, action_desc, max_attempts=3):
 def cmd_profile_list(_args):
     profiles = pf.list_profiles()
     if not profiles:
-        print("No profiles yet. Run `mtdo profile create <name>` to make one.")
+        print(f"No profiles yet. Run `{_PROG} profile create <name>` to make one.")
         return
     active = pf.get_active_slug()
     print("\nProfiles:")
@@ -236,8 +252,8 @@ def cmd_profile_current(_args):
     active = pf.get_active_slug()
     if not active:
         print(
-            "No active profile -- your ~/.mtdo/goals.json and state.json are unmanaged "
-            "(not tied to any profile). Run `mtdo profile create <name> --from-current` "
+            f"No active profile -- your {_GOALS_DISPLAY} and state.json are unmanaged "
+            f"(not tied to any profile). Run `{_PROG} profile create <name> --from-current` "
             "to adopt them as your first profile."
         )
         return
@@ -275,30 +291,30 @@ def cmd_profile_create(args):
                 pf.write_state(slug, json.load(f), password)
         adopted = goals_exists or state_exists
         if adopted:
-            print(f"Copied your current ~/.mtdo/goals.json/state.json into '{args.name}'.")
+            print(f"Copied your current {_GOALS_DISPLAY}/state.json into '{args.name}'.")
         else:
-            print("Nothing at ~/.mtdo/goals.json or state.json to adopt -- profile created empty.")
+            print(f"Nothing at {_GOALS_DISPLAY} or state.json to adopt -- profile created empty.")
 
     has_legacy_data = os.path.exists(appconfig.GOALS_PATH) or os.path.exists(appconfig.STATE_PATH)
     if was_first and not args.from_current and has_legacy_data:
         print(
-            f"Note: '{args.name}' is now marked active, but your existing ~/.mtdo/goals.json/"
+            f"Note: '{args.name}' is now marked active, but your existing {_GOALS_DISPLAY}/"
             "state.json were NOT copied into it (you didn't pass --from-current) -- it's "
             "empty. Re-run with --from-current to adopt your existing data instead, or keep "
-            "running `mtdo` as normal to use it unmanaged."
+            f"running `{_PROG}` as normal to use it unmanaged."
         )
     elif was_first:
-        print(f"'{args.name}' is now the active profile -- run `mtdo` to start using it.")
+        print(f"'{args.name}' is now the active profile -- run `{_PROG}` to start using it.")
     elif adopted:
-        print(f"Run `mtdo profile switch {args.name}` to make it active.")
+        print(f"Run `{_PROG} profile switch {args.name}` to make it active.")
     else:
-        print(f"Run `mtdo profile switch {args.name}` once you're ready to use it.")
+        print(f"Run `{_PROG} profile switch {args.name}` once you're ready to use it.")
 
 
 def cmd_profile_switch(args):
     target = _resolve_profile(args.name)
     if target is None:
-        print(f"No profile named '{args.name}'. Run `mtdo profile list` to see what exists.")
+        print(f"No profile named '{args.name}'. Run `{_PROG} profile list` to see what exists.")
         return
 
     current_slug = pf.get_active_slug()
@@ -326,9 +342,9 @@ def cmd_profile_switch(args):
                 pf.write_state(current_slug, json.load(f), current_password)
     elif os.path.exists(appconfig.GOALS_PATH) or os.path.exists(appconfig.STATE_PATH):
         print(
-            "You have an existing ~/.mtdo/goals.json/state.json that isn't tied to any "
+            f"You have an existing {_GOALS_DISPLAY}/state.json that isn't tied to any "
             f"profile. Switching now would overwrite it with '{target['name']}'s data and "
-            "lose it. Run `mtdo profile create <name> --from-current` first to adopt it, "
+            f"lose it. Run `{_PROG} profile create <name> --from-current` first to adopt it, "
             "then switch."
         )
         return
@@ -352,7 +368,7 @@ def cmd_profile_switch(args):
         json.dump(state, f, indent=2, sort_keys=False)
 
     pf.set_active(target["slug"])
-    print(f"Switched to profile '{target['name']}'. Run `mtdo` to start.")
+    print(f"Switched to profile '{target['name']}'. Run `{_PROG}` to start.")
 
 
 def cmd_profile_delete(args):
@@ -397,12 +413,39 @@ def cmd_profile_import(args):
     if pf.get_active_slug() == target["slug"]:
         with open(appconfig.GOALS_PATH, "w") as f:
             json.dump(goals, f, indent=2, sort_keys=False)
-        print("This is the active profile -- ~/.mtdo/goals.json was updated too.")
+        print(f"This is the active profile -- {_GOALS_DISPLAY} was updated too.")
 
 
 def cmd_profile_help(args):
-    print("Usage: mtdo profile <list|current|create|switch|delete|import> ...")
-    print("Run `mtdo profile <subcommand> --help` for details.")
+    print(f"Usage: {_PROG} profile <list|current|create|switch|delete|import> ...")
+    print(f"Run `{_PROG} profile <subcommand> --help` for details.")
+
+
+_REAL_APP_DIR = os.path.abspath(os.path.expanduser("~/.mtdo"))
+
+
+def cmd_reset(_args):
+    """Wipes everything under the CURRENT app dir (appconfig.APP_DIR) and starts that
+    install fresh -- meant for `mtdo-sandbox reset` (see sandbox_entry.py), not for
+    prod. Refuses outright if APP_DIR resolves to the real ~/.mtdo, regardless of how
+    it was invoked, so this can never wipe real data even if run by mistake or with a
+    misconfigured MTDO_HOME."""
+    current = os.path.abspath(appconfig.APP_DIR)
+    if current == _REAL_APP_DIR:
+        print(
+            f"Refusing -- {current} is your real ~/.mtdo (prod data), not a sandbox.\n"
+            "`reset` only runs when MTDO_HOME points somewhere else -- use `mtdo-sandbox reset`."
+        )
+        return
+    if not os.path.isdir(current):
+        print(f"Nothing to reset -- {current} doesn't exist yet. It'll be created fresh on next run.")
+        return
+    confirm = input(f"Delete EVERYTHING under {current} and start fresh? Type 'reset' to confirm: ")
+    if confirm.strip() != "reset":
+        print("Not resetting.")
+        return
+    shutil.rmtree(current)
+    print(f"Wiped {current}. Run `{_PROG}` again to start fresh.")
 
 
 def main():
@@ -469,6 +512,12 @@ def main():
     p_profile_import.add_argument("name")
     p_profile_import.add_argument("json_path")
     p_profile_import.set_defaults(func=cmd_profile_import)
+
+    p_reset = sub.add_parser(
+        "reset",
+        help="Wipe the current app dir and start fresh (refuses on real ~/.mtdo -- for `mtdo-sandbox reset`)",
+    )
+    p_reset.set_defaults(func=cmd_reset)
 
     args = parser.parse_args()
     if args.command is None:

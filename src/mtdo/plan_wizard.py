@@ -17,7 +17,7 @@ import subprocess
 
 from . import config as appconfig
 
-PROMPT_OUTPUT_PATH = os.path.expanduser("~/.mtdo/plan_wizard_prompt.txt")
+PROMPT_OUTPUT_PATH = os.path.join(appconfig.APP_DIR, "plan_wizard_prompt.txt")
 
 PERSONAS = [
     ("school", "School student (class 6-12)"),

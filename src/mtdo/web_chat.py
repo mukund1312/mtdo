@@ -26,10 +26,14 @@ import stat
 import subprocess
 import sys
 
-SECRETS_PATH = os.path.expanduser("~/.mtdo/secrets.json")
-SECRETS_PATH_DISPLAY = "~/.mtdo/secrets.json"  # shown to the user -- the expanded
-# SECRETS_PATH always starts with their real home directory (their account name), no
-# reason to print that back at them
+from . import config as appconfig
+
+SECRETS_PATH = os.path.join(appconfig.APP_DIR, "secrets.json")
+# Shown to the user -- collapse their real home directory back to "~" (matches
+# ~/.mtdo/secrets.json for the default install, and still reads sensibly under
+# MTDO_HOME, e.g. ~/.mtdo-sandbox/secrets.json) rather than printing the full absolute
+# path with their account name in it for no reason.
+SECRETS_PATH_DISPLAY = SECRETS_PATH.replace(os.path.expanduser("~"), "~", 1)
 
 _PROVIDERS = {
     "anthropic": {"env": ("ANTHROPIC_API_KEY",), "secrets_key": "anthropic_api_key", "display": "Anthropic"},
@@ -87,7 +91,7 @@ def get_api_key(provider):
     return value
 
 
-MEMORY_PATH = os.path.expanduser("~/.mtdo/memory.md")
+MEMORY_PATH = os.path.join(appconfig.APP_DIR, "memory.md")
 
 
 def _read_memory():

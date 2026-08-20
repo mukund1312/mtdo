@@ -32,7 +32,9 @@ import os
 import re
 import shutil
 
-APP_DIR = os.path.expanduser("~/.mtdo")
+from . import config as appconfig
+
+APP_DIR = appconfig.APP_DIR
 PROFILES_DIR = os.path.join(APP_DIR, "profiles")
 INDEX_PATH = os.path.join(PROFILES_DIR, "index.json")
 

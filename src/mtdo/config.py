@@ -6,7 +6,15 @@ from datetime import datetime
 
 import yaml
 
-APP_DIR = os.path.expanduser("~/.mtdo")
+# APP_DIR is the one thing every other module in this package should derive its own
+# ~/.mtdo-rooted paths from (import this module and use appconfig.APP_DIR) rather than
+# calling os.path.expanduser("~/.mtdo") themselves -- that's what makes MTDO_HOME below
+# actually relocate the WHOLE app's data, not just goals/state. Defaults to the real
+# ~/.mtdo untouched (existing behavior for every current install), but honors MTDO_HOME
+# when set, so a completely separate, disposable install can run alongside it without
+# ever touching real data -- see sandbox_entry.py (the `mtdo-sandbox` command) for the
+# intended way to use this rather than setting the env var by hand.
+APP_DIR = os.environ.get("MTDO_HOME") or os.path.expanduser("~/.mtdo")
 GOALS_PATH = os.path.join(APP_DIR, "goals.json")
 GOALS_SNAPSHOTS_DIR = os.path.join(APP_DIR, "goals_snapshots")
 CONFIG_PATH = os.path.join(APP_DIR, "config.yaml")

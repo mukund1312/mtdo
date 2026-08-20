@@ -6,7 +6,9 @@ the moment the TUI's alternate screen buffer closes.
 import logging
 import os
 
-LOG_DIR = os.path.expanduser("~/.mtdo")
+from . import config as appconfig
+
+LOG_DIR = appconfig.APP_DIR
 LOG_PATH = os.path.join(LOG_DIR, "error.log")
 
 

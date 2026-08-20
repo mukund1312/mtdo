@@ -5,6 +5,63 @@ See `~/.claude/agents/mtdo-dev.md` for the full project onboarding/architecture 
 
 ---
 
+## 2026-08-20 (update -- separate `mtdo-sandbox` command for testing, isolated from real data)
+
+User asked for a genuine dev/test instance of the app, separate from the real one --
+"test app vs PROD app" was the framing. The scratch-`HOME` approach used earlier that
+same day for the live AI-coaching test was a one-off workaround, not something usable
+day to day, and it had a real downside: overriding `$HOME` also breaks whatever else
+reads `$HOME` (it broke the `claude` CLI's own credential lookup during that test). This
+needed a real fix, not another one-off.
+
+**Did:**
+- **Root cause / fix:** 8 modules independently hardcoded `os.path.expanduser("~/.mtdo/...")`
+  for their own path constants (`config.py`, `profiles.py`, `ai_backend.py`, `errorlog.py`,
+  `code_runner.py`, `plan_wizard.py`, `web_chat.py`, `pty_panel.py`) -- no single source of
+  truth, so nothing could relocate "mtdo's data" as one unit. Changed `config.APP_DIR` to
+  `os.environ.get("MTDO_HOME") or os.path.expanduser("~/.mtdo")` (default behavior
+  unchanged for every existing install) and refactored the other 7 modules to derive their
+  constants from `appconfig.APP_DIR` instead of recomputing their own `expanduser` calls.
+- **New `mtdo-sandbox` command** (`sandbox_entry.py`, registered in `pyproject.toml`'s
+  `[project.scripts]`): sets `MTDO_HOME=~/.mtdo-sandbox` via `os.environ.setdefault`
+  *before* importing `cli` (has to happen first -- those path constants are computed once
+  at import time, so setting the env var from inside an already-imported module would be
+  too late). Fully separate goals/state/profiles/error.log/memory.md/secrets/practice/
+  transcripts from the real `mtdo` -- confirmed nothing is shared.
+- **`mtdo reset` / `mtdo-sandbox reset`** (`cli.cmd_reset`): wipes the *current* app dir
+  and starts fresh. Hard safety guard -- refuses unconditionally if `appconfig.APP_DIR`
+  resolves to the real `~/.mtdo`, regardless of how it was invoked, so this can never
+  wipe real data even by mistake. Requires typing `reset` to confirm on top of that.
+- Fixed several hardcoded `"~/.mtdo/goals.json"`-style strings in `cli.py`'s user-facing
+  profile messages (were misleading under `mtdo-sandbox` -- would claim to be touching
+  `~/.mtdo` while actually operating on `~/.mtdo-sandbox`) to display the real resolved
+  path with `$HOME` collapsed back to `~`. Also added `_PROG` (derived from
+  `os.path.basename(sys.argv[0])`) so "run `mtdo` to start" style messages correctly say
+  `mtdo-sandbox` when that's what was actually run -- otherwise a sandbox session would
+  tell the user to run plain `mtdo`, which silently switches back to real prod data.
+- Reinstalled editable (`--break-system-packages`, same interpreter/reason as the
+  `cryptography` install earlier today) so the new console script actually exists on PATH.
+
+**Tested (real, not just code review):** `mtdo-sandbox` launched in a real tmux pty --
+confirmed it shows the first-run onboarding walkthrough and the built-in demo config
+(generic "Cardio + gym" etc, not Mukund's real curriculum), and that it wrote
+`config.yaml`/`state.json`/`error.log`/`onboarded` under `~/.mtdo-sandbox` while real
+`~/.mtdo/goals.json` and `config.yaml` mtimes stayed untouched (from Aug 17, before this
+session). Verified `mtdo reset` refuses on real prod with the exact guard message, that
+`mtdo-sandbox reset` requires typing `reset` and declines on any other input, and that a
+correct confirmation actually removes `~/.mtdo-sandbox` while leaving `~/.mtdo` alone.
+Verified profile create/list/delete under `mtdo-sandbox` show `~/.mtdo-sandbox/...` and
+`mtdo-sandbox ...` in their messages (not `~/.mtdo`/`mtdo`), and that plain `mtdo`
+commands still show the real paths/program name unchanged. All 8 touched modules import
+cleanly with no circular-import issues; full `python3 -m py_compile` pass.
+
+**Next / open items:**
+- None outstanding for this feature. If ever wanted: a `--sandbox` flag as an alternative
+  to a separate binary, or extending profile-style isolation *within* the sandbox (not
+  requested).
+
+---
+
 ## 2026-08-20 (update -- live-tested the AI coaching panel)
 
 Committed and pushed the 2026-08-20 changes below (commit `ab35750`, already synced with

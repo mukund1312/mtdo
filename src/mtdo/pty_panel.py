@@ -35,6 +35,7 @@ from rich.text import Text
 from textual import events
 from textual.widget import Widget
 
+from . import config as appconfig
 from .errorlog import LOG_PATH, log
 
 _NAMED_COLORS = {
@@ -59,7 +60,7 @@ _SPECIAL_KEY_BYTES = {
 _RELEASE_KEYS = {"f2"}
 _DOUBLE_ESCAPE_WINDOW = 1.2  # seconds -- see _on_key_impl for why this got bumped up
 _SCROLLBACK_LINES = 2000
-TRANSCRIPT_DIR = os.path.expanduser("~/.mtdo/transcripts")
+TRANSCRIPT_DIR = os.path.join(appconfig.APP_DIR, "transcripts")
 
 
 class _PatchedScreen(pyte.HistoryScreen):

@@ -15,7 +15,9 @@ import shutil
 import subprocess
 import time
 
-PRACTICE_DIR = os.path.expanduser("~/.mtdo/practice")
+from . import config as appconfig
+
+PRACTICE_DIR = os.path.join(appconfig.APP_DIR, "practice")
 SAMPLE_DB_PATH = os.path.join(PRACTICE_DIR, "sample.db")
 
 LANGUAGES = ["python", "java", "c", "cpp", "sql"]

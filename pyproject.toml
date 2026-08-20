@@ -23,6 +23,7 @@ webchat = ["anthropic", "openai", "google-generativeai"]  # browser-free API cha
 
 [project.scripts]
 mtdo = "mtdo.cli:main"
+mtdo-sandbox = "mtdo.sandbox_entry:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

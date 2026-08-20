@@ -58,9 +58,11 @@ import shutil
 import subprocess
 import time
 
-CHOICE_PATH = os.path.expanduser("~/.mtdo/ai_backend_choice.json")
-MEMORY_PATH = os.path.expanduser("~/.mtdo/memory.md")
-_MEMORY_MODELFILE_PATH = os.path.expanduser("~/.mtdo/.ollama_memory_modelfile")
+from . import config as appconfig
+
+CHOICE_PATH = os.path.join(appconfig.APP_DIR, "ai_backend_choice.json")
+MEMORY_PATH = os.path.join(appconfig.APP_DIR, "memory.md")
+_MEMORY_MODELFILE_PATH = os.path.join(appconfig.APP_DIR, ".ollama_memory_modelfile")
 
 GEMMA_MODEL = "gemma3:4b"
 
