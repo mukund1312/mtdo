@@ -358,6 +358,88 @@ def build_code_review_message(language_label, code):
     )
 
 
+# ---- AI-generated coaching content, for fields with no setup at all -------------------
+# has_coaching_setup() is False for a field like "Gym" or "Job Search" -- no topic_type,
+# no coaching_framework, no per-task metadata, nothing to fall back to. Rather than the
+# panel just saying "nothing set up here", app.LearningCoachPanel asks the AI to invent a
+# study framework tailored to that exact task text, the same background-thread pattern as
+# build_dsa_problem_prompt above, cached onto the block (block["ai_coaching"]) once
+# generated so it isn't re-requested on every render or app restart.
+
+_SECTION_RE = re.compile(r"^===([A-Z_]+)===$")
+
+
+def build_ai_coaching_prompt(task_text, category_label):
+    return (
+        f'I\'m about to work on this task: "{task_text}" (field: {category_label}). Act as '
+        "a learning coach and give me a short, genuinely specific study framework for it -- "
+        "not generic advice that could apply to anything.\n\n"
+        "Format exactly like this, with these section markers on their own lines and "
+        "nothing else outside them (no preamble, no \"Here's your framework\"). Every bullet "
+        "line starts with \"- \":\n\n"
+        "===FOCUS_ON===\n"
+        "- <what actually matters here, 3-5 bullets>\n"
+        "===ASK_YOURSELF===\n"
+        "- <questions that check real understanding, 3-5 bullets>\n"
+        "===INTERVIEW_CHECK===\n"
+        "- <concrete ways to verify mastery -- explain aloud, do it from memory, teach it, "
+        "etc, 3-5 bullets>\n"
+        "===MISTAKES===\n"
+        "- <common mistakes people make with this specifically, 2-3 bullets>\n"
+        "===MENTAL_MODELS===\n"
+        "- <a way to think about or visualize this, 1-2 bullets>\n"
+        "===PRO_TIP===\n"
+        "<one short, punchy sentence of advice -- no bullet dash>\n"
+        "===RELATED_TOPICS===\n"
+        "<comma-separated list of 2-4 related topics worth knowing, or leave this line blank>\n"
+    )
+
+
+def parse_ai_coaching_response(text):
+    """Splits the AI's raw response into the same shape build_coaching_content()
+    returns, keyed by the ===SECTION=== markers from build_ai_coaching_prompt above.
+    Any section the AI omitted or mis-formatted just comes back as an empty
+    list/None -- callers decide what counts as "enough" to trust (see
+    app.LearningCoachPanel._store_generated_coaching)."""
+    sections = {}
+    current, buf = None, []
+    for line in text.splitlines():
+        m = _SECTION_RE.match(line.strip())
+        if m:
+            if current:
+                sections[current] = buf
+            current, buf = m.group(1), []
+            continue
+        if current:
+            buf.append(line)
+    if current:
+        sections[current] = buf
+
+    def bullets(key):
+        items = []
+        for line in sections.get(key, []):
+            line = line.strip()
+            if line.startswith("- "):
+                items.append(line[2:].strip())
+            elif line.startswith("-"):
+                items.append(line[1:].strip())
+        return items
+
+    pro_tip_lines = [l.strip() for l in sections.get("PRO_TIP", []) if l.strip()]
+    related_lines = [l.strip() for l in sections.get("RELATED_TOPICS", []) if l.strip()]
+    related_topics = [t.strip() for t in related_lines[0].split(",") if t.strip()] if related_lines else []
+
+    return {
+        "focus_on": bullets("FOCUS_ON"),
+        "ask_yourself": bullets("ASK_YOURSELF"),
+        "interview_check": bullets("INTERVIEW_CHECK"),
+        "mistakes": bullets("MISTAKES"),
+        "mental_models": bullets("MENTAL_MODELS"),
+        "pro_tip": pro_tip_lines[0] if pro_tip_lines else random.choice(EXPERT_TIPS),
+        "related_topics": related_topics,
+    }
+
+
 def has_coaching_setup(block, category_meta):
     """Whether there's any real coaching content for this task, or only the fully
     generic fallback would apply. A task's own rich metadata, a field-level

@@ -1382,7 +1382,7 @@ class LearningCoachPanel(Static):
                 return
             app.current_dsa_ref = None
             if not coaching.has_coaching_setup(active["block"], category_meta):
-                self.update(self._no_coaching_panel(active["block"]["text"], category_meta))
+                self._render_ai_coaching_mode(active["block"], category_meta)
                 return
             content = coaching.build_coaching_content(active["block"], category_meta)
             self.update(self._coach_panel(active["block"]["text"], content))
@@ -1440,13 +1440,52 @@ class LearningCoachPanel(Static):
         self.app.refresh_side_panels()
         self.app._prime_ai_context_if_needed()
 
-    def _generating_panel(self, task_text):
+    def _generating_panel(self, task_text, message="Generating your problem..."):
         body = Group(
             Text(task_text, style="bold bright_white", justify="center", no_wrap=True, overflow="ellipsis"),
             Text(""),
-            Text("Generating your problem...", style="dim italic", justify="center"),
+            Text(message, style="dim italic", justify="center"),
         )
         return Panel(body, title="Learning Coach", border_style="magenta", box=box.ROUNDED)
+
+    # -- AI-generated coaching content, fields with no setup (see coaching.build_ai_coaching_prompt) --
+
+    def _render_ai_coaching_mode(self, block, category_meta):
+        cached = block.get("ai_coaching")
+        if cached is None:
+            if id(block) not in self.app.coaching_generating:
+                self.app.coaching_generating.add(id(block))
+                label = (category_meta or {}).get("label", "this field")
+                threading.Thread(
+                    target=self._generate_coaching_worker, args=(block, label), daemon=True,
+                ).start()
+            self.update(self._generating_panel(block["text"], "Asking the AI to tailor coaching notes..."))
+            return
+        if cached is False:
+            # Generation failed or no AI backend is configured -- fall back to the plain
+            # static panel rather than getting stuck showing "Generating..." forever.
+            self.update(self._no_coaching_panel(block["text"], category_meta))
+            return
+        self.update(self._coach_panel(block["text"], cached, note="AI-tailored for this task"))
+
+    def _generate_coaching_worker(self, block, label):
+        prompt = coaching.build_ai_coaching_prompt(block["text"], label)
+        try:
+            answer, error = ai_ask.ask(prompt, timeout=60)
+        except Exception as e:
+            app_log.exception("AI coaching generation failed")
+            answer, error = None, str(e)
+        self.app.call_from_thread(self._store_generated_coaching, block, answer, error)
+
+    def _store_generated_coaching(self, block, answer, error):
+        self.app.coaching_generating.discard(id(block))
+        content = coaching.parse_ai_coaching_response(answer) if answer else None
+        has_enough = content and (content["focus_on"] or content["ask_yourself"])
+        if not has_enough:
+            app_log.info(f"AI coaching generation unusable: {error or 'empty/unparseable response'}")
+        block["ai_coaching"] = content if has_enough else False
+        tc.save_state(self.app.state)
+        self.app.refresh_side_panels()
 
     def _dsa_problem_panel(self, task_text, problem):
         rows = [
@@ -1487,8 +1526,10 @@ class LearningCoachPanel(Static):
         body = Group(
             Text(task_text, style="bold bright_white", justify="center", no_wrap=True, overflow="ellipsis"),
             Text(""),
-            Text(f"No coaching content set up for {label} yet.", style="dim italic", justify="center"),
-            Text("Add a topic_type or coaching_framework to this", style="dim italic", justify="center"),
+            Text(f"No coaching content set up for {label} yet,", style="dim italic", justify="center"),
+            Text("and the AI couldn't generate any either --", style="dim italic", justify="center"),
+            Text("check an AI backend is configured (press C),", style="dim italic", justify="center"),
+            Text("or add a topic_type/coaching_framework to this", style="dim italic", justify="center"),
             Text("field in goals.json to get guidance here.", style="dim italic", justify="center"),
         )
         return Panel(body, title="Learning Coach", border_style="magenta", box=box.ROUNDED)
@@ -1610,6 +1651,9 @@ class TodoApp(App):
         # doesn't fire a second redundant AI call before the first one returns.
         self.current_dsa_ref = None
         self.dsa_generating = set()
+        # Same in-flight bookkeeping as dsa_generating above, but for AI-generated Learning
+        # Coach content on fields with no static setup (see LearningCoachPanel._render_ai_coaching_mode).
+        self.coaching_generating = set()
         self._hint_prompt_open = False
         # AI-panel context priming (see coaching.build_focus_context_message /
         # _prime_ai_context_if_needed): the (date_key, category, idx) of the active task

@@ -3,10 +3,12 @@ the shell (handy for scripting or wiring into an AI assistant's tool-use, the wa
 original build wired into Claude Code's /todo skill)."""
 import argparse
 import datetime
+import getpass
 import json
 import os
 
 from . import config as appconfig
+from . import profiles as pf
 
 
 def cmd_init(args):
@@ -184,6 +186,225 @@ def cmd_snapshot_diff(args):
     print(json.dumps(snapshot, indent=2))
 
 
+class _AuthFailed(Exception):
+    pass
+
+
+def _resolve_profile(name):
+    """Matches a profile by slug or by display name (case-insensitive) -- so `mtdo
+    profile switch "DSA Track"` and `mtdo profile switch dsa_track` both work."""
+    name_l = name.strip().lower()
+    for p in pf.list_profiles():
+        if p["slug"] == name or p["slug"].lower() == name_l or p["name"].lower() == name_l:
+            return p
+    return None
+
+
+def _get_password_for(slug, name, action_desc, max_attempts=3):
+    """None if the profile isn't password-protected. Otherwise prompts (hidden input)
+    up to max_attempts times, raising _AuthFailed once exhausted -- never returns a
+    password that didn't check out, so callers can pass the result straight to
+    profiles.read_goals/write_goals without re-checking."""
+    profile = pf.get_profile(slug)
+    if not profile.get("protected"):
+        return None
+    for attempt in range(max_attempts):
+        password = getpass.getpass(f"Password for profile '{name}' ({action_desc}): ")
+        if pf.check_password(slug, password):
+            return password
+        remaining = max_attempts - attempt - 1
+        if remaining:
+            print(f"Wrong password. {remaining} attempt(s) left.")
+    raise _AuthFailed(f"Too many failed attempts for profile '{name}' -- not switching.")
+
+
+def cmd_profile_list(_args):
+    profiles = pf.list_profiles()
+    if not profiles:
+        print("No profiles yet. Run `mtdo profile create <name>` to make one.")
+        return
+    active = pf.get_active_slug()
+    print("\nProfiles:")
+    for p in profiles:
+        marker = "*" if p["slug"] == active else " "
+        lock = "  [password-protected]" if p.get("protected") else ""
+        print(f"  {marker} {p['name']}  ({p['slug']}){lock}")
+    print("\n(* = active)\n" if active else "")
+
+
+def cmd_profile_current(_args):
+    active = pf.get_active_slug()
+    if not active:
+        print(
+            "No active profile -- your ~/.mtdo/goals.json and state.json are unmanaged "
+            "(not tied to any profile). Run `mtdo profile create <name> --from-current` "
+            "to adopt them as your first profile."
+        )
+        return
+    profile = pf.get_profile(active)
+    lock = "  [password-protected]" if profile.get("protected") else ""
+    print(f"Active profile: {profile['name']} ({profile['slug']}){lock}")
+
+
+def cmd_profile_create(args):
+    password = None
+    if args.password:
+        password = getpass.getpass("New password for this profile: ")
+        confirm = getpass.getpass("Confirm password: ")
+        if password != confirm:
+            print("Passwords didn't match -- not created.")
+            return
+
+    was_first = not pf.list_profiles()
+    try:
+        slug = pf.create_profile(args.name, password=password)
+    except pf.ProfileError as e:
+        print(str(e))
+        return
+    print(f"Created profile '{args.name}' ({slug}).")
+
+    adopted = False
+    if args.from_current:
+        goals_exists = os.path.exists(appconfig.GOALS_PATH)
+        state_exists = os.path.exists(appconfig.STATE_PATH)
+        if goals_exists:
+            with open(appconfig.GOALS_PATH) as f:
+                pf.write_goals(slug, json.load(f), password)
+        if state_exists:
+            with open(appconfig.STATE_PATH) as f:
+                pf.write_state(slug, json.load(f), password)
+        adopted = goals_exists or state_exists
+        if adopted:
+            print(f"Copied your current ~/.mtdo/goals.json/state.json into '{args.name}'.")
+        else:
+            print("Nothing at ~/.mtdo/goals.json or state.json to adopt -- profile created empty.")
+
+    has_legacy_data = os.path.exists(appconfig.GOALS_PATH) or os.path.exists(appconfig.STATE_PATH)
+    if was_first and not args.from_current and has_legacy_data:
+        print(
+            f"Note: '{args.name}' is now marked active, but your existing ~/.mtdo/goals.json/"
+            "state.json were NOT copied into it (you didn't pass --from-current) -- it's "
+            "empty. Re-run with --from-current to adopt your existing data instead, or keep "
+            "running `mtdo` as normal to use it unmanaged."
+        )
+    elif was_first:
+        print(f"'{args.name}' is now the active profile -- run `mtdo` to start using it.")
+    elif adopted:
+        print(f"Run `mtdo profile switch {args.name}` to make it active.")
+    else:
+        print(f"Run `mtdo profile switch {args.name}` once you're ready to use it.")
+
+
+def cmd_profile_switch(args):
+    target = _resolve_profile(args.name)
+    if target is None:
+        print(f"No profile named '{args.name}'. Run `mtdo profile list` to see what exists.")
+        return
+
+    current_slug = pf.get_active_slug()
+    if current_slug == target["slug"]:
+        print(f"'{target['name']}' is already the active profile.")
+        return
+
+    # Save the currently active profile's live data back into its own storage first --
+    # otherwise anything done since the last switch would be silently lost when we
+    # overwrite ~/.mtdo/goals.json and state.json below.
+    if current_slug is not None:
+        current = pf.get_profile(current_slug)
+        try:
+            current_password = _get_password_for(
+                current_slug, current["name"], "saving its progress before switching away"
+            )
+        except _AuthFailed as e:
+            print(str(e))
+            return
+        if os.path.exists(appconfig.GOALS_PATH):
+            with open(appconfig.GOALS_PATH) as f:
+                pf.write_goals(current_slug, json.load(f), current_password)
+        if os.path.exists(appconfig.STATE_PATH):
+            with open(appconfig.STATE_PATH) as f:
+                pf.write_state(current_slug, json.load(f), current_password)
+    elif os.path.exists(appconfig.GOALS_PATH) or os.path.exists(appconfig.STATE_PATH):
+        print(
+            "You have an existing ~/.mtdo/goals.json/state.json that isn't tied to any "
+            f"profile. Switching now would overwrite it with '{target['name']}'s data and "
+            "lose it. Run `mtdo profile create <name> --from-current` first to adopt it, "
+            "then switch."
+        )
+        return
+
+    try:
+        target_password = _get_password_for(target["slug"], target["name"], "unlocking it")
+    except _AuthFailed as e:
+        print(str(e))
+        return
+
+    goals = pf.read_goals(target["slug"], target_password)
+    state = pf.read_state(target["slug"], target_password)
+
+    os.makedirs(appconfig.APP_DIR, exist_ok=True)
+    if goals is not None:
+        with open(appconfig.GOALS_PATH, "w") as f:
+            json.dump(goals, f, indent=2, sort_keys=False)
+    elif os.path.exists(appconfig.GOALS_PATH):
+        os.remove(appconfig.GOALS_PATH)
+    with open(appconfig.STATE_PATH, "w") as f:
+        json.dump(state, f, indent=2, sort_keys=False)
+
+    pf.set_active(target["slug"])
+    print(f"Switched to profile '{target['name']}'. Run `mtdo` to start.")
+
+
+def cmd_profile_delete(args):
+    target = _resolve_profile(args.name)
+    if target is None:
+        print(f"No profile named '{args.name}'.")
+        return
+    if pf.get_active_slug() == target["slug"] and not args.force:
+        print(
+            f"'{target['name']}' is the active profile -- switch to another one first, or "
+            "pass --force to delete it anyway (its live ~/.mtdo files are left as-is, just "
+            "orphaned from any profile)."
+        )
+        return
+    confirm = input(
+        f"Delete profile '{target['name']}' ({target['slug']}) and all its data? This "
+        "cannot be undone. Type the profile name to confirm: "
+    )
+    if confirm.strip() != target["name"]:
+        print("Names didn't match -- not deleting.")
+        return
+    pf.delete_profile(target["slug"])
+    print(f"Deleted profile '{target['name']}'.")
+
+
+def cmd_profile_import(args):
+    target = _resolve_profile(args.name)
+    if target is None:
+        print(f"No profile named '{args.name}'.")
+        return
+    try:
+        password = _get_password_for(target["slug"], target["name"], "importing into it")
+    except _AuthFailed as e:
+        print(str(e))
+        return
+    try:
+        goals = pf.import_goals_file(target["slug"], args.json_path, password)
+    except pf.ProfileError as e:
+        print(str(e))
+        return
+    print(f"Imported {args.json_path} into profile '{target['name']}'.")
+    if pf.get_active_slug() == target["slug"]:
+        with open(appconfig.GOALS_PATH, "w") as f:
+            json.dump(goals, f, indent=2, sort_keys=False)
+        print("This is the active profile -- ~/.mtdo/goals.json was updated too.")
+
+
+def cmd_profile_help(args):
+    print("Usage: mtdo profile <list|current|create|switch|delete|import> ...")
+    print("Run `mtdo profile <subcommand> --help` for details.")
+
+
 def main():
     parser = argparse.ArgumentParser(prog="mtdo", description="A config-driven terminal task/focus/career board.")
     sub = parser.add_subparsers(dest="command")
@@ -215,6 +436,39 @@ def main():
     p_snapshot_diff = sub.add_parser("snapshot-diff", help="View a snapshot or diff with current goals")
     p_snapshot_diff.add_argument("snapshot", nargs="?", default=None, help="Snapshot number (from `mtdo snapshots`)")
     p_snapshot_diff.set_defaults(func=cmd_snapshot_diff)
+
+    p_profile = sub.add_parser("profile", help="Manage named profiles (separate goals/state/streaks per track)")
+    p_profile.set_defaults(func=cmd_profile_help)
+    profile_sub = p_profile.add_subparsers(dest="profile_command")
+
+    p_profile_list = profile_sub.add_parser("list", help="List all profiles")
+    p_profile_list.set_defaults(func=cmd_profile_list)
+
+    p_profile_current = profile_sub.add_parser("current", help="Show the active profile")
+    p_profile_current.set_defaults(func=cmd_profile_current)
+
+    p_profile_create = profile_sub.add_parser("create", help="Create a new profile")
+    p_profile_create.add_argument("name")
+    p_profile_create.add_argument("--password", action="store_true", help="Encrypt this profile's data at rest")
+    p_profile_create.add_argument(
+        "--from-current", action="store_true",
+        help="Seed it from your current ~/.mtdo/goals.json and state.json",
+    )
+    p_profile_create.set_defaults(func=cmd_profile_create)
+
+    p_profile_switch = profile_sub.add_parser("switch", help="Make a profile active (syncs it into ~/.mtdo)")
+    p_profile_switch.add_argument("name")
+    p_profile_switch.set_defaults(func=cmd_profile_switch)
+
+    p_profile_delete = profile_sub.add_parser("delete", help="Permanently delete a profile")
+    p_profile_delete.add_argument("name")
+    p_profile_delete.add_argument("--force", action="store_true", help="Allow deleting the active profile")
+    p_profile_delete.set_defaults(func=cmd_profile_delete)
+
+    p_profile_import = profile_sub.add_parser("import", help="Import a goals JSON file into an existing profile")
+    p_profile_import.add_argument("name")
+    p_profile_import.add_argument("json_path")
+    p_profile_import.set_defaults(func=cmd_profile_import)
 
     args = parser.parse_args()
     if args.command is None:
