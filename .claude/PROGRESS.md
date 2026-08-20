@@ -5,9 +5,33 @@ See `~/.claude/agents/mtdo-dev.md` for the full project onboarding/architecture 
 
 ---
 
-## 2026-08-20
+## 2026-08-20 (update -- live-tested the AI coaching panel)
 
-**Did:**
+Committed and pushed the 2026-08-20 changes below (commit `ab35750`, already synced with
+origin/main). Then did what the prior entry flagged as untested: live-verified the
+AI-coaching-generation panel.
+
+**How:** Real `claude -p` via a real tmux pty against a scratch `HOME`/goals.json (a bare
+"gym" fixed_labels category, no topic_type/coaching_framework) confirmed the actual
+failure path end-to-end -- trigger fired automatically on the in_progress gym task,
+background thread ran, `claude -p` was actually invoked, its error ("Not logged in" --
+an artifact of overriding `$HOME`, which also breaks the `claude` CLI's own credential
+lookup, not an app bug) was caught, logged to `~/.mtdo/error.log`, cached as
+`ai_coaching: false`, and the static fallback panel rendered correctly with the updated
+"AI couldn't generate any either" copy. Then used Textual's `App.run_test()` headless
+harness (same real `TodoApp`, same real background-thread/`call_from_thread` path, just
+`ai_ask.ask` monkeypatched to a canned response instead of needing live external auth) to
+verify the success path: transient "Asking the AI to tailor coaching notes..." panel while
+in flight, `ai_ask.ask` called exactly once, response parsed correctly by
+`parse_ai_coaching_response`, cached onto `block["ai_coaching"]`, panel re-rendered with
+"AI-tailored for this task" and all six sections populated, and a second
+`refresh_side_panels()` call confirmed the cache is respected (no duplicate AI call).
+
+**Verdict: working as expected**, all three states (generating / success / failure)
+confirmed in a real running app, not just unit tests. Real `~/.mtdo` was never touched --
+scratch `HOME` throughout, cleaned up after.
+
+**Did (original entry, 2026-08-20):**
 - **Learning Coach AI customization** (`coaching.py`, `app.py`): fields with no static
   coaching setup (no `topic_type`/`coaching_framework` -- e.g. Gym, Job Applications) now
   get AI-generated coaching content (Focus On / Ask Yourself / Interview Check / Mistakes
@@ -40,19 +64,12 @@ password-protected create+switch, wrong-password retry-then-fail, `--from-curren
 adoption, active-profile delete guard, confirmation-name mismatch) exercised end-to-end
 against a scratch `HOME`, never the real `~/.mtdo`. `coaching.parse_ai_coaching_response`
 unit-tested against a realistic sample response. All touched files pass
-`python3 -m py_compile`. **Not yet tested:** the AI-coaching-generation path live inside
-the running Textual app (no UI smoke test done -- only the parser and static wiring were
-verified).
+`python3 -m py_compile`. AI-coaching-generation path now live-tested too -- see the
+update entry above.
 
-**Not committed yet** as of writing this entry -- `git status` shows `app.py`, `cli.py`,
-`coaching.py` modified, nothing staged/pushed. Per standing habit, commit+push+pull should
-happen before this session ends (see mtdo-dev.md's Git workflow section).
+**Committed and pushed** -- commit `ab35750`, confirmed in sync with origin/main.
 
 **Next / open items:**
-- Commit and push today's changes (see above).
-- Live-verify the AI coaching generation panel in a real Focus Mode session (e.g. via
-  tmux, per the gotchas doc) -- background-thread wiring was code-reviewed and unit-tested
-  but not run inside the actual TUI.
 - If ever wanted later (not requested yet): a TUI-side profile switcher, and/or extending
   AI customization to make DSA/backend/etc. content task-specific instead of shared
   generic buckets (both were explicitly deferred by the user on 2026-08-20).
