@@ -38,6 +38,17 @@ from rich import box
 _COLOR_PALETTE = ["magenta", "blue", "orange3", "green", "red3", "purple", "grey70",
                   "cyan", "gold3", "deep_pink3", "turquoise2", "dark_orange3"]
 
+# Sandbox-only named-instance mode (see sandbox_entry.py) -- always unset/False for the
+# real `mtdo` command, which never sets these env vars, so this is completely inert there.
+# When set, action_quit shows a save/discard/cancel prompt instead of exiting immediately,
+# and MTDO_INSTANCE_SCRATCH is the live scratch copy that gets promoted into
+# ~/.mtdo-sandbox/instances/<slug> (save) or thrown away (discard).
+SANDBOX_INSTANCE_MODE = os.environ.get("MTDO_INSTANCE_MODE") == "1"
+_INSTANCE_SLUG = os.environ.get("MTDO_INSTANCE_SLUG") or None
+_INSTANCE_NAME = os.environ.get("MTDO_INSTANCE_NAME", "")
+_INSTANCE_DESCRIPTION = os.environ.get("MTDO_INSTANCE_DESCRIPTION", "")
+_INSTANCE_SCRATCH = os.environ.get("MTDO_INSTANCE_SCRATCH")
+
 
 def _build_category_colors():
     """Auto-assigns a color per category from a fixed palette, by CATEGORY_ORDER position
@@ -121,6 +132,67 @@ class TextPromptScreen(ModalScreen):
 
     def on_input_submitted(self, event: Input.Submitted):
         self.dismiss(event.value)
+
+    def on_key(self, event):
+        if event.key == "escape":
+            self.dismiss(None)
+
+
+class SaveInstanceScreen(ModalScreen):
+    """Sandbox-only: shown by TodoApp.action_quit instead of exiting immediately when
+    SANDBOX_INSTANCE_MODE is set. A brand-new (never-saved) instance asks for a
+    name+description before it can be saved; a re-entered one just confirms saving over
+    the existing name. Dismisses with ("save", name, description), ("discard", None, None),
+    or None on Cancel/Escape (stays in the app -- nothing is touched)."""
+
+    CSS = """
+    SaveInstanceScreen { align: center middle; }
+    #save-box { width: 66; height: auto; border: round magenta; padding: 1 2; background: $panel; }
+    #save-box Input { margin-bottom: 1; }
+    #save-buttons { height: 3; align: center middle; }
+    #save-buttons Button { margin: 0 1; }
+    """
+
+    def __init__(self, is_new, existing_name="", existing_description=""):
+        super().__init__()
+        self.is_new = is_new
+        self.existing_name = existing_name
+        self.existing_description = existing_description
+
+    def compose(self) -> ComposeResult:
+        with Center():
+            with Middle():
+                with Vertical(id="save-box"):
+                    if self.is_new:
+                        yield Static("Save this test instance?")
+                        yield Input(placeholder="Name", id="save-name")
+                        yield Input(placeholder="Description (optional)", id="save-desc")
+                    else:
+                        yield Static(f'Save changes to "{self.existing_name}"?')
+                    with Horizontal(id="save-buttons"):
+                        yield Button("Save", id="save-yes", variant="primary")
+                        yield Button("Discard", id="save-discard")
+                        yield Button("Cancel", id="save-cancel")
+
+    def on_mount(self):
+        if self.is_new:
+            self.query_one("#save-name", Input).focus()
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "save-yes":
+            if self.is_new:
+                name = self.query_one("#save-name", Input).value.strip()
+                if not name:
+                    self.query_one("#save-name", Input).focus()
+                    return
+                desc = self.query_one("#save-desc", Input).value.strip()
+                self.dismiss(("save", name, desc))
+            else:
+                self.dismiss(("save", self.existing_name, self.existing_description))
+        elif event.button.id == "save-discard":
+            self.dismiss(("discard", None, None))
+        else:
+            self.dismiss(None)
 
     def on_key(self, event):
         if event.key == "escape":
@@ -2103,11 +2175,38 @@ class TodoApp(App):
             self.toast(f"Claude Code panel hit an error -- see {LOG_PATH}", style="bold red")
 
     def action_quit(self):
+        if SANDBOX_INSTANCE_MODE:
+            self.push_screen(
+                SaveInstanceScreen(
+                    is_new=(_INSTANCE_SLUG is None),
+                    existing_name=_INSTANCE_NAME,
+                    existing_description=_INSTANCE_DESCRIPTION,
+                ),
+                self._on_save_instance_choice,
+            )
+            return
+        self._stop_claude_and_exit()
+
+    def _stop_claude_and_exit(self):
         try:
             self.claude_panel.stop()
         except Exception:
             app_log.exception("failed to stop claude panel on quit")
         self.exit()
+
+    def _on_save_instance_choice(self, result):
+        if result is None:
+            return  # cancelled -- stay in the app, nothing touched
+        action, name, description = result
+        from . import instance_store
+        try:
+            if action == "save":
+                instance_store.save_scratch(_INSTANCE_SCRATCH, slug=_INSTANCE_SLUG, name=name, description=description)
+            else:
+                instance_store.discard_scratch(_INSTANCE_SCRATCH)
+        except Exception:
+            app_log.exception("failed to finalize sandbox instance on quit")
+        self._stop_claude_and_exit()
 
     def _handle_exception(self, error: Exception) -> None:
         """Overrides Textual's private hook so any uncaught crash -- not just ones in

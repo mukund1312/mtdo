@@ -5,6 +5,63 @@ See `~/.claude/agents/mtdo-dev.md` for the full project onboarding/architecture 
 
 ---
 
+## 2026-08-21 -- named, disposable `mtdo-sandbox` instances (save/discard on quit)
+
+User wanted more than a single fixed sandbox: the ability to create any number of fresh,
+throwaway test sessions, name+describe the ones worth keeping, and re-enter them later --
+with an explicit choice to save or discard whenever a session ends.
+
+**Did:**
+- **`instance_store.py`** (new): storage layer independent of `MTDO_HOME`/`config.APP_DIR`
+  (those now point at a *scratch* copy during a session, not the sandbox root). Layout:
+  `~/.mtdo-sandbox/instances/<slug>/` (saved instance data) + `<slug>.meta.json`
+  (name/description/created_at/updated_at) sitting next to it, and
+  `~/.mtdo-sandbox/.scratch/<tmp>/` (the live working copy for a session that hasn't been
+  saved/discarded yet). `save_scratch()` promotes scratch -> instances/<slug> and always
+  deletes scratch after; `discard_scratch()` just deletes it; `autosave_scratch()` is the
+  fallback used when there was no chance to ask (see below).
+- **`sandbox_entry.py`** rewritten: bare `mtdo-sandbox` (no args) now shows a small Textual
+  picker app (`+ New instance` plus each saved instance with its name/description/last-used)
+  *before* the real app even starts, then points `MTDO_HOME` at a scratch copy (fresh, or a
+  copy of the chosen saved instance) and hands off to `cli.main()`. `mtdo-sandbox <subcommand>
+  ...` (reset, profile, status, ...) is unchanged -- bypasses the picker entirely and runs
+  straight against the flat `~/.mtdo-sandbox` root, exactly as before this feature existed
+  (`reset` now naturally wipes `instances/`/`.scratch/` too, since they live under that same
+  root -- no cli.py changes needed).
+- **`app.py`**: `SANDBOX_INSTANCE_MODE` (env-var gated, always False for real `mtdo`) makes
+  `action_quit` push a new `SaveInstanceScreen` modal instead of exiting directly -- Save
+  (prompts for name+description if this was a brand-new instance, otherwise just confirms
+  the existing name), Discard (deletes the scratch copy, saved instance if any is untouched),
+  or Cancel (dismisses the modal, stays in the running app, nothing touched).
+- **Abrupt-termination safety net**: if the terminal closes (SIGHUP) or the process is
+  killed (SIGTERM) before the quit prompt can ever show, `sandbox_entry.py` autosaves the
+  scratch copy silently instead of losing it -- an existing instance keeps its name, a
+  never-named one gets `"Unsaved session <timestamp>"`. Uses `os._exit(0)` after the
+  autosave (not `sys.exit`) since a signal handler firing mid-await inside Textual's asyncio
+  loop unwinds messily through `sys.exit`/SystemExit otherwise (harmless but noisy
+  traceback -- fixed after first observing it live).
+
+**Tested (real tmux pty, not just code review):** picker renders and lists saved instances
+correctly; "+ New instance" launches a real fresh onboarding flow; quitting a new instance
+shows the name+description modal, saves it, and `instances/<slug>/` + its `.meta.json` land
+correctly; re-entering that saved instance resumes the exact same board state; quitting an
+existing instance shows the confirm-only modal; Cancel returns to the running app (process
+stays alive, verified via `ps`); Discard exits cleanly, deletes the scratch dir, and leaves
+the saved instance's `.meta.json` byte-identical (md5-verified); a real `kill -TERM` mid-session
+autosaved an unnamed new instance under an auto-generated name and left no scratch dir behind,
+both before and after the `os._exit` fix (traceback gone the second time). `mtdo-sandbox reset`
+still wipes the whole tree and declines on anything but typing `reset`. Real `~/.mtdo`
+`goals.json`/`state.json` mtimes confirmed untouched throughout (checked before and after).
+One caught-and-fixed bug along the way: `color: grey58` isn't a valid Textual color name
+(crashed on launch) -- changed to `grey`.
+
+**Next / open items:**
+- None outstanding. If ever wanted: renaming/deleting a saved instance from the picker
+  itself (currently only possible by hand-editing/deleting under `~/.mtdo-sandbox/instances/`),
+  or an instance-scoped `profile` command (not requested).
+
+---
+
 ## 2026-08-20 (update -- separate `mtdo-sandbox` command for testing, isolated from real data)
 
 User asked for a genuine dev/test instance of the app, separate from the real one --
