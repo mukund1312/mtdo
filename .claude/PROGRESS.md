@@ -5,6 +5,52 @@ See `~/.claude/agents/mtdo-dev.md` for the full project onboarding/architecture 
 
 ---
 
+## 2026-08-22 -- per-instance bug log (`B` to capture, `mtdo-sandbox bugs` to review)
+
+User wanted a way to note bugs the moment they're found while testing in `mtdo-sandbox`,
+without breaking flow, that travels with the instance and gives Claude Code a clear
+pending/fixed worklist to act on later.
+
+**Did:**
+- **`bug_log.py`** (new): `bugs.json` stored via the same `appconfig.APP_DIR` pattern as
+  every other data file (goals.json, state.json, ...) -- means it automatically rides
+  along whenever `instance_store.py` copies or deletes an instance's directory, no
+  special-casing needed. `add_bug(text)` appends `{id, text, status: "pending", found_at,
+  fixed_at, fix_note}`; `mark_fixed(id, fix_note)` is what a later Claude Code session
+  calls after actually fixing something.
+- **`app.py`**: `B` is bound to `action_report_bug` (pushes the existing `TextPromptScreen`
+  for a quick one-line description, toasts "Bug #N logged -- keep testing" on save) --
+  but only added to `BINDINGS` at all when `SANDBOX_INSTANCE_MODE` is on, so it doesn't
+  show up or do anything under real `mtdo` (this is a UAT/dev-only tool, not a real-data
+  feature).
+- **`mtdo-sandbox bugs <slug>`**: prints a saved instance's bug list (pending vs fixed,
+  with fix notes) without needing to relaunch the TUI -- `mtdo-sandbox bugs` with no slug
+  lists saved instances as a reminder of valid names.
+
+**Bug found and fixed during this work (real, not hypothetical):** the `bugs` subcommand
+initially imported `bug_log` (which derives `BUGS_PATH` from `config.APP_DIR` at import
+time) *before* setting `MTDO_HOME` to the target instance's dir -- same "must set env var
+before first import" rule documented elsewhere in this file, just missed here. Result: it
+silently read/wrote the wrong path and always reported "No bugs logged" even when
+bugs.json had real entries. Fixed by moving the `bug_log` import to after the `MTDO_HOME`
+assignment; re-verified against a real saved instance with two logged bugs.
+
+**Tested (real tmux pty + real CLI invocation):** captured two bugs live via `B` while
+testing a fresh instance, confirmed the toast and the log's actual content; saved the
+instance and confirmed `bugs.json` was included alongside the usual files; ran
+`mtdo-sandbox bugs <slug>` and saw both entries; called `bug_log.mark_fixed()` directly
+(simulating what a fix-it session would do) and confirmed the CLI viewer reflected the
+fixed status and fix note correctly. Real `~/.mtdo` mtimes confirmed untouched.
+
+**Next / open items:**
+- None outstanding. When the user asks to "fix the bugs in <instance>": read
+  `~/.mtdo-sandbox/instances/<slug>/bugs.json` (or run `mtdo-sandbox bugs <slug>`), fix
+  each pending issue in the source, then call `bug_log.mark_fixed(id, "what was done")`
+  with `MTDO_HOME` set to that instance's dir (see the one-liner used to verify this
+  above) -- don't hand-edit bugs.json's JSON directly, the module handles the schema.
+
+---
+
 ## 2026-08-21 -- named, disposable `mtdo-sandbox` instances (save/discard on quit)
 
 User wanted more than a single fixed sandbox: the ability to create any number of fresh,

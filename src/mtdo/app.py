@@ -20,6 +20,7 @@ from . import ai_backend
 from . import ai_ask
 from . import music
 from . import plan_wizard
+from . import bug_log
 from .claude_panel import ClaudePanel
 from .practice_lab_panel import PracticeLabPanel
 from .errorlog import LOG_PATH, log as app_log
@@ -1705,7 +1706,7 @@ class TodoApp(App):
         ("g", "plan_wizard", "Setup Plan"),
         ("S", "save_ai_transcript", "Save AI Transcript"),
         ("T", "toggle_practice_terminal", "Practice Lab"),
-    ]
+    ] + ([("B", "report_bug", "Report Bug")] if SANDBOX_INSTANCE_MODE else [])
 
     def __init__(self):
         super().__init__()
@@ -2173,6 +2174,17 @@ class TodoApp(App):
         except Exception:
             app_log.exception("action_toggle_claude failed")
             self.toast(f"Claude Code panel hit an error -- see {LOG_PATH}", style="bold red")
+
+    def action_report_bug(self):
+        """Sandbox-only (see the SANDBOX_INSTANCE_MODE-gated BINDINGS entry above): quick-
+        capture a bug without breaking your testing flow -- keep going, and it's still
+        there in bugs.json (saved as part of the instance) for a later Claude Code session
+        to fix and mark off."""
+        def on_result(text):
+            if text and text.strip():
+                bug_id = bug_log.add_bug(text.strip())
+                self.toast(f"Bug #{bug_id} logged -- keep testing", style="bold yellow")
+        self.push_screen(TextPromptScreen("Describe the bug you just found"), on_result)
 
     def action_quit(self):
         if SANDBOX_INSTANCE_MODE:

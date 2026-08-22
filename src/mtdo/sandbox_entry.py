@@ -12,6 +12,11 @@ SIGTERM handler below autosaves the scratch copy instead of silently losing it.
 picker entirely and runs directly against the flat sandbox root (~/.mtdo-sandbox), exactly
 as before instances existed -- those commands aren't instance-scoped.
 
+`mtdo-sandbox bugs <slug>` prints the bug log for a saved instance (see bug_log.py) --
+bugs are captured in-app with 'B' while SANDBOX_INSTANCE_MODE is on, and saved/discarded
+along with the rest of that instance's data since bugs.json just lives alongside
+goals.json/state.json.
+
 Sets MTDO_HOME before importing anything else from the package -- every module's
 ~/.mtdo-rooted path constants (config.APP_DIR and everything built from it) are computed
 once, at first import, so setting the env var later would be too late.
@@ -125,8 +130,43 @@ def _run_interactive():
     real_main()
 
 
+def _print_bugs(args):
+    from . import instance_store
+
+    if not args:
+        print("Usage: mtdo-sandbox bugs <instance-slug>")
+        instances = instance_store.list_instances()
+        if instances:
+            print("Saved instances:")
+            for inst in instances:
+                print(f"  {inst['slug']}  ({inst['name']})")
+        return
+
+    slug = args[0]
+    data_dir = os.path.join(instance_store.INSTANCES_DIR, slug)
+    if not os.path.isdir(data_dir):
+        print(f"No saved instance '{slug}' -- see `mtdo-sandbox bugs` for the list.")
+        return
+    # MTDO_HOME must be set *before* bug_log (which derives its path from config.APP_DIR
+    # at import time) is ever imported -- same rule as everywhere else in this file.
+    os.environ["MTDO_HOME"] = data_dir
+    from . import bug_log
+    bugs = bug_log.list_bugs()
+    if not bugs:
+        print(f"No bugs logged for '{slug}'.")
+        return
+    for b in bugs:
+        marker = "x" if b["status"] == "fixed" else "-"
+        print(f"[{marker}] #{b['id']} ({b['status']}) {b['text']}  -- found {b['found_at']}")
+        if b["status"] == "fixed" and b.get("fix_note"):
+            print(f"      fix: {b['fix_note']}")
+
+
 def main():
     if len(sys.argv) > 1:
+        if sys.argv[1] == "bugs":
+            _print_bugs(sys.argv[2:])
+            return
         os.environ.setdefault("MTDO_HOME", _SANDBOX_ROOT)
         from .cli import main as real_main
         real_main()
