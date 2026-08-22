@@ -24,6 +24,7 @@ PERSONAS = [
     ("college", "College student"),
     ("exam", "Studying for an exam or certification"),
     ("job_switch", "Preparing for a job switch"),
+    ("just_exploring", "Just exploring the app"),
 ]
 
 # Asked to everyone first -- the "Universal Question Set" underneath every good plan
@@ -69,6 +70,12 @@ PERSONA_QUESTIONS = {
 
 
 def questions_for(persona):
+    # "Just exploring" isn't a real plan-building path -- none of the goal/deadline/
+    # bottleneck questions make sense if there's no plan being built, so it skips the
+    # whole Q&A rather than getting an empty PERSONA_QUESTIONS entry that would still
+    # ask all of CORE_QUESTIONS for no reason.
+    if persona == "just_exploring":
+        return []
     return CORE_QUESTIONS + PERSONA_QUESTIONS[persona]
 
 

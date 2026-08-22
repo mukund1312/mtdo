@@ -1644,7 +1644,9 @@ class ClockHeader(Static):
     def update_clock(self):
         now = datetime.datetime.now().strftime("%I:%M:%S %p")
         today = tc.get_today()
-        self.update(Text(f" {tc.APP_NAME}    {tc.DAY_NAMES[today.weekday()]}, {today.strftime('%b %d, %Y')}    {now} ",
+        name = appconfig.get_user_name()
+        title = f"{tc.APP_NAME} · {name}" if name else tc.APP_NAME
+        self.update(Text(f" {title}    {tc.DAY_NAMES[today.weekday()]}, {today.strftime('%b %d, %Y')}    {now} ",
                           style="bold white on rgb(40,20,60)", justify="center"))
 
 
@@ -2243,6 +2245,13 @@ class TodoApp(App):
     def action_plan_wizard(self):
         def on_persona(persona):
             if persona is None:
+                return
+            if persona == "just_exploring":
+                # Only meaningful at first-run (see cli._run_first_run_wizard, where
+                # picking this loads the demo config before the app even starts) -- if
+                # you're already running the app and press g, there's nothing to load
+                # over your existing state.
+                self.toast("Nothing to set up for that -- pick a real option here anytime to build a plan.", style="dim")
                 return
             questions = list(plan_wizard.questions_for(persona))
             self._ask_plan_wizard_questions(questions, {"persona": persona}, persona)

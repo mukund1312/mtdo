@@ -10,6 +10,7 @@ import shutil
 import sys
 
 from . import config as appconfig
+from . import plan_wizard
 from . import profiles as pf
 
 # Whichever of the two installed commands actually launched this process ("mtdo" or
@@ -49,6 +50,60 @@ def cmd_import(args):
     print(f"\nConfig written to {appconfig.CONFIG_PATH}. Your tracked progress in state.json was not touched.")
 
 
+def _run_first_run_wizard():
+    """One-time, CLI-level setup for a genuinely first run (no goals.json, no config.yaml
+    at all yet) -- asks name + what you're using mtdo for, before the app itself starts.
+
+    Deliberately plain input() prompts, not a Textual screen: this needs to decide which
+    config to write BEFORE cmd_run hands one to TodoApp, and TodoApp's board layout is
+    built once at construction time from whatever config existed at that point -- doing
+    this as an in-app screen afterward would mean hot-reloading a running app's whole
+    category structure for something that only ever happens once, which nothing in this
+    codebase does today outside of goals.json's own change-polling. The existing in-app
+    wizard (g -- PersonaPickScreen et al in app.py) stays for re-running this kind of
+    setup later; this is specifically the automatic, unavoidable first-launch version.
+
+    Previously this path just silently wrote the demo config -- fixed after a user
+    complaint that a fresh install should never start pre-populated with someone else's
+    example fields, only ever loading the demo as an explicit choice ("just exploring").
+    """
+    print(f"Welcome to {_PROG} -- let's get you set up.\n")
+    name = input("What should we call you? ").strip()
+    if name:
+        appconfig.set_user_name(name)
+
+    print("\nWhat are you planning to use this for?")
+    for i, (_key, label) in enumerate(plan_wizard.PERSONAS, start=1):
+        print(f"  {i}. {label}")
+    choice = None
+    while choice is None:
+        raw = input(f"Pick 1-{len(plan_wizard.PERSONAS)}: ").strip()
+        if raw.isdigit() and 1 <= int(raw) <= len(plan_wizard.PERSONAS):
+            choice = int(raw) - 1
+        else:
+            print(f"Enter a number from 1 to {len(plan_wizard.PERSONAS)}.")
+    persona = plan_wizard.PERSONAS[choice][0]
+
+    if persona == "just_exploring":
+        appconfig.init_config(fresh=False)
+        print(f"\nLoaded a demo plan so you can look around.")
+        print(f"Run `{_PROG} init --fresh --force` any time to start over empty, or press "
+              f"g inside the app to build a real plan later.\n")
+        return
+
+    appconfig.init_config(fresh=True)
+    print()
+    answers = {"persona": persona}
+    for key, prompt_text in plan_wizard.questions_for(persona):
+        answers[key] = input(f"{prompt_text}\n> ").strip()
+    prompt = plan_wizard.build_prompt(persona, answers)
+    path, copied = plan_wizard.save_and_copy(prompt)
+    print(f"\nSaved your plan-setup prompt to {path}" + (" and copied it to your clipboard." if copied else "."))
+    print("Paste it into whichever AI you use day to day (or press C inside the app for the built-in AI panel).")
+    print(f"Once it hands you back a goals.json, run: {_PROG} import <path-to-that-file>")
+    print("Starting with an empty board for now -- it'll fill in once you import.\n")
+
+
 def cmd_run(_args):
     # Try to load goals.json first (Option A: JSON-driven mode)
     try:
@@ -57,10 +112,7 @@ def cmd_run(_args):
     except FileNotFoundError:
         # Fallback: use config.yaml or demo if neither exists
         if not appconfig.config_exists():
-            print("First time here -- setting you up with a demo config so you can see it working.")
-            appconfig.init_config(fresh=False)
-            print(f"Created {appconfig.CONFIG_PATH} (a real example plan).")
-            print("Edit that file anytime to make it yours, or run `mtdo init --fresh` to start over empty.\n")
+            _run_first_run_wizard()
         cfg = appconfig.load_config()
 
     from . import app as todo_app
