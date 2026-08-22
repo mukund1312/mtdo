@@ -20,6 +20,15 @@ the private mukund1312/mtdo-bugs repo (see bug_sync.py) so they're visible/track
 any machine with `gh auth login` done; `mtdo-sandbox bugs board` prints the found/fixed
 scoreboard across everything synced there.
 
+`mtdo-sandbox working-on "..."` posts a one-line status for whoever's `gh` identity is
+running it (see status_sync.py) -- named "working-on", not "status", because `mtdo status`
+is already a real subcommand (prints today's board) and would otherwise be shadowed.
+`mtdo-sandbox dashboard` (see dashboard.py) renders both people's status + the full bug
+scoreboard as a static HTML snapshot for a Claude Code session to publish/update as a
+shared Artifact -- it can't be a live-updating page itself (the Artifact sandbox blocks a
+published page from ever calling GitHub's API directly), so "refresh" means regenerating
+and republishing, not something that happens automatically.
+
 Sets MTDO_HOME before importing anything else from the package -- every module's
 ~/.mtdo-rooted path constants (config.APP_DIR and everything built from it) are computed
 once, at first import, so setting the env var later would be too late.
@@ -188,10 +197,32 @@ def _bugs_command(args):
             print(f"      fix: {b['fix_note']}")
 
 
+def _working_on_command(args):
+    from . import status_sync
+    if not args:
+        print("Usage: mtdo-sandbox working-on \"what you're working on\"")
+        return
+    who = status_sync.set_status(" ".join(args))
+    print(f"Status updated for {who}.")
+
+
+def _dashboard_command():
+    from . import dashboard
+    path = dashboard.generate()
+    print(f"Dashboard written to {path}")
+    print("Ask this Claude Code session to publish/update it as a shared Artifact.")
+
+
 def main():
     if len(sys.argv) > 1:
         if sys.argv[1] == "bugs":
             _bugs_command(sys.argv[2:])
+            return
+        if sys.argv[1] == "working-on":
+            _working_on_command(sys.argv[2:])
+            return
+        if sys.argv[1] == "dashboard":
+            _dashboard_command()
             return
         os.environ.setdefault("MTDO_HOME", _SANDBOX_ROOT)
         from .cli import main as real_main

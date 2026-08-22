@@ -5,6 +5,70 @@ See `~/.claude/agents/mtdo-dev.md` for the full project onboarding/architecture 
 
 ---
 
+## 2026-08-22 (update 2) -- shared dashboard: status lines + bug board as an Artifact
+
+Added the last two pieces from the plan: a "what am I working on" status line per person,
+and a visual dashboard combining that with the bug scoreboard, published somewhere both
+Mukund and Janhvi can open. Also onboarded Janhvi as a real second collaborator this
+session: invited to both `mukund1312/mtdo-bugs` (bug tracker) and `mukund1312/mtdo` (code,
+after she'd initially set up a fork -- added as a direct collaborator instead so
+`git push origin main` from her machine goes to the real repo, matching the existing
+single-repo workflow rather than switching to fork+PR).
+
+**Did:**
+- **`status_sync.py`** (new): `set_status(text)` / `get_all_status()`, storing one
+  `status.json` in the private `mukund1312/mtdo-bugs` repo via the GitHub Contents API
+  (`gh api ... -X PUT`, base64-encoded content, tracking the file's `sha` so updates don't
+  clobber each other) -- no local clone of mtdo-bugs needed, it's issues+this one small
+  file, not a codebase. Keyed by whoever's `gh` identity ran the command
+  (`bug_sync.whoami()`), not a manually-typed name.
+- **`mtdo-sandbox working-on "..."`** -- deliberately *not* named `status`: `mtdo status`
+  is already a real subcommand (prints today's board) and `mtdo-sandbox status` would have
+  silently shadowed it. Caught this before shipping it, not after.
+- **Real "fixed by" attribution, not guessed:** `gh issue list --json` has no `closedBy`
+  field (confirmed by actually calling it and reading the error's field list, not assumed).
+  Fixed via `bug_sync.mark_fixed_and_close`: now runs `gh issue edit --add-assignee <closer>`
+  right before closing, so a closed issue's `assignees[0]` is real, queryable attribution.
+  "Found by" attribution was already free -- `issue.author.login`, since each person
+  authenticates `gh` as themselves.
+- **`dashboard.py`** (new) + **`mtdo-sandbox dashboard`**: pulls `bug_sync.list_all()` +
+  `status_sync.get_all_status()`, tallies found/fixed per person, and renders a static
+  HTML page (design: extends the existing docs/index.html brand -- same dark terminal
+  palette/IBM Plex Mono, paired with IBM Plex Sans for headings -- as a real dashboard
+  layout instead of the fake-terminal gimmick, since this one is scanned/operated, not
+  read) to `~/.mtdo-sandbox/dashboard.html`.
+- **Published as a Claude Artifact**, not a live-fetching page: the Artifact CSP blocks a
+  published page from ever calling GitHub's API itself, and embedding a token in a
+  shareable link would leak private-repo access to anyone holding the URL -- confirmed
+  this was a hard constraint (loaded the artifact-capabilities skill) before designing
+  around it, rather than promising a live dashboard and failing to deliver one. Refreshing
+  means: run `mtdo-sandbox dashboard` again, then republish the same file path/URL from a
+  Claude Code session -- documented on the page itself, not just here.
+
+**Tested (real, against the real tracker repo):** posted a real status via `working-on`,
+confirmed `status.json` landed correctly in `mukund1312/mtdo-bugs` via the Contents API;
+ran a full bug through `add_bug` -> `sync_pending` -> `mark_fixed_and_close` and confirmed
+on GitHub that the closed issue actually got assigned to `mukund1312` (attribution
+verified, not assumed); generated the dashboard and confirmed the rendered numbers matched
+(3 found / 3 fixed / 0 open across 3 test issues, with the per-person tally correctly
+showing only 1 of those 3 as "fixed by mukund1312" since the other 2 were closed by an
+earlier test run before assignee-tracking existed -- exactly the expected result, not a
+bug). Deleted the 3 fabricated test issues afterward so the tracker starts clean; kept the
+real status line since it was accurate. Published to
+`https://claude.ai/code/artifact/fc424e3e-1eb0-4c81-b025-7c35b893f89e` (private -- user
+needs to share it with Janhvi via the page's share menu, not something this session should
+do unilaterally). Real `~/.mtdo` mtimes confirmed untouched throughout.
+
+**Next / open items:**
+- User needs to share the dashboard Artifact URL with Janhvi.
+- To refresh the dashboard later: `mtdo-sandbox dashboard`, then republish
+  `~/.mtdo-sandbox/dashboard.html` to the same Artifact URL above (pass `url=` if doing it
+  from a different conversation than this one).
+- Janhvi still needs to confirm her local clone now points at `mukund1312/mtdo` directly
+  (not her fork) -- see the instructions given to her this session.
+
+---
+
 ## 2026-08-22 (update) -- cross-machine bug sync + scoreboard via a private tracker repo
 
 User works from two Macs and wanted a *shared* view of bugs found/fixed across both --
