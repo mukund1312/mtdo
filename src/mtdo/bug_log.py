@@ -1,21 +1,22 @@
-"""Per-instance bug log, captured live while testing in `mtdo-sandbox` (see app.py's
-action_report_bug, bound to 'B' only when SANDBOX_INSTANCE_MODE is on). Stored as
-bugs.json right alongside goals.json/state.json/etc, so it's just another file that rides
-along when a sandbox instance is saved, discarded, or autosaved (instance_store.py copies
-or deletes the whole data dir as a unit -- no special-casing needed here for that).
+"""Bug log, captured live while testing in `mtdo-sandbox` (see app.py's action_report_bug,
+bound to 'B' only when SANDBOX_INSTANCE_MODE is on).
 
-Meant to close the loop on testing: note a bug the moment you hit it, keep testing, save
-the instance when you quit, then later point a Claude Code session at
-~/.mtdo-sandbox/instances/<slug>/bugs.json (or `mtdo-sandbox bugs <slug>`) and ask it to
-fix the pending ones -- mark_fixed() is how that session records what it did.
+Stored at a FIXED path under the sandbox root -- deliberately NOT derived from
+config.APP_DIR/MTDO_HOME (which points at the current session's *scratch* copy). Originally
+it did live inside the scratch dir, riding along whenever an instance was saved -- but that
+meant a bug was only durable if the instance survived to be saved. A real freeze forced a
+hard-kill of the terminal before the save prompt (or even the SIGHUP fallback) could ever
+run, and every bug logged in that session was lost -- nothing had been written anywhere
+durable yet. Now `add_bug` writes to this fixed file synchronously, the instant B is
+pressed, completely independent of whether the current instance ever gets saved, discarded,
+or killed. Each bug records which instance it was found in (from MTDO_INSTANCE_NAME/SLUG)
+so that context isn't lost, but that's just a field now, not a storage location.
 """
 import datetime
 import json
 import os
 
-from . import config as appconfig
-
-BUGS_PATH = os.path.join(appconfig.APP_DIR, "bugs.json")
+BUGS_PATH = os.path.join(os.path.expanduser("~/.mtdo-sandbox"), "bugs.json")
 
 
 def _now():
@@ -41,9 +42,11 @@ def _save(bugs):
 def add_bug(text):
     bugs = _load()
     next_id = max((b["id"] for b in bugs), default=0) + 1
+    instance = os.environ.get("MTDO_INSTANCE_NAME") or os.environ.get("MTDO_INSTANCE_SLUG") or "unsaved session"
     bugs.append({
         "id": next_id,
         "text": text,
+        "instance": instance,
         "status": "pending",
         "found_at": _now(),
         "fixed_at": None,
@@ -62,8 +65,11 @@ def set_github_issue(bug_id, issue_number):
     _save(bugs)
 
 
-def list_bugs():
-    return _load()
+def list_bugs(instance=None):
+    bugs = _load()
+    if instance is None:
+        return bugs
+    return [b for b in bugs if b.get("instance") == instance]
 
 
 def mark_fixed(bug_id, fix_note=""):

@@ -25,16 +25,19 @@ def _run(args):
     return result.stdout.strip()
 
 
-def sync_pending(instance_label):
-    """Files every bug in the current instance that hasn't been synced yet (no
-    github_issue on it). Returns how many were newly filed."""
+def sync_pending(instance=None):
+    """Files every not-yet-synced bug (no github_issue on it) -- every bug on the machine
+    by default, or just one instance's if `instance` is given (matches bug_log's own
+    `instance` field, recorded on each bug at capture time -- not tied to where the bug
+    happens to be stored anymore, see bug_log.py). Returns how many were newly filed."""
     filed = 0
-    for b in bug_log.list_bugs():
+    for b in bug_log.list_bugs(instance=instance):
         if b.get("github_issue"):
             continue
-        title = f"[{instance_label}] {b['text']}"[:200]
+        label = b.get("instance", "unsaved session")
+        title = f"[{label}] {b['text']}"[:200]
         body = (
-            f"Found while testing instance **{instance_label}**.\n\n"
+            f"Found while testing instance **{label}**.\n\n"
             f"Logged at {b['found_at']} (local bug #{b['id']})."
         )
         url = _run([

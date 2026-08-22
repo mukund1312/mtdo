@@ -5,6 +5,54 @@ See `~/.claude/agents/mtdo-dev.md` for the full project onboarding/architecture 
 
 ---
 
+## 2026-08-22 (update 3) -- fix: real data loss from an app freeze + hard-killed terminal
+
+User hit a real bug while testing (an unspecified freeze -- app stopped responding) and
+had to force-kill the terminal to get out. Every bug they'd logged with `B` in that
+session was lost -- gone for good, nothing recoverable, since the old design only made a
+bug durable when the *instance* got saved (an explicit Save, or the SIGHUP/SIGTERM
+autosave fallback). A true freeze can prevent even that fallback from ever running --
+Python only services a signal handler between bytecode instructions on the main thread, so
+a genuinely hung main thread may never reach it, and a straight `kill -9`/force-quit can't
+be caught by any handler at all, by OS design. This was a real architectural gap, not a
+one-off -- the fix had to make bug capture itself durable, not the safety net around it.
+
+**Did:**
+- **`bug_log.py` rewritten**: `BUGS_PATH` is now a FIXED path,
+  `~/.mtdo-sandbox/bugs.json`, no longer derived from `config.APP_DIR`/`MTDO_HOME` (which
+  points at the current session's *scratch* copy -- the thing that can vanish on a hard
+  kill). `add_bug()` writes synchronously the instant `B` is pressed, completely
+  independent of the current instance's scratch dir, save/discard flow, or the
+  SIGHUP/SIGTERM autosave -- nothing after that write can lose the bug. Each bug now
+  records its own `instance` field (from `MTDO_INSTANCE_NAME`/`MTDO_INSTANCE_SLUG`, falls
+  back to `"unsaved session"`) so "which instance was this found in" isn't lost even
+  though storage is no longer instance-scoped. `list_bugs(instance=...)` filters by that
+  field instead of by which directory happened to hold the file.
+- **`bug_sync.sync_pending()`** no longer takes a required instance label -- reads each
+  bug's own `instance` field, and can optionally filter to just one via `instance=`.
+- **`sandbox_entry.py`**: `mtdo-sandbox bugs` now lists everything ever logged (or
+  `mtdo-sandbox bugs <instance-name>` to filter) straight from the fixed file -- no more
+  `MTDO_HOME` pointing at a specific saved instance's directory, since there's only ever
+  one bugs.json now. `mtdo-sandbox bugs sync [instance-name]` matches.
+
+**Tested (the actual failure scenario, not a milder stand-in):** real tmux pty, pressed
+`B` and logged a bug, then found the live process PID and ran `kill -KILL` on it directly
+-- the one signal that cannot be caught or blocked by any handler, strictly worse than
+what the user hit (their freeze at least might have eventually responded to SIGHUP; SIGKILL
+never gives any code a chance to run). Confirmed the bug was still intact on disk
+afterward, byte for byte, with the process fully gone. `mtdo-sandbox bugs` and `bugs sync`
+both worked correctly against it afterward (filed as a real GitHub issue). Cleaned up the
+test bug/issue/orphaned scratch dirs after. Real `~/.mtdo` mtimes confirmed untouched.
+
+**Not fixed / can't be:** the bugs the user actually lost before this fix existed are
+unrecoverable -- nothing was ever written to durable storage for them, so there's no
+backup to restore from. They'll need to re-log them under the new (now durable) version.
+Also not investigated: what actually caused the freeze in the first place -- the user
+didn't say what they were doing when it happened, and the freeze itself was never
+described in enough detail to reproduce. Worth asking about if it comes up again.
+
+---
+
 ## 2026-08-22 (update 2) -- shared dashboard: status lines + bug board as an Artifact
 
 Added the last two pieces from the plan: a "what am I working on" status line per person,

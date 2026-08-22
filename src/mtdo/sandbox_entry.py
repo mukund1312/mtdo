@@ -12,13 +12,16 @@ SIGTERM handler below autosaves the scratch copy instead of silently losing it.
 picker entirely and runs directly against the flat sandbox root (~/.mtdo-sandbox), exactly
 as before instances existed -- those commands aren't instance-scoped.
 
-`mtdo-sandbox bugs <slug>` prints the bug log for a saved instance (see bug_log.py) --
-bugs are captured in-app with 'B' while SANDBOX_INSTANCE_MODE is on, and saved/discarded
-along with the rest of that instance's data since bugs.json just lives alongside
-goals.json/state.json. `mtdo-sandbox bugs sync <slug>` files any not-yet-synced bugs to
-the private mukund1312/mtdo-bugs repo (see bug_sync.py) so they're visible/trackable from
-any machine with `gh auth login` done; `mtdo-sandbox bugs board` prints the found/fixed
-scoreboard across everything synced there.
+`mtdo-sandbox bugs` prints every bug ever logged with 'B' (while SANDBOX_INSTANCE_MODE is
+on), or `mtdo-sandbox bugs <instance-name>` to filter to one. Bugs live in a single fixed
+file (see bug_log.py) written the instant 'B' is pressed -- deliberately NOT tied to any
+instance's scratch/save lifecycle, after a real session freeze forced a hard-kill of the
+terminal and every bug logged that session was lost (nothing had been written anywhere
+durable, since the old design only persisted bugs when the *instance* got saved).
+`mtdo-sandbox bugs sync [instance-name]` files any not-yet-synced bugs to the private
+mukund1312/mtdo-bugs repo (see bug_sync.py) so they're visible/trackable from any machine
+with `gh auth login` done; `mtdo-sandbox bugs board` prints the found/fixed scoreboard
+across everything synced there.
 
 `mtdo-sandbox working-on "..."` posts a one-line status for whoever's `gh` identity is
 running it (see status_sync.py) -- named "working-on", not "status", because `mtdo status`
@@ -143,56 +146,33 @@ def _run_interactive():
 
 
 def _bugs_command(args):
-    from . import instance_store
+    from . import bug_log
 
-    if not args:
-        print("Usage: mtdo-sandbox bugs <instance-slug> | sync <instance-slug> | board")
-        instances = instance_store.list_instances()
-        if instances:
-            print("Saved instances:")
-            for inst in instances:
-                print(f"  {inst['slug']}  ({inst['name']})")
-        return
-
-    if args[0] == "board":
+    if args and args[0] == "board":
         from . import bug_sync
         open_count, closed_count = bug_sync.board()
         print(f"mtdo-sandbox bug scoreboard ({bug_sync.TRACKER_REPO}):")
         print(f"  Found: {open_count + closed_count}   Fixed: {closed_count}   Open: {open_count}")
         return
 
-    if args[0] == "sync":
-        if len(args) < 2:
-            print("Usage: mtdo-sandbox bugs sync <instance-slug>")
-            return
-        slug = args[1]
-        data_dir = os.path.join(instance_store.INSTANCES_DIR, slug)
-        if not os.path.isdir(data_dir):
-            print(f"No saved instance '{slug}'.")
-            return
-        # MTDO_HOME must be set *before* bug_sync (-> bug_log -> config.APP_DIR) is ever
-        # imported -- same rule as everywhere else in this file.
-        os.environ["MTDO_HOME"] = data_dir
+    if args and args[0] == "sync":
         from . import bug_sync
-        filed = bug_sync.sync_pending(slug)
+        instance = args[1] if len(args) > 1 else None
+        filed = bug_sync.sync_pending(instance=instance)
         print(f"Filed {filed} new issue(s) to {bug_sync.TRACKER_REPO}." if filed else "Nothing new to sync.")
         return
 
-    slug = args[0]
-    data_dir = os.path.join(instance_store.INSTANCES_DIR, slug)
-    if not os.path.isdir(data_dir):
-        print(f"No saved instance '{slug}' -- see `mtdo-sandbox bugs` for the list.")
-        return
-    os.environ["MTDO_HOME"] = data_dir
-    from . import bug_log
-    bugs = bug_log.list_bugs()
+    # bugs.json is one durable, sandbox-wide file now -- not tied to any instance's
+    # save/discard lifecycle (see bug_log.py) -- so no MTDO_HOME juggling is needed here.
+    instance_filter = args[0] if args else None
+    bugs = bug_log.list_bugs(instance=instance_filter)
     if not bugs:
-        print(f"No bugs logged for '{slug}'.")
+        print(f"No bugs logged for '{instance_filter}'." if instance_filter else "No bugs logged yet.")
         return
     for b in bugs:
         marker = "x" if b["status"] == "fixed" else "-"
         gh = f" (gh#{b['github_issue']})" if b.get("github_issue") else ""
-        print(f"[{marker}] #{b['id']} ({b['status']}){gh} {b['text']}  -- found {b['found_at']}")
+        print(f"[{marker}] #{b['id']} ({b['status']}){gh} [{b.get('instance', '?')}] {b['text']}  -- found {b['found_at']}")
         if b["status"] == "fixed" and b.get("fix_note"):
             print(f"      fix: {b['fix_note']}")
 
