@@ -15,7 +15,10 @@ as before instances existed -- those commands aren't instance-scoped.
 `mtdo-sandbox bugs <slug>` prints the bug log for a saved instance (see bug_log.py) --
 bugs are captured in-app with 'B' while SANDBOX_INSTANCE_MODE is on, and saved/discarded
 along with the rest of that instance's data since bugs.json just lives alongside
-goals.json/state.json.
+goals.json/state.json. `mtdo-sandbox bugs sync <slug>` files any not-yet-synced bugs to
+the private mukund1312/mtdo-bugs repo (see bug_sync.py) so they're visible/trackable from
+any machine with `gh auth login` done; `mtdo-sandbox bugs board` prints the found/fixed
+scoreboard across everything synced there.
 
 Sets MTDO_HOME before importing anything else from the package -- every module's
 ~/.mtdo-rooted path constants (config.APP_DIR and everything built from it) are computed
@@ -130,11 +133,11 @@ def _run_interactive():
     real_main()
 
 
-def _print_bugs(args):
+def _bugs_command(args):
     from . import instance_store
 
     if not args:
-        print("Usage: mtdo-sandbox bugs <instance-slug>")
+        print("Usage: mtdo-sandbox bugs <instance-slug> | sync <instance-slug> | board")
         instances = instance_store.list_instances()
         if instances:
             print("Saved instances:")
@@ -142,13 +145,35 @@ def _print_bugs(args):
                 print(f"  {inst['slug']}  ({inst['name']})")
         return
 
+    if args[0] == "board":
+        from . import bug_sync
+        open_count, closed_count = bug_sync.board()
+        print(f"mtdo-sandbox bug scoreboard ({bug_sync.TRACKER_REPO}):")
+        print(f"  Found: {open_count + closed_count}   Fixed: {closed_count}   Open: {open_count}")
+        return
+
+    if args[0] == "sync":
+        if len(args) < 2:
+            print("Usage: mtdo-sandbox bugs sync <instance-slug>")
+            return
+        slug = args[1]
+        data_dir = os.path.join(instance_store.INSTANCES_DIR, slug)
+        if not os.path.isdir(data_dir):
+            print(f"No saved instance '{slug}'.")
+            return
+        # MTDO_HOME must be set *before* bug_sync (-> bug_log -> config.APP_DIR) is ever
+        # imported -- same rule as everywhere else in this file.
+        os.environ["MTDO_HOME"] = data_dir
+        from . import bug_sync
+        filed = bug_sync.sync_pending(slug)
+        print(f"Filed {filed} new issue(s) to {bug_sync.TRACKER_REPO}." if filed else "Nothing new to sync.")
+        return
+
     slug = args[0]
     data_dir = os.path.join(instance_store.INSTANCES_DIR, slug)
     if not os.path.isdir(data_dir):
         print(f"No saved instance '{slug}' -- see `mtdo-sandbox bugs` for the list.")
         return
-    # MTDO_HOME must be set *before* bug_log (which derives its path from config.APP_DIR
-    # at import time) is ever imported -- same rule as everywhere else in this file.
     os.environ["MTDO_HOME"] = data_dir
     from . import bug_log
     bugs = bug_log.list_bugs()
@@ -157,7 +182,8 @@ def _print_bugs(args):
         return
     for b in bugs:
         marker = "x" if b["status"] == "fixed" else "-"
-        print(f"[{marker}] #{b['id']} ({b['status']}) {b['text']}  -- found {b['found_at']}")
+        gh = f" (gh#{b['github_issue']})" if b.get("github_issue") else ""
+        print(f"[{marker}] #{b['id']} ({b['status']}){gh} {b['text']}  -- found {b['found_at']}")
         if b["status"] == "fixed" and b.get("fix_note"):
             print(f"      fix: {b['fix_note']}")
 
@@ -165,7 +191,7 @@ def _print_bugs(args):
 def main():
     if len(sys.argv) > 1:
         if sys.argv[1] == "bugs":
-            _print_bugs(sys.argv[2:])
+            _bugs_command(sys.argv[2:])
             return
         os.environ.setdefault("MTDO_HOME", _SANDBOX_ROOT)
         from .cli import main as real_main

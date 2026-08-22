@@ -48,9 +48,18 @@ def add_bug(text):
         "found_at": _now(),
         "fixed_at": None,
         "fix_note": "",
+        "github_issue": None,  # set by bug_sync.py once filed to the private tracker repo
     })
     _save(bugs)
     return next_id
+
+
+def set_github_issue(bug_id, issue_number):
+    bugs = _load()
+    for b in bugs:
+        if b["id"] == bug_id:
+            b["github_issue"] = issue_number
+    _save(bugs)
 
 
 def list_bugs():

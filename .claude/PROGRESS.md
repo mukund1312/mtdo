@@ -5,6 +5,51 @@ See `~/.claude/agents/mtdo-dev.md` for the full project onboarding/architecture 
 
 ---
 
+## 2026-08-22 (update) -- cross-machine bug sync + scoreboard via a private tracker repo
+
+User works from two Macs and wanted a *shared* view of bugs found/fixed across both --
+local `bugs.json` (previous entry below) can't do that on its own since `~/.mtdo-sandbox`
+is deliberately never git-synced. Discussed options; user chose a private tracker repo
+over making the main `mtdo` repo private (mtdo stays public/open-source as already set up)
+or a manual folder-sync approach.
+
+**Did:**
+- **Created `mukund1312/mtdo-bugs`** (private GitHub repo, issues only, no code) via
+  `gh repo create`, with a `sandbox-bug` label. Explicitly confirmed with the user before
+  creating anything on their GitHub account.
+- **`bug_sync.py`** (new): `sync_pending(instance_label)` files every bug in the current
+  instance that doesn't have a `github_issue` yet as one GitHub issue (title prefixed with
+  the instance name, labeled `sandbox-bug`), then stamps the returned issue number back
+  onto the local bug via `bug_log.set_github_issue` -- makes sync idempotent, safe to
+  re-run. `mark_fixed_and_close(id, note)` is now *the* function to call when fixing a
+  bug: marks it fixed locally (via `bug_log.mark_fixed`) and, if it has a linked issue,
+  closes it on GitHub with the fix note as the closing comment. `board()` returns
+  (open, closed) counts across everything synced -- the found/fixed scoreboard.
+- **`bug_log.py`**: `add_bug` now also stores `github_issue: None`; added
+  `set_github_issue(id, number)`.
+- **`sandbox_entry.py`**: `mtdo-sandbox bugs sync <slug>` and `mtdo-sandbox bugs board`
+  (alongside the existing `mtdo-sandbox bugs <slug>` viewer, which now also shows each
+  bug's `gh#<n>` if synced).
+
+**Tested (real, against the real private repo -- not mocked):** captured 2 bugs live in a
+fresh sandbox instance via `B`, saved it, ran `bugs sync` -- both landed as real GitHub
+issues on `mukund1312/mtdo-bugs` (verified via `gh issue list`); re-ran sync and confirmed
+"Nothing new to sync" (no duplicates); called `mark_fixed_and_close` on one -- confirmed
+the GitHub issue actually closed (`gh issue view` -> CLOSED) *and* the local bug list
+showed `[x] ... (gh#1)` with the fix note; `mtdo-sandbox bugs board` correctly reported
+`Found: 2  Fixed: 1  Open: 1`. Cleaned up the test issues/instance afterward. Real
+`~/.mtdo` mtimes confirmed untouched throughout, as always.
+
+**Next / open items:**
+- The second Mac needs `gh auth login` done once (separate from git's own auth) before
+  `bugs sync`/`bugs board` will work there -- not yet confirmed done.
+- When asked to "fix the bugs in <instance>" going forward: use
+  `bug_sync.mark_fixed_and_close(id, note)`, not `bug_log.mark_fixed` directly -- the
+  former is a strict superset (closes the GitHub issue too, when there is one) and is
+  always safe to call even for bugs that were never synced.
+
+---
+
 ## 2026-08-22 -- per-instance bug log (`B` to capture, `mtdo-sandbox bugs` to review)
 
 User wanted a way to note bugs the moment they're found while testing in `mtdo-sandbox`,
