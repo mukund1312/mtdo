@@ -1,0 +1,827 @@
+(function(){
+  const output = document.getElementById('output');
+  const input = document.getElementById('cmdInput');
+  const touringBadge = document.getElementById('touringBadge');
+
+  const state = {
+    mode: null, coachTopic: null, hintsRevealed: 0,
+    labLang: 'python', labStage: 'blank',
+    touring: false, history: [], histIdx: -1,
+  };
+
+  const escapeHtml = (s) => s.replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  const cleanArg = (s) => (s || '').replace(/^[<\[('"]+|[>\])'"]+$/g, '').trim();
+  const next = (t) => `<p class="next"><span class="arrow">→ next:</span> ${t}</p>`;
+
+  function scrollBottom() { output.scrollTop = output.scrollHeight; }
+
+  function promptLabel() {
+    if (state.mode === 'lab') return { a: 'mtdo', b: `@lab:${state.labLang}$` };
+    if (state.mode === 'coach') return { a: 'mtdo', b: `@coach:${state.coachTopic}$` };
+    if (state.mode === 'focus') return { a: 'mtdo', b: '@focus:~$' };
+    return { a: 'mtdo', b: '@focus:~$' };
+  }
+  function refreshPrompt() {
+    const p = promptLabel();
+    document.getElementById('promptA').textContent = p.a;
+    document.getElementById('promptB').textContent = p.b;
+  }
+
+  function printCommandLine(cmd) {
+    const p = promptLabel();
+    const div = document.createElement('div');
+    div.className = 'cmd-line';
+    div.innerHTML = `<span class="prompt">${p.a}</span><span class="path">${p.b}</span> <span class="typed">${escapeHtml(cmd)}</span>`;
+    output.appendChild(div);
+  }
+
+  function printBlock(html) {
+    const div = document.createElement('div');
+    div.className = 'out-block';
+    div.innerHTML = html;
+    output.appendChild(div);
+    requestAnimationFrame(() => div.classList.add('show'));
+    scrollBottom();
+    return div;
+  }
+
+  function typeLines(lines, onDone) {
+    let li = 0;
+    const container = document.createElement('div');
+    container.className = 'out-block show';
+    output.appendChild(container);
+    function step() {
+      if (li >= lines.length) { if (onDone) onDone(); scrollBottom(); return; }
+      const p = document.createElement('p');
+      p.className = lines[li].cls || '';
+      container.appendChild(p);
+      const text = lines[li].t;
+      let ci = 0;
+      const speed = lines[li].speed || 16;
+      const iv = setInterval(() => {
+        p.textContent = text.slice(0, ci + 1);
+        ci++;
+        scrollBottom();
+        if (ci >= text.length) { clearInterval(iv); li++; setTimeout(step, 120); }
+      }, speed);
+    }
+    step();
+  }
+
+  /* ---------------- shared box helper ---------------- */
+
+  function boxOpen(title, right) {
+    return `<div class="box"><div class="box-head"><span>${title}</span><span>${right || ''}</span></div><div class="box-body">`;
+  }
+  const boxClose = `</div></div>`;
+
+  /* ---------------- help / about ---------------- */
+
+  function helpScreen() {
+    const rows = [
+      ['plan [persona]', "the setup wizard — AI turns a Q&A into your goals.json"],
+      ['about', "what mtdo is, and the philosophy behind it"],
+      ['board', "the kanban board — backlog / todo / in progress / done"],
+      ['focus', "what happens when you press f"],
+      ['coach dsa', "the learning coach on a generated DSA problem"],
+      ['coach sql', "the learning coach on a generated SQL problem"],
+      ['hint', "reveal the next hint (after 'coach')"],
+      ['ai <message>', "ask the embedded AI panel something"],
+      ['lab <language>', "open the practice lab — try: lab python / lab java / lab sql"],
+      ['run', "execute the current lab buffer"],
+      ['complexity', "AI estimate / real query plan for the lab buffer"],
+      ['review', "AI points out what's wrong — not the fix, a nudge"],
+      ['fix', "reveal the corrected approach, once you're ready"],
+      ['done', "mark the task done — unlocks the full coaching notes"],
+      ['crm', "the career CRM pipeline"],
+      ['vault [search <term>]', "the knowledge vault"],
+      ['keys', "full keybinding cheat sheet"],
+      ['install', "how to actually install mtdo"],
+      ['tour', "sit back — a guided walkthrough of the whole app"],
+      ['clear', "clear the screen"],
+    ];
+    let s = `<p>mtdo — terminal task board. type a command below.</p><p>&nbsp;</p>`;
+    rows.forEach(([c,d]) => { s += `<p><span class="kbd" style="min-width:190px;display:inline-block;text-align:left">${c}</span>  <span class="dim">${d}</span></p>`; });
+    s += `<p>&nbsp;</p><p class="dim">this whole page is a fake terminal — nothing here reaches a real machine. the real app runs in yours.</p>`;
+    s += next(`<span class="kbd">plan</span> to see how a board gets built, or <span class="kbd">tour</span> to sit back and watch the whole thing.`);
+    return s;
+  }
+
+  function aboutScreen() {
+    return `<p><b>mtdo</b> — a terminal task board built for deliberate practice, not busywork.</p>
+      <p>&nbsp;</p>
+      <p>No animation panel. No GIF viewer. No "now playing" video widget.</p>
+      <p>Every pixel either tracks your progress or makes you better at what you're actually studying.</p>
+      <p>&nbsp;</p>
+      <p class="hl">01 — No entertainment, ever</p>
+      <p class="dim">The screen space that would go to a media panel goes to coaching content instead.</p>
+      <p>&nbsp;</p>
+      <p class="hl">02 — Teach, don't just answer</p>
+      <p class="dim">The AI panel is instructed once: guide with questions before handing over an answer.</p>
+      <p>&nbsp;</p>
+      <p class="hl">03 — Your plan, your file</p>
+      <p class="dim">Categories and curriculum live in goals.json, not in code. Edit it, or hand it to an AI.</p>` +
+      next(`<span class="kbd">plan</span> to see rule 03 in action — the AI builds that file for you.`);
+  }
+
+  /* ---------------- plan wizard ---------------- */
+
+  const PERSONAS = {
+    'school': {
+      label: 'School',
+      qs: [['Grade / exam board?', '11th, CBSE'], ['Weakest subject right now?', 'Physics — mechanics'], ['Weeks until the next exam?', '6']],
+      cats: ['physics', 'chemistry', 'math'],
+      note: `a straight study plan — no Job Search or CRM needed here.`,
+    },
+    'college': {
+      label: 'College Application',
+      qs: [['Target schools?', 'a mix of reach + safety'], ['Applying for?', 'CS undergrad'], ['Weeks until deadlines?', '10']],
+      cats: ['essays', 'sat_act', 'applications'],
+      note: `an "applications" field gets added — and each school you add there also shows up in the CRM (Applied → Interview → Accepted), same pipeline the job-switch persona uses.`,
+    },
+    'exam': {
+      label: 'Competitive Exam',
+      qs: [['Which exam?', 'GATE CS'], ['Current mock score?', '52 / 100'], ['Weeks until the exam?', '12']],
+      cats: ['dsa', 'core_subjects', 'mock_tests'],
+      note: `curriculum gets sequenced week by week toward the exam date.`,
+    },
+    'job-switch': {
+      label: 'Job Switch',
+      qs: [['Target role?', 'Backend SWE'], ['Strongest skill / weakest area?', 'Python — weak on system design'], ['Weeks until interview-ready?', '8'], ['Companies you\'re already talking to?', 'Razorpay, Stripe']],
+      cats: ['dsa', 'system_design', 'sql_theory', 'jobs'],
+      note: `a "jobs" field gets added, and Razorpay / Stripe land straight on the Career CRM pipeline — type 'crm' after this to see them.`,
+    },
+  };
+
+  function planScreen(args) {
+    const key = cleanArg(args[0] || '').toLowerCase();
+    const persona = PERSONAS[key] || null;
+    if (!persona) {
+      let s = `<p>Setup Plan Wizard (<span class="kbd">g</span> in the real app) — a short Q&A, then the AI writes your <b>goals.json</b> for you.</p><p>&nbsp;</p><p>pick who you are:</p>`;
+      Object.entries(PERSONAS).forEach(([k,v]) => { s += `<p>  <span class="kbd">plan ${k}</span>  <span class="dim">— ${v.label}</span></p>`; });
+      return s + next(`try <span class="kbd">plan job-switch</span> — or any of the others above.`);
+    }
+    let s = `<p>persona: <b>${persona.label}</b></p><p>&nbsp;</p><div class="qa">`;
+    persona.qs.forEach(([q,a],i) => { s += `<p class="q">Q${i+1}. ${q}</p><p class="a">› ${a}</p>`; });
+    s += `</div><p>&nbsp;</p><p class="dim">building a prompt from your answers, handing it to the AI panel...</p>` +
+      boxOpen('goals.json', 'written by the AI') +
+      `<p class="codeblock"><span class="cm">// excerpt</span>
+{
+  <span class="tp">"categories"</span>: [
+    ${persona.cats.map(c => `{ <span class="tp">"name"</span>: <span class="hl">"${c}"</span>, ... }`).join(',\n    ')}
+  ]
+}</p>` + boxClose +
+      `<p><span class="hl">imported</span> — your board now has ${persona.cats.length} new columns, pre-filled with a real curriculum, not a blank list.</p>
+       <p class="dim">${persona.note}</p>`;
+    return s + next(`<span class="kbd">board</span> to see it land, ${key === 'job-switch' || key === 'college' ? "or <span class=\"kbd\">crm</span> to see the pipeline it just populated." : "or <span class=\"kbd\">focus</span> to start working through it."}`);
+  }
+
+  /* ---------------- board / focus ---------------- */
+
+  function boardScreen() {
+    return `<p>Backlog → Todo → In Progress → Done — one column per field you track.</p>` +
+      boxOpen('kanban-board', 'Mon · Week 3 · score 82') +
+      `<div class="kgrid">
+        <div class="kcol backlog"><div class="kcol-head">Backlog</div><div class="kcard">Sliding Window</div><div class="kcard">Merge Intervals</div></div>
+        <div class="kcol todo"><div class="kcol-head">Todo</div><div class="kcard">Two Sum</div><div class="kcard">Valid Parens</div><div class="kcard">SQL Theory</div></div>
+        <div class="kcol progress"><div class="kcol-head">In Progress</div><div class="kcard">2nd Highest Salary/Dept</div></div>
+        <div class="kcol done"><div class="kcol-head">Done</div><div class="kcard">Contains Duplicate</div><div class="kcard">Group Anagrams</div></div>
+      </div>` + boxClose +
+      `<p><span class="kbd">h/l</span> columns <span class="kbd">j/k</span> cards <span class="kbd">space</span> advance <span class="kbd">u</span> send back <span class="kbd">a</span> add</p>
+      <p class="dim">a card claimed out of Backlog always lands on Todo first — never straight to In Progress.</p>` +
+      next(`<span class="kbd">focus</span> to start a deep-work session on one of these.`);
+  }
+
+  function focusScreen() {
+    state.mode = 'focus'; refreshPrompt();
+    return `<p>Focus Mode ON — board and stats hidden, 45/10 pomodoro auto-started.</p><p class="dim">your prompt just changed to <span class="kbd">focus:~$</span> — that's how you'll know you're "in" it.</p>` +
+      boxOpen('focus-mode', '44:12 remaining ●') +
+      `<div class="focusgrid">
+        <div class="fpane"><div class="t pomo">Pomodoro</div><div class="l">44:12 · work</div><div class="l dim">auto: 45/10 split</div></div>
+        <div class="fpane"><div class="t">Learning Coach</div><div class="l hl">2nd Highest Salary/Dept</div><div class="l">hints: 1 / 4 revealed</div></div>
+        <div class="fpane"><div class="t ai">AI Assistant</div><div class="l">&gt; what's slow about it?</div><div class="l dim">the self join, maybe?</div></div>
+      </div>` + boxClose +
+      `<p class="dim">nothing running gets stopped when you leave — press f again and it's all exactly where you left it.</p>` +
+      next(`<span class="kbd">coach dsa</span> or <span class="kbd">coach sql</span> to see what the Learning Coach actually shows.`);
+  }
+
+  /* ---------------- learning coach + hints ---------------- */
+
+  const DSA_HINTS = [
+    "1. Think about what you'd remember as you scan the array once.",
+    "2. A hash map from value → index helps.",
+    "3. For each number, check if target − number was already seen.",
+    "4. One pass, O(n) time, O(n) space, using a hashmap of value→index.",
+  ];
+  const SQL_HINTS = [
+    "1. Salaries within the same department only — nothing crosses departments.",
+    "2. A correlated subquery or a window function both work here.",
+    "3. Compare each salary to the max strictly less than it, per department.",
+    "4. MAX(salary) WHERE salary < (SELECT MAX(salary) ...) GROUP BY department_id.",
+  ];
+
+  function coachScreen(args) {
+    const topic = (cleanArg(args[0]).toLowerCase() === 'sql') ? 'sql' : 'dsa';
+    state.mode = 'coach'; state.coachTopic = topic; state.hintsRevealed = 0;
+    state.labStage = 'blank'; // switching topic resets any in-progress lab attempt
+    refreshPrompt();
+    if (topic === 'sql') {
+      return `<p>generating your problem for <b>SQL Theory</b>...</p>` +
+        boxOpen('learning-coach', 'database · in_progress') +
+        `<p><b>2nd Highest Salary Per Department</b></p>
+         <p class="dim">Difficulty: Medium</p>
+         <p>Find the second-highest salary in each department.</p>
+         <p class="dim">Expected output: department_id, second_highest — one row per department.</p>` + boxClose +
+        `<p class="dim">it won't reveal the query — only hints, and only the full coaching notes once you mark it done.</p>` +
+        next(`<span class="kbd">hint</span> for a nudge (0/4 revealed), or jump straight to <span class="kbd">lab sql</span> — it already knows what problem you're on.`);
+    }
+    return `<p>generating your problem for <b>DSA</b>...</p>` +
+      boxOpen('learning-coach', 'dsa · in_progress') +
+      `<p><b>Two Sum</b></p>
+       <p class="dim">Difficulty: Easy</p>
+       <p>Given an array of integers, return indices of the two numbers that add up to a target.</p>` + boxClose +
+      `<p class="dim">it won't reveal the algorithm — only hints, and only the full coaching notes once you mark it done.</p>` +
+      next(`<span class="kbd">hint</span> for a nudge (0/4 revealed), or jump straight to <span class="kbd">lab python</span> (java/c/cpp also work) — it already knows what problem you're on.`);
+  }
+
+  function hintScreen() {
+    if (state.mode !== 'coach') return `<p class="err">nothing active — try <span class="kbd">coach dsa</span> or <span class="kbd">coach sql</span> first.</p>`;
+    const hints = state.coachTopic === 'sql' ? SQL_HINTS : DSA_HINTS;
+    if (state.hintsRevealed >= hints.length) {
+      return `<p class="dim">no more hints — solve it, then <span class="kbd">done</span> to unlock the full coaching notes (Focus On, Mental Models, all of it).</p>` +
+        next(`<span class="kbd">lab ${state.coachTopic === 'sql' ? 'sql' : 'python'}</span> to actually attempt it.`);
+    }
+    const h = hints[state.hintsRevealed];
+    state.hintsRevealed++;
+    const remaining = hints.length - state.hintsRevealed;
+    let s = `<p class="hl2">${h}</p><p class="dim">${remaining} more available — in the real app, a popup offers one every 10 minutes instead of on demand.</p>`;
+    s += next(remaining > 0
+      ? `another <span class="kbd">hint</span>, or head to <span class="kbd">lab ${state.coachTopic === 'sql' ? 'sql' : 'python'}</span> when you're ready to actually write it.`
+      : `<span class="kbd">lab ${state.coachTopic === 'sql' ? 'sql' : 'python'}</span> — you've got all the hints, time to write it.`);
+    return s;
+  }
+
+  /* ---------------- ai panel ---------------- */
+
+  const AI_KEYWORDS = [
+    { k: /answer|solution|solve it|just tell/i, r: "I could just tell you, but then this wouldn't stick — what have you already tried, and where did it stop working?" },
+    { k: /slow|complexity|time|performance/i, r: "What's making that comparison expensive on every row — is there something you could remember instead of re-checking?" },
+    { k: /stuck|don'?t know|no idea/i, r: "Let's back up — can you restate the problem in your own words first? Sometimes the gap is right there." },
+    { k: /hint/i, r: "Try the 'hint' command in coach mode — but here, first: what's the brute-force version look like?" },
+  ];
+  const AI_DEFAULT = [
+    "What's the brute-force approach, even if it's slow — walk me through it.",
+    "Before we go further: what does the problem actually give you, and what does it ask for?",
+    "What would you need to remember as you go, to avoid redoing work?",
+    "What's the simplest input that would break your current approach?",
+  ];
+  let aiTurn = 0;
+
+  function aiScreen(args) {
+    const msg = args.join(' ').trim();
+    if (!msg) {
+      return `<p class="err">try: <span class="kbd">ai why is my query slow</span></p>` + next(`ask it something, or <span class="kbd">lab python</span> to start coding — it can see your code too, via 'review'.`);
+    }
+    let reply = null;
+    for (const entry of AI_KEYWORDS) { if (entry.k.test(msg)) { reply = entry.r; break; } }
+    if (!reply) { reply = AI_DEFAULT[aiTurn % AI_DEFAULT.length]; aiTurn++; }
+    return `<p class="dim">[primed] task + field + generated problem already sent — you never typed that part.</p>` +
+      `<p><span class="hl4">you</span> <span class="dim">›</span> ${escapeHtml(msg)}</p>` +
+      `<p><span class="hl">mtdo-ai</span> <span class="dim">›</span> ${reply}</p>` +
+      `<p class="dim">it's told, once, how to teach: discover-before-explain, progressive hints, never the answer first.</p>` +
+      next(`ask something else, or <span class="kbd">lab ${state.coachTopic === 'sql' ? 'sql' : 'python'}</span> to start coding — try 'review' once you're there for the same treatment on real code.`);
+  }
+
+  /* ---------------- practice lab: buggy → review → fix → correct ---------------- */
+
+  const LANG_NAMES = { python: 'Python', java: 'Java', c: 'C', cpp: 'C++', sql: 'SQL' };
+  const LANG_ALIASES = { py: 'python', python: 'python', java: 'java', c: 'c', cpp: 'cpp', 'c++': 'cpp', sql: 'sql' };
+  const PROCEDURAL = new Set(['python','java','c','cpp']);
+
+  const DSA_CODE = {
+    python: {
+      buggy: `<span class="kw">def</span> two_sum(nums, target):
+    seen = {}
+    <span class="cm"># bug: fills the whole map before checking anything</span>
+    <span class="kw">for</span> i, n <span class="kw">in</span> enumerate(nums):
+        seen[n] = i
+    <span class="kw">for</span> i, n <span class="kw">in</span> enumerate(nums):
+        complement = target - n
+        <span class="kw">if</span> complement <span class="kw">in</span> seen:
+            <span class="kw">return</span> [i, seen[complement]]
+
+<span class="cm"># nums = [3, 2, 4], target = 6</span>`,
+      fixed: `<span class="kw">def</span> two_sum(nums, target):
+    seen = {}
+    <span class="kw">for</span> i, n <span class="kw">in</span> enumerate(nums):
+        complement = target - n
+        <span class="kw">if</span> complement <span class="kw">in</span> seen:
+            <span class="kw">return</span> [seen[complement], i]
+        seen[n] = i  <span class="cm"># only add AFTER checking</span>
+
+<span class="cm"># nums = [3, 2, 4], target = 6</span>`,
+      buggyOut: '[0, 0]', fixedOut: '[1, 2]',
+      review: `Look at when you check the complement — you build the whole lookup table first, then check every index, including itself. nums[0]=3 and target-3=3, and seen[3] is index 0 — so it matches itself. Check the complement <b>before</b> you add the current element to the map, not after.`,
+      timeExp: 'single pass over the input', spaceExp: 'the hashmap grows with input size',
+    },
+    java: {
+      buggy: `<span class="kw">import</span> java.util.*;
+<span class="kw">class</span> Solution {
+  <span class="kw">static int</span>[] twoSum(<span class="kw">int</span>[] nums, <span class="kw">int</span> target) {
+    Map&lt;Integer,Integer&gt; seen = <span class="kw">new</span> HashMap&lt;&gt;();
+    <span class="cm">// bug: fills the whole map before checking anything</span>
+    <span class="kw">for</span> (<span class="kw">int</span> i = 0; i &lt; nums.length; i++) seen.put(nums[i], i);
+    <span class="kw">for</span> (<span class="kw">int</span> i = 0; i &lt; nums.length; i++) {
+      <span class="kw">int</span> c = target - nums[i];
+      <span class="kw">if</span> (seen.containsKey(c)) <span class="kw">return new int</span>[]{i, seen.get(c)};
+    }
+    <span class="kw">return null</span>;
+  }
+}`,
+      fixed: `<span class="kw">import</span> java.util.*;
+<span class="kw">class</span> Solution {
+  <span class="kw">static int</span>[] twoSum(<span class="kw">int</span>[] nums, <span class="kw">int</span> target) {
+    Map&lt;Integer,Integer&gt; seen = <span class="kw">new</span> HashMap&lt;&gt;();
+    <span class="kw">for</span> (<span class="kw">int</span> i = 0; i &lt; nums.length; i++) {
+      <span class="kw">int</span> c = target - nums[i];
+      <span class="kw">if</span> (seen.containsKey(c)) <span class="kw">return new int</span>[]{seen.get(c), i};
+      seen.put(nums[i], i);  <span class="cm">// only add AFTER checking</span>
+    }
+    <span class="kw">return null</span>;
+  }
+}`,
+      buggyOut: '[0, 0]', fixedOut: '[1, 2]',
+      review: `Same shape as the Python version: you populate the whole HashMap before you check anything, so nums[0]=3 can match against its own entry (target-3=3, seen at index 0). Move the lookup <b>before</b> the insert.`,
+      timeExp: 'single pass over the input', spaceExp: 'the hashmap grows with input size',
+    },
+    c: {
+      buggy: `<span class="cm">// bug: inner loop starts at 0, so i can pair with itself</span>
+<span class="kw">for</span> (<span class="kw">int</span> i = 0; i &lt; n; i++) {
+  <span class="kw">for</span> (<span class="kw">int</span> j = 0; j &lt; n; j++) {
+    <span class="kw">if</span> (nums[i] + nums[j] == target) {
+      printf(<span class="hl">"[%d, %d]\\n"</span>, i, j);
+      <span class="kw">return</span>;
+    }
+  }
+}
+<span class="cm">// nums = {3, 2, 4}, target = 6</span>`,
+      fixed: `<span class="kw">for</span> (<span class="kw">int</span> i = 0; i &lt; n; i++) {
+  <span class="kw">for</span> (<span class="kw">int</span> j = i + 1; j &lt; n; j++) {  <span class="cm">// start past i</span>
+    <span class="kw">if</span> (nums[i] + nums[j] == target) {
+      printf(<span class="hl">"[%d, %d]\\n"</span>, i, j);
+      <span class="kw">return</span>;
+    }
+  }
+}
+<span class="cm">// nums = {3, 2, 4}, target = 6</span>`,
+      buggyOut: '[0, 0]', fixedOut: '[1, 2]',
+      review: `Your inner loop starts j at 0, so i and j can land on the same index — nums[0]+nums[0] = 3+3 = 6, and it returns before ever looking at a real pair. Start j one past i instead of at 0.`,
+      timeExp: 'nested loop over the input, brute force', spaceExp: 'no extra structures used',
+    },
+    cpp: {
+      buggy: `<span class="cm">// bug: inner loop starts at 0, so i can pair with itself</span>
+<span class="kw">for</span> (<span class="kw">int</span> i = 0; i &lt; n; i++) {
+  <span class="kw">for</span> (<span class="kw">int</span> j = 0; j &lt; n; j++) {
+    <span class="kw">if</span> (nums[i] + nums[j] == target) {
+      cout &lt;&lt; <span class="hl">"[" &lt;&lt; i &lt;&lt; ", " &lt;&lt; j &lt;&lt; "]"</span> &lt;&lt; endl;
+      <span class="kw">return</span> 0;
+    }
+  }
+}
+<span class="cm">// nums = {3, 2, 4}, target = 6</span>`,
+      fixed: `<span class="kw">for</span> (<span class="kw">int</span> i = 0; i &lt; n; i++) {
+  <span class="kw">for</span> (<span class="kw">int</span> j = i + 1; j &lt; n; j++) {  <span class="cm">// start past i</span>
+    <span class="kw">if</span> (nums[i] + nums[j] == target) {
+      cout &lt;&lt; <span class="hl">"[" &lt;&lt; i &lt;&lt; ", " &lt;&lt; j &lt;&lt; "]"</span> &lt;&lt; endl;
+      <span class="kw">return</span> 0;
+    }
+  }
+}
+<span class="cm">// nums = {3, 2, 4}, target = 6</span>`,
+      buggyOut: '[0, 0]', fixedOut: '[1, 2]',
+      review: `Same bug as the C version: j starts at 0 so i can pair with itself — nums[0]+nums[0]=6 matches target immediately, wrongly. Start j at i+1.`,
+      timeExp: 'nested loop over the input, brute force', spaceExp: 'no extra structures used',
+    },
+  };
+
+  const SQL_CODE = {
+    buggy: `<span class="cm">-- bug: nothing excludes the actual highest salary</span>
+<span class="kw">SELECT</span> department_id, <span class="kw">MAX</span>(salary) <span class="kw">AS</span> second_highest
+<span class="kw">FROM</span> employees
+<span class="kw">GROUP BY</span> department_id;`,
+    fixed: `<span class="kw">SELECT</span> department_id, <span class="kw">MAX</span>(salary) <span class="kw">AS</span> second_highest
+<span class="kw">FROM</span> employees e1
+<span class="kw">WHERE</span> salary &lt; (
+  <span class="kw">SELECT MAX</span>(salary) <span class="kw">FROM</span> employees e2
+  <span class="kw">WHERE</span> e2.department_id = e1.department_id
+)
+<span class="kw">GROUP BY</span> department_id;`,
+    buggyRows: [['1','155000'],['2','105000'],['3','87000'],['4','71000']],
+    fixedRows: [['1','145000'],['2','98000'],['3','82000'],['4','65000']],
+    review: `MAX(salary) grouped by department just gives you the highest salary again — there's nothing in this query excluding the actual highest. You need to compare against a value that's strictly less than the max for that department.`,
+  };
+
+  function langMismatchMsg(topic, lang) {
+    if (topic === 'dsa') return `<p class="err">Two Sum isn't a SQL problem.</p><p class="dim">the coach is on a DSA problem right now — try python, java, c, or cpp instead.</p>` + next(`<span class="kbd">lab python</span>`);
+    return `<p class="err">2nd Highest Salary is a SQL problem, not something you write in ${LANG_NAMES[lang]}.</p><p class="dim">the coach is on a SQL problem right now.</p>` + next(`<span class="kbd">lab sql</span>`);
+  }
+
+  function labScreen(args) {
+    state.mode = 'lab';
+    const rawArg = cleanArg(args[0] || '').toLowerCase();
+    if (rawArg) {
+      const resolved = LANG_ALIASES[rawArg];
+      if (!resolved) {
+        refreshPrompt();
+        return `<p class="err">unknown language "${escapeHtml(args[0])}" — keeping ${LANG_NAMES[state.labLang]}.</p>` +
+          next(`try one of: <span class="kbd">python</span> <span class="kbd">java</span> <span class="kbd">c</span> <span class="kbd">cpp</span> <span class="kbd">sql</span> — e.g. <span class="kbd">lab java</span> (no brackets, just the word).`);
+      }
+      state.labLang = resolved;
+    }
+    refreshPrompt();
+    const lang = state.labLang;
+    const topic = state.coachTopic;
+
+    // linked to an active coach problem: only the matching language(s) make sense
+    if (topic === 'dsa' && lang === 'sql') return langMismatchMsg('dsa', lang);
+    if (topic === 'sql' && lang !== 'sql') return langMismatchMsg('sql', lang);
+
+    if (topic === 'dsa' && PROCEDURAL.has(lang)) {
+      state.labStage = 'buggy';
+      const c = DSA_CODE[lang];
+      return `<p>Practice Lab — <b>${LANG_NAMES[lang]}</b>, working on <b class="hl">Two Sum</b> (linked from the coach). <span class="badge wrong">has a bug</span></p>` +
+        boxOpen(`practice-lab · ${LANG_NAMES[lang]}`, 'Two Sum') +
+        `<p class="codeblock">${c.buggy}</p>` + boxClose +
+        `<p><span class="kbd">run</span> execute <span class="kbd">complexity</span> estimate <span class="kbd">review</span> AI feedback</p>` +
+        next(`<span class="kbd">run</span> it — see what happens.`);
+    }
+    if (topic === 'sql' && lang === 'sql') {
+      state.labStage = 'buggy';
+      return `<p>Practice Lab — <b>SQL</b>, working on <b class="hl">2nd Highest Salary Per Dept</b> (linked from the coach). <span class="badge wrong">has a bug</span></p>` +
+        boxOpen('practice-lab · SQL', 'sample.db') +
+        `<p class="codeblock">${SQL_CODE.buggy}</p>` + boxClose +
+        `<p><span class="kbd">run</span> execute <span class="kbd">complexity</span> real query plan <span class="kbd">review</span> AI feedback</p>` +
+        next(`<span class="kbd">run</span> it — see what happens.`);
+    }
+
+    // no coach topic active: plain, unlinked lab (original behavior)
+    state.labStage = 'blank';
+    const BLANK = {
+      python: `<span class="cm"># Write your solution here</span>\n\n`,
+      java: `<span class="kw">public class</span> Solution {\n    <span class="kw">public static void</span> main(String[] args) {\n        \n    }\n}`,
+      c: `#include &lt;stdio.h&gt;\n\n<span class="kw">int</span> main() {\n    \n    <span class="kw">return</span> 0;\n}`,
+      cpp: `#include &lt;iostream&gt;\n<span class="kw">using namespace</span> std;\n\n<span class="kw">int</span> main() {\n    \n    <span class="kw">return</span> 0;\n}`,
+      sql: `<span class="cm">-- sample.db: departments, employees, orders</span>\n<span class="kw">SELECT</span> * <span class="kw">FROM</span> employees <span class="kw">LIMIT</span> 5;`,
+    };
+    return `<p>Practice Lab — <b>${LANG_NAMES[lang]}</b>. real execution, not simulated.</p><p class="dim">no problem linked yet — this is just the blank starter template.</p>` +
+      boxOpen(`practice-lab · ${LANG_NAMES[lang]}`, lang === 'sql' ? 'sample.db' : '') +
+      `<p class="codeblock">${BLANK[lang]}</p>` + boxClose +
+      `<p><span class="kbd">run</span> execute <span class="kbd">complexity</span> estimate / plan <span class="kbd">review</span> AI review <span class="kbd">lab &lt;language&gt;</span> switch</p>` +
+      next(`<span class="kbd">coach dsa</span> or <span class="kbd">coach sql</span> first, so the lab has a real problem to work on — that's the actual flow.`);
+  }
+
+  function runScreen() {
+    if (state.mode !== 'lab') return `<p class="err">nothing to run — try <span class="kbd">lab python</span> first.</p>`;
+    const lang = state.labLang, topic = state.coachTopic;
+
+    if (topic === 'sql' && lang === 'sql' && state.labStage !== 'blank') {
+      const rows = state.labStage === 'fixed' ? SQL_CODE.fixedRows : SQL_CODE.buggyRows;
+      const badge = state.labStage === 'fixed' ? '<span class="badge right">correct</span>' : '<span class="badge wrong">wrong</span>';
+      let s = boxOpen('OUTPUT', badge) + `<p>$ sqlite3 sample.db</p>
+        <table style="width:100%;font-size:12px;margin-top:6px"><tr><td class="dim" style="border-bottom:1px solid #222;padding:2px 8px 4px 0">department_id</td><td class="dim" style="border-bottom:1px solid #222;padding:2px 0 4px">second_highest</td></tr>`;
+      rows.forEach(r => { s += `<tr><td style="padding:2px 8px 0 0">${r[0]}</td><td>${r[1]}</td></tr>`; });
+      s += `</table><p class="dim" style="margin-top:8px">[exit 0 in 0.021s]</p>` + boxClose;
+      if (state.labStage === 'buggy') {
+        s += `<p class="dim">runs fine, no error — but check department 1: is 155000 really the <b>second</b>-highest?</p>` + next(`<span class="kbd">review</span> to see what's actually wrong.`);
+      } else {
+        s += next(`<span class="kbd">complexity</span> to confirm the plan, then <span class="kbd">done</span>.`);
+      }
+      return s;
+    }
+
+    if (topic === 'dsa' && PROCEDURAL.has(lang) && state.labStage !== 'blank') {
+      const c = DSA_CODE[lang];
+      const cmds = { python: 'python3 solution.py', java: 'java Solution', c: './solution', cpp: './solution' };
+      const isFixed = state.labStage === 'fixed';
+      const out = isFixed ? c.fixedOut : c.buggyOut;
+      const badge = isFixed ? '<span class="badge right">correct</span>' : '<span class="badge wrong">wrong</span>';
+      let s = boxOpen('OUTPUT', badge) + `<p>$ ${cmds[lang]}</p><p class="${isFixed ? 'hl' : 'err'}">${out}</p><p class="dim">[exit 0 in 0.02${isFixed?4:6}s]</p>` + boxClose;
+      s += isFixed
+        ? `<p class="hl">expected [1, 2] — nailed it.</p>` + next(`<span class="kbd">complexity</span> to confirm, then <span class="kbd">done</span>.`)
+        : `<p class="dim">expected [1, 2] for nums=[3,2,4], target=6 — this returned ${out} instead. it ran fine, it's just wrong.</p>` + next(`<span class="kbd">review</span> to see what's actually wrong.`);
+      return s;
+    }
+
+    return `<p class="dim">$ (no linked problem — plain run, nothing to compare against)</p><p class="hl">3</p>` + next(`<span class="kbd">coach dsa</span> or <span class="kbd">coach sql</span> for the full flow.`);
+  }
+
+  function complexityScreen() {
+    if (state.mode !== 'lab') return `<p class="err">nothing active — try <span class="kbd">lab sql</span> first.</p>`;
+    const lang = state.labLang, topic = state.coachTopic;
+
+    if (topic === 'sql' && lang === 'sql' && state.labStage !== 'blank') {
+      if (state.labStage === 'buggy') {
+        return boxOpen('QUERY PLAN') + `<p>SEARCH employees USING INDEX department_id</p>` + boxClose +
+          `<p class="dim">structurally the plan is fine — this isn't a performance bug, it's a logic bug. the query just never excludes the real highest.</p>` +
+          next(`<span class="kbd">review</span> for the specific fix to think about.`);
+      }
+      return boxOpen('QUERY PLAN') + `<p>SEARCH employees USING INDEX department_id</p>` + boxClose +
+        boxOpen('ROW COUNT') + `<p class="hl">4</p>` + boxClose +
+        `<p class="dim">real sqlite3 output — no AI guess, Big-O doesn't mean much for a query.</p>` +
+        next(`<span class="kbd">done</span> — this one's correct.`);
+    }
+
+    if (topic === 'dsa' && PROCEDURAL.has(lang) && state.labStage !== 'blank') {
+      const c = DSA_CODE[lang];
+      if (state.labStage === 'buggy') {
+        return boxOpen('TIME COMPLEXITY') + `<p class="err">⚠ can't be estimated cleanly — the code doesn't produce correct output yet.</p>` + boxClose +
+          boxOpen('SPACE COMPLEXITY') + `<p class="err">⚠ same — fix the logic first, complexity of a wrong answer isn't meaningful.</p>` + boxClose +
+          next(`<span class="kbd">review</span> to find the actual bug.`);
+      }
+      const bigO = PROCEDURAL.has(lang) && (lang === 'c' || lang === 'cpp') ? 'O(n²)' : 'O(n)';
+      const spaceO = (lang === 'c' || lang === 'cpp') ? 'O(1)' : 'O(n)';
+      return boxOpen('TIME COMPLEXITY') + `<p><span class="hl">${bigO}</span>  •  ${c.timeExp}</p>` + boxClose +
+        boxOpen('SPACE COMPLEXITY') + `<p><span class="hl">${spaceO}</span>  •  ${c.spaceExp}</p>` + boxClose +
+        next(`<span class="kbd">done</span> — this one's correct.`);
+    }
+
+    return `<p class="dim">no linked problem — try <span class="kbd">coach dsa</span> or <span class="kbd">coach sql</span> first.</p>`;
+  }
+
+  function reviewScreen() {
+    if (state.mode !== 'lab') return `<p class="err">nothing active — try <span class="kbd">lab python</span> first.</p>`;
+    const lang = state.labLang, topic = state.coachTopic;
+    if (topic === 'sql' && lang === 'sql' && state.labStage !== 'blank') {
+      if (state.labStage === 'fixed') return `<p class="dim">already fixed — nothing to review.</p>` + next(`<span class="kbd">done</span>.`);
+      return `<p class="dim">sending your query to the AI panel next to it...</p><p><span class="hl">mtdo-ai</span> <span class="dim">›</span> ${SQL_CODE.review}</p><p class="dim">not the corrected query — just where to look.</p>` +
+        next(`<span class="kbd">fix</span> when you're ready to see the corrected approach.`);
+    }
+    if (topic === 'dsa' && PROCEDURAL.has(lang) && state.labStage !== 'blank') {
+      if (state.labStage === 'fixed') return `<p class="dim">already fixed — nothing to review.</p>` + next(`<span class="kbd">done</span>.`);
+      const c = DSA_CODE[lang];
+      return `<p class="dim">sending your ${LANG_NAMES[lang]} buffer to the AI panel next to it...</p><p><span class="hl">mtdo-ai</span> <span class="dim">›</span> ${c.review}</p><p class="dim">not a verdict, not a fix — a nudge toward wherever the approach is going wrong.</p>` +
+        next(`<span class="kbd">fix</span> when you're ready to see the corrected approach.`);
+    }
+    return `<p><span class="hl">mtdo-ai</span> <span class="dim">›</span> what's your current approach actually checking for, on each element?</p>` + next(`<span class="kbd">coach dsa</span> first for the full flow.`);
+  }
+
+  function fixScreen() {
+    if (state.mode !== 'lab' || state.labStage !== 'buggy') return `<p class="err">nothing to fix right now — try <span class="kbd">review</span> first.</p>`;
+    const lang = state.labLang, topic = state.coachTopic;
+    if (topic === 'sql' && lang === 'sql') {
+      state.labStage = 'fixed';
+      return `<p class="hl">here's the corrected approach:</p>` +
+        boxOpen('practice-lab · SQL', 'sample.db') + `<p class="codeblock">${SQL_CODE.fixed}</p>` + boxClose +
+        next(`<span class="kbd">run</span> to confirm it now works.`);
+    }
+    if (topic === 'dsa' && PROCEDURAL.has(lang)) {
+      state.labStage = 'fixed';
+      const c = DSA_CODE[lang];
+      return `<p class="hl">here's the corrected approach:</p>` +
+        boxOpen(`practice-lab · ${LANG_NAMES[lang]}`, 'Two Sum') + `<p class="codeblock">${c.fixed}</p>` + boxClose +
+        next(`<span class="kbd">run</span> to confirm it now works.`);
+    }
+    return `<p class="err">nothing linked — try <span class="kbd">coach dsa</span> first.</p>`;
+  }
+
+  const COACH_NOTES = {
+    dsa: {
+      focus: ['Hash maps trade space for O(1) average lookups', 'Check-before-insert avoids the self-match trap'],
+      ask: ['What is the brute-force solution?', 'Why is it slow?', 'What data structure helps?'],
+      mistake: 'Skipping the "check before insert" ordering on hashmap problems.',
+      model: 'Can you draw the hashmap state after each step, before you code it?',
+    },
+    sql: {
+      focus: ['Correlated subqueries re-run per outer row — know the cost', 'GROUP BY collapses rows; MAX() alone never excludes anything'],
+      ask: ['What is the execution plan?', 'What indexes help?', 'What happens on large datasets?'],
+      mistake: 'Assuming MAX()/GROUP BY automatically excludes the row you\'re comparing against.',
+      model: 'Can you picture the table, row by row, before writing the query?',
+    },
+  };
+
+  function doneScreen() {
+    if (state.mode !== 'lab' || state.labStage !== 'fixed') {
+      return `<p class="err">not ready yet — get to a working solution first (<span class="kbd">run</span> → <span class="kbd">review</span> → <span class="kbd">fix</span> → <span class="kbd">run</span>).</p>`;
+    }
+    const topic = state.coachTopic;
+    const notes = COACH_NOTES[topic] || COACH_NOTES.dsa;
+    let s = `<p><span class="hl">✓ marked done.</span> the full coaching notes just unlocked, for review:</p>` +
+      boxOpen('learning-coach', 'unlocked') +
+      `<p class="hl">Focus On</p>` + notes.focus.map(f => `<p>&nbsp;&nbsp;• ${f}</p>`).join('') +
+      `<p>&nbsp;</p><p class="hl">Ask Yourself</p>` + notes.ask.map(f => `<p>&nbsp;&nbsp;• ${f}</p>`).join('') +
+      `<p>&nbsp;</p><p class="hl">Common Mistake</p><p>&nbsp;&nbsp;• ${notes.mistake}</p>
+       <p>&nbsp;</p><p class="hl">Mental Model</p><p>&nbsp;&nbsp;• ${notes.model}</p>` + boxClose;
+    s += next(`<span class="kbd">coach ${topic === 'sql' ? 'dsa' : 'sql'}</span> to try the other flow, or <span class="kbd">crm</span> / <span class="kbd">vault</span> / <span class="kbd">keys</span> to keep exploring.`);
+    return s;
+  }
+
+  /* ---------------- crm / vault / keys / install ---------------- */
+
+  function crmScreen() {
+    return `<p>Career CRM — every application, one pipeline.</p>` +
+      boxOpen('career-crm', 'Razorpay · SDE1') +
+      `<div class="pipeline">
+        <div class="pstage">Applied</div><span class="parrow">→</span>
+        <div class="pstage">OA</div><span class="parrow">→</span>
+        <div class="pstage on">Interview</div><span class="parrow">→</span>
+        <div class="pstage">Offer</div>
+      </div>` + boxClose +
+      `<p><span class="kbd">space</span> advance <span class="kbd">u</span> back <span class="kbd">a</span> add <span class="kbd">n</span> notes</p>
+       <p class="dim">this is what the <b>job-switch</b> plan (see <span class="kbd">plan job-switch</span>) wires up automatically — and the <b>college-application</b> plan uses the exact same pipeline for Applied → Interview → Accepted.</p>` +
+      next(`<span class="kbd">vault</span> next.`);
+  }
+
+  const VAULT_NOTES = [
+    { t: 'System design: rate limiter', body: 'token bucket vs sliding window — token bucket allows bursts, sliding window is smoother.' },
+    { t: 'Behavioral: "tell me about a conflict"', body: 'STAR format — situation, task, action, result. keep the result quantified.' },
+    { t: 'SQL: window functions', body: 'RANK() vs DENSE_RANK() — DENSE_RANK never skips a number after a tie.' },
+  ];
+  function vaultScreen(args) {
+    if (cleanArg(args[0]) === 'search' && args[1]) {
+      const term = args.slice(1).join(' ').toLowerCase();
+      const hits = VAULT_NOTES.filter(n => (n.t + n.body).toLowerCase().includes(term));
+      if (!hits.length) return `<p class="dim">no notes match "${escapeHtml(term)}"</p>` + next(`<span class="kbd">vault</span> to see all of them.`);
+      let s = boxOpen('knowledge-vault', `search: ${escapeHtml(term)}`);
+      hits.forEach(n => { s += `<p class="hl">${n.t}</p><p class="dim">${n.body}</p><p>&nbsp;</p>`; });
+      return s + boxClose + next(`<span class="kbd">keys</span> for the full keybinding list.`);
+    }
+    let s = `<p>Knowledge Vault — a second brain, separate from any one card.</p>` + boxOpen('knowledge-vault', VAULT_NOTES.length + ' notes');
+    VAULT_NOTES.forEach(n => { s += `<p class="hl">${n.t}</p><p class="dim">${n.body}</p><p>&nbsp;</p>`; });
+    return s + boxClose + `<p><span class="kbd">/</span> search live <span class="kbd">e</span> edit <span class="kbd">a</span> add · try <span class="kbd">vault search rank</span></p>` +
+      next(`<span class="kbd">keys</span> for the full keybinding list.`);
+  }
+
+  function keysScreen() {
+    const groups = [
+      ['Global', [['f','Toggle Focus Mode'],['C','Start/focus the AI panel'],['T','Toggle the Practice Lab'],['c','Career CRM'],['v','Knowledge Vault'],['g','Setup Plan Wizard'],['?','Full cheat sheet']]],
+      ['Practice Lab', [['^R','Run'],['^B','Complexity / query plan'],['^A','AI code review'],['^N','Reset template']]],
+      ['Kanban', [['h/l','Columns'],['j/k','Cards'],['space','Advance'],['a','Add / open menu']]],
+      ['Pomodoro & Music', [['p/x','Start-pause / reset'],['m','Play/pause'],['[ / ]','Prev / next track']]],
+    ];
+    let s = '';
+    groups.forEach(([title, rows]) => {
+      s += `<p class="hl">${title}</p>`;
+      rows.forEach(([k,d]) => { s += `<p><span class="kbd" style="min-width:60px;display:inline-block;text-align:center">${k}</span>  <span class="dim">${d}</span></p>`; });
+      s += `<p>&nbsp;</p>`;
+    });
+    return s + next(`<span class="kbd">install</span> when you're ready to actually set this up.`);
+  }
+
+  function installScreen() {
+    return boxOpen('quickstart') +
+      `<p class="dim"># from a clone of the repo</p><p>$ pip install -e .</p><p>&nbsp;</p>
+       <p class="dim"># first run auto-creates ~/.mtdo/config.yaml from the demo plan</p><p>$ mtdo</p>` + boxClose +
+      `<p>two ways to make it yours:</p>
+       <p>&nbsp;</p>
+       <p class="hl">1. by hand</p>
+       <p class="dim">&nbsp;&nbsp;$ mtdo template goals.json   <span class="cm"># writes a filled-out example</span></p>
+       <p class="dim">&nbsp;&nbsp;... edit goals.json yourself ...</p>
+       <p class="dim">&nbsp;&nbsp;$ mtdo import goals.json</p>
+       <p>&nbsp;</p>
+       <p class="hl">2. let the AI do it — the Plan Wizard</p>
+       <p class="dim">&nbsp;&nbsp;press <span class="kbd">g</span> in the real app → answer a few questions → the AI</p>
+       <p class="dim">&nbsp;&nbsp;writes goals.json for you → imported automatically (see <span class="kbd">plan</span> above)</p>
+       <p>&nbsp;</p>
+       <p class="dim">either way, when you open the AI panel (<span class="kbd">C</span>) you choose the backend:
+       Claude Code if it's installed, a local Ollama model, or a direct API chat
+       (Claude / ChatGPT / Gemini) — your call, remembered for next time.</p>` +
+      next(`<span class="kbd">tour</span> to replay everything from the start.`);
+  }
+
+  /* ---------------- command dispatch ---------------- */
+
+  function run(raw) {
+    const trimmed = raw.trim();
+    if (!trimmed) return;
+    printCommandLine(raw);
+    state.history.push(raw); state.histIdx = state.history.length;
+    const [cmd, ...args] = trimmed.split(/\s+/);
+    const c = cmd.toLowerCase();
+
+    switch (c) {
+      case 'help': case '?': printBlock(helpScreen()); break;
+      case 'about': printBlock(aboutScreen()); break;
+      case 'plan': case 'wizard': printBlock(planScreen(args)); break;
+      case 'board': case 'kanban': printBlock(boardScreen()); break;
+      case 'focus': printBlock(focusScreen()); break;
+      case 'coach': printBlock(coachScreen(args)); break;
+      case 'hint': printBlock(hintScreen()); break;
+      case 'ai': printBlock(aiScreen(args)); break;
+      case 'lab': printBlock(labScreen(args)); break;
+      case 'run': printBlock(runScreen()); break;
+      case 'complexity': printBlock(complexityScreen()); break;
+      case 'review': printBlock(reviewScreen()); break;
+      case 'fix': printBlock(fixScreen()); break;
+      case 'done': printBlock(doneScreen()); break;
+      case 'crm': printBlock(crmScreen()); break;
+      case 'vault': printBlock(vaultScreen(args)); break;
+      case 'keys': case 'keybinds': printBlock(keysScreen()); break;
+      case 'install': printBlock(installScreen()); break;
+      case 'tour': startTour(); break;
+      case 'clear': case 'cls': clearScreen(); break;
+      case 'exit': case 'quit': case 'q':
+        printBlock(`<p>there's no quitting deliberate practice. (closing the tab won't help either)</p>`); break;
+      case 'whoami': printBlock(`<p>mtdo-user  <span class="dim">(probably prepping for an interview)</span></p>`); break;
+      case 'ls': printBlock(`<p>kanban.board  learning.coach  ai.panel  practice.lab  career.crm  knowledge.vault</p>`); break;
+      case 'pwd': printBlock(`<p>/focus-mode/deliberate-practice</p>`); break;
+      case 'sudo': printBlock(`<p class="err">nice try. this terminal can't rm -rf your grind.</p>`); break;
+      case 'date': printBlock(`<p>${new Date().toString()}</p>`); break;
+      default:
+        printBlock(`<p class="err">command not found: ${escapeHtml(c)}</p><p class="dim">type <span class="kbd">help</span> for the list, or <span class="kbd">tour</span> for a guided walkthrough.</p>`);
+    }
+    input.value = '';
+  }
+
+  function clearScreen() {
+    document.getElementById('frame').classList.add('glitch');
+    setTimeout(() => document.getElementById('frame').classList.remove('glitch'), 200);
+    output.innerHTML = '';
+    state.mode = null; refreshPrompt();
+  }
+
+  /* ---------------- guided tour ---------------- */
+
+  function simType(cmd, delay) {
+    return new Promise(resolve => {
+      let i = 0;
+      input.value = '';
+      const iv = setInterval(() => {
+        if (!state.touring) { clearInterval(iv); resolve(); return; }
+        input.value = cmd.slice(0, i + 1);
+        i++;
+        if (i >= cmd.length) {
+          clearInterval(iv);
+          setTimeout(() => { run(cmd); setTimeout(resolve, delay || 1600); }, 220);
+        }
+      }, 30);
+    });
+  }
+
+  async function startTour() {
+    if (state.touring) return;
+    state.touring = true;
+    input.disabled = true;
+    touringBadge.style.display = 'inline-block';
+    printBlock(`<p class="dim">— starting the guided tour, sit back (Ctrl+C to skip) —</p>`);
+    const steps = [
+      ['about', 2000], ['plan job-switch', 2600], ['board', 2000], ['focus', 2000],
+      ['coach dsa', 1800], ['hint', 1500], ['hint', 1500],
+      ['lab python', 1800], ['run', 1800], ['review', 2200], ['fix', 1800], ['run', 1600], ['complexity', 1800], ['done', 2200],
+      ['coach sql', 1800], ['hint', 1500],
+      ['lab sql', 1800], ['run', 1800], ['review', 2200], ['fix', 1800], ['run', 1600], ['complexity', 1800], ['done', 2200],
+      ['crm', 1800], ['vault', 1800], ['keys', 2000], ['install', 1200],
+    ];
+    for (const [cmd, delay] of steps) {
+      if (!state.touring) break;
+      await simType(cmd, delay);
+    }
+    if (state.touring) {
+      printBlock(`<p class="hl">— that's the whole walkthrough —</p><p class="dim">type <span class="kbd">help</span> to explore on your own, or <span class="kbd">tour</span> to replay it.</p>`);
+    }
+    state.touring = false;
+    input.disabled = false;
+    touringBadge.style.display = 'none';
+    input.focus();
+  }
+
+  /* ---------------- boot sequence ---------------- */
+
+  function boot() {
+    typeLines([
+      { t: 'mtdo v2.4.0 — terminal task board', speed: 22 },
+      { t: 'loading ~/.mtdo/config.yaml ...', cls: 'dim', speed: 10 },
+      { t: 'loading ~/.mtdo/state.json ...', cls: 'dim', speed: 10 },
+      { t: 'ready.', cls: 'hl', speed: 30 },
+    ], () => {
+      printBlock(`<p class="dim">this is an interactive recreation — type real commands below. try <span class="kbd">help</span> or <span class="kbd">tour</span>.</p>`);
+      input.focus();
+    });
+  }
+
+  /* ---------------- input wiring ---------------- */
+
+  input.addEventListener('keydown', (e) => {
+    if (state.touring) { return; }
+    if (e.key === 'Enter') { run(input.value); }
+    else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      if (state.histIdx > 0) { state.histIdx--; input.value = state.history[state.histIdx] || ''; }
+    } else if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      if (state.histIdx < state.history.length) { state.histIdx++; input.value = state.history[state.histIdx] || ''; }
+    } else if (e.ctrlKey && e.key.toLowerCase() === 'l') {
+      e.preventDefault(); clearScreen();
+    }
+  });
+  document.addEventListener('keydown', (e) => {
+    if (e.ctrlKey && e.key === 'c' && state.touring) { state.touring = false; }
+  });
+  document.getElementById('frame').addEventListener('click', () => { if (!state.touring) input.focus(); });
+
+  function tickClock() {
+    document.getElementById('clock').textContent = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+  }
+  tickClock(); setInterval(tickClock, 1000);
+
+  boot();
+})();
