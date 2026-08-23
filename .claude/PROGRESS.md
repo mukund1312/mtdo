@@ -9,6 +9,41 @@ Add each session's PROGRESS.md entry to the same branch as the code it describes
 
 ---
 
+## 2026-08-24 (PR https://github.com/mukund1312/mtdo/pull/9) -- dashboard: Linear-style redesign (nav, issue detail, team, search)
+
+User pasted a full ASCII mockup of Linear's UI and asked for it "in the current dashboard
+webapp." Scoped it down to the parts backed by real data in the tracker -- Cycles/Sprints,
+Projects, Roadmap, Inbox, and Goals don't map onto anything GitHub Issues here actually
+has (no priority/sprint/project field), so building decorative UI for those would just be
+empty chrome; flagged that to the user rather than building it.
+
+**Did:**
+- `bug_sync.list_all()`: added `body`/`updatedAt` to the fetched `--json` fields -- needed
+  so a real issue detail page can show the actual bug description, not just the title.
+- `dashboard.py`: rewrote `render_html` as a small client-side SPA over one embedded JSON
+  array of issues (`_issue_payload` per issue) -- hash-based routing (`#/dashboard`,
+  `#/issues`, `#/issue/<n>`, `#/team`), sidebar nav, a "Viewing as" `localStorage` selector
+  (there's no real per-viewer auth on a static snapshot page) driving a personalized
+  greeting + "assigned to me" list, a real issue detail view using the new `body`/
+  `updatedAt` fields, a Team view with commit-count velocity bars, and a Cmd+K search
+  modal (substring match over titles, plus an `assigned:me` query) -- all still generated
+  once server-side; nothing on the page fetches anything live (same hard CSP constraint as
+  before). Kept the existing found-by/assigned-to table filters, now with clickable rows
+  routing to the issue detail view.
+- Escaped `</script` in the embedded JSON payload (`_json_for_script`) -- a bug title or
+  body containing that literal string would otherwise truncate the page early.
+- Regenerated via `mtdo-sandbox dashboard`, verified structurally (nav routes, whoami/
+  filter options, one intact `<script>` tag, no `</script` splitting), and republished to
+  the existing Artifact link (same URL, no new share needed).
+
+**Not built (flagged to user, not yet confirmed as wanted):** Cycles/Sprints, Projects,
+Roadmap, Inbox/notifications, Goals, Settings -- no corresponding data model exists yet.
+**Still open:** whether the Artifact share menu can grant a second person write/editor
+access -- needed before a real per-bug conversation/notes feature (would require the
+`artifact` live-doc capability, a different mechanism from this snapshot-publish model).
+
+---
+
 ## 2026-08-23 (PR https://github.com/mukund1312/mtdo/pull/9) -- dashboard: commit counts + bug distribution/rebalancing
 
 User asked for three things on the shared dashboard: (1) fix it -- it should "work

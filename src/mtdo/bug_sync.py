@@ -113,7 +113,7 @@ def list_all():
     out = _run([
         "gh", "issue", "list", "--repo", TRACKER_REPO, "--label", LABEL,
         "--state", "all",
-        "--json", "number,title,author,assignees,state,createdAt,closedAt,labels",
+        "--json", "number,title,body,author,assignees,state,createdAt,closedAt,updatedAt,labels",
         "--limit", "1000",
     ])
     return json.loads(out)
