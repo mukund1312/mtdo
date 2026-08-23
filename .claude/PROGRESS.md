@@ -9,6 +9,36 @@ Add each session's PROGRESS.md entry to the same branch as the code it describes
 
 ---
 
+## 2026-08-23 (PR https://github.com/mukund1312/mtdo/pull/8) -- fresh_config.yaml was never actually empty (bug #10)
+
+Bug #10 originally asked for an in-app upload/download screen for the "Manual" populate
+path. Before building that, asked the user to clarify -- turned out "Manual" was always
+meant as "use the app genuinely blank, add fields yourself via 'a'", not "hand-edit
+goals.json". No upload/download UI needed at all.
+
+Checking that surfaced the *real* bug: `fresh_config.yaml` (what `init_config(fresh=True)`
+actually writes) shipped with 3 placeholder categories (work/personal/health -- health
+even had a `fixed_labels: ["Move your body today"]` auto-generating a card), not truly
+empty. So picking "Manual" never actually gave a blank board.
+
+**Did:** Rewrote `fresh_config.yaml` to `category_order: []`, `categories: {}` -- genuinely
+zero categories, matching `config._EMPTY_CONFIG`'s intent (the Option-A equivalent, used
+elsewhere). Updated the wizard's "Manual" option label and confirmation toast to say what
+it actually does (press 'a' to add fields) instead of implying JSON editing.
+
+**Tested (real tmux pty):** confirmed the app renders correctly with zero categories --
+`Backlog (0) Todo (0) In Progress (0) Done (0)`, no crash, every side panel (stats,
+calendar, pomodoro, now playing, coach) renders its empty state correctly. Confirmed 'a'
+(add field) still works from this genuinely blank state. Real `~/.mtdo` untouched; 8 real
+saved instances present throughout (several created by the user concurrently during this
+session), none touched -- net zero change from my own test instance (created, then
+discarded).
+
+**Next / open items:** bugs #6 and #13 (AI-config walkthrough + full automation of the AI
+hand-off) still need a scoping conversation before code -- next up.
+
+---
+
 ## 2026-08-23 (PR https://github.com/mukund1312/mtdo/pull/6) -- wizard free-text answers get a scrollable box too (bug #8)
 
 Bug tracker triage session: went through all bugs logged to date. Closed #1, #9 (empty,
