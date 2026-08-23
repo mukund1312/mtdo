@@ -405,6 +405,16 @@ _SCRIPT = """
     });
   });
 
+  // ---------- comment-count badges next to each bug's title in the Issues table ----------
+  function refreshCommentBadges() {
+    document.querySelectorAll(".comment-badge").forEach(function (badge) {
+      var thread = document.getElementById("thread-" + badge.dataset.issue);
+      var count = thread ? thread.querySelectorAll(".comment").length : 0;
+      badge.textContent = count ? ("💬 " + count) : "";
+      if (count) badge.removeAttribute("hidden"); else badge.setAttribute("hidden", "");
+    });
+  }
+
   // ---------- conversation thread (post a note, either dev, either direction) ----------
   document.querySelectorAll(".thread-post").forEach(function (btn) {
     btn.addEventListener("click", function () {
@@ -425,6 +435,7 @@ _SCRIPT = """
         p.textContent = name + ": " + text;
         thread.appendChild(p);
         input.value = "";
+        refreshCommentBadges();
       });
     });
   });
@@ -515,6 +526,7 @@ _SCRIPT = """
   });
 
   getArtifact();
+  refreshCommentBadges();
   route();
 })();
 </script>
@@ -554,10 +566,15 @@ def render_html(issues, statuses, overrides=None):
         author = html.escape(_display_name(found_login))
         age = _age(issue["closedAt"]) if issue.get("closedAt") else _age(issue["createdAt"])
 
+        comment_badge = (
+            f'<span class="comment-badge" data-issue="{number}">\U0001f4ac {len(notes)}</span>'
+            if notes else
+            f'<span class="comment-badge" data-issue="{number}" hidden></span>'
+        )
         rows += f"""
         <tr data-found-by="{html.escape(found_login)}">
           <td><span class="pill {pill_class}">{pill_text}</span></td>
-          <td class="bug-title"><a href="#/issue/{number}">{title}</a></td>
+          <td class="bug-title"><a href="#/issue/{number}">{title}</a>{comment_badge}</td>
           <td>{author}</td>
           <td>{_render_assign_control(number, assigned_to)}</td>
           <td class="dim">{age}</td>
@@ -750,6 +767,7 @@ def render_html(issues, statuses, overrides=None):
   .bug-title {{ max-width: 320px; }}
   .bug-title a {{ text-decoration: none; }}
   .bug-title a:hover {{ text-decoration: underline; }}
+  .comment-badge {{ font-size: 0.75rem; color: var(--text-dim); margin-left: 6px; white-space: nowrap; }}
   .dim {{ color: var(--text-dim); }}
 
   .pill {{

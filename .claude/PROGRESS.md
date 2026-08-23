@@ -9,6 +9,16 @@ Add each session's PROGRESS.md entry to the same branch as the code it describes
 
 ---
 
+## 2026-08-24 (PR https://github.com/mukund1312/mtdo/pull/9) -- dashboard: comment-count badge on the Issues table
+
+User asked how they'd know a dev had posted a conversation note without opening every
+bug's detail page one by one -- real gap, there was no indicator. Added a small "💬 N"
+badge next to the bug title in the Issues table, computed from that bug's actual thread
+element (`refreshCommentBadges()`, run on load and after posting), so it stays correct
+even as comments get added live by either viewer without a republish.
+
+---
+
 ## 2026-08-24 (PR https://github.com/mukund1312/mtdo/pull/9) -- dashboard: editable assignment/description/conversation via the `artifact` live-doc capability + git activity per bug
 
 Follow-up to the Linear redesign below: user wanted the "assigned to" field editable
