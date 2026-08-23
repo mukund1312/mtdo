@@ -9,6 +9,62 @@ Add each session's PROGRESS.md entry to the same branch as the code it describes
 
 ---
 
+## 2026-08-24 (PR https://github.com/mukund1312/mtdo/pull/10) -- Focus Mode / AI-panel priming had no crash guard (bug #7)
+
+Bug #7 (GH mukund1312/mtdo-bugs#11): "the AI we are using in focus mode is crashing
+again and again" -- no repro steps, no stack trace, and `~/.mtdo/error.log` /
+every `~/.mtdo-sandbox/instances/*/error.log` had nothing from around when it was
+filed, despite nearly every AI-panel code path already logging failures via
+errorlog.py, AND `TodoApp._handle_exception` overriding Textual's own hook to log
+literally any uncaught exception reachable through the message pump (action_/on_/
+timer callbacks -- confirmed by reading Textual's own source, message_pump.py/
+worker.py/timer.py all route through it). That combination is what actually
+narrowed this down: the crash had to be in one of the only spots NOT covered.
+
+**Root cause (best-supported, not proven with a live repro):**
+`TodoApp.action_toggle_focus_mode` ('f') and `_prime_ai_context_if_needed` (primes
+the embedded AI panel with the active task's context) had no try/except of their
+own -- the one pair of AI-panel entry points not wrapped, unlike `action_toggle_claude`
+right next to them. Confirmed via a headless `App.run_test()` with a deliberately
+malformed active task that a crash CAN reach these two unguarded (though a block
+missing `"text"` specifically turned out to crash much earlier/more broadly --
+kanban card render, the active-task panel -- ruling that exact malformation out as
+the real trigger, but proving the principle: nothing stopped some other bad state
+reaching these two from taking the whole app down silently).
+
+**Did:** wrapped both in try/except (`app_log.exception` + toast, same pattern as
+`action_toggle_claude`), hardened `active["block"]["text"]` to `.get("text", "")` in
+the priming message. Also found and fixed `PtyPanel.on_mouse_scroll_up`/
+`on_mouse_scroll_down` (mouse-wheel scroll in the AI panel) -- the only two handlers
+in `pty_panel.py` missing the same guard every other handler there already has.
+
+**Tested:** `py_compile` both files; headless `App.run_test()` twice -- once with a
+malformed active task (confirmed the guard doesn't mask anything new, the real
+crash surface for that specific malformation is elsewhere), once with realistic
+data pressing `f` twice (Focus Mode toggles cleanly both ways, `ai_primed_ref` sets
+correctly, nothing new logged). Could not get a live repro of the actual reported
+crash itself.
+
+**Incident during this session, disclosed here on purpose:** while trying to
+reproduce live via tmux, ran `pkill -f "/opt/homebrew/bin/mtdo$"` to clean up a
+debug process and it matched far more broadly than intended -- it killed two
+long-running real `mtdo` processes (PIDs 21403 and 21646, both up since Tue 7PM),
+one of which was hosted in a tmux session called "mt6" that has since closed as a
+result. mtdo writes state.json on every mutation already (not just on exit), so
+tracked task/streak data itself should be safe, but any live unsaved AI-panel
+conversation in those sessions is gone, and the "mt6" terminal window itself is
+gone. Told the user directly in the session this happened in. **Lesson for next
+time: never `pkill`/`kill` by a pattern that matches the plain `mtdo`/`mtdo-sandbox`
+binary path -- it matches every running instance, not just ones this session
+started. Kill only an exact PID captured right after spawning it yourself.**
+
+Bug #7 marked fixed in `~/.mtdo-sandbox/bugs.json` and GH issue #11 closed via
+`bug_sync.mark_fixed_and_close` (this branch was cut from `main`, pre-dashboard-PR,
+so that function's older form here has no rebalance step -- not a bug, just an
+older version of bug_sync.py than the still-unmerged dashboard branch has).
+
+---
+
 ## 2026-08-23 (PR https://github.com/mukund1312/mtdo/pull/8) -- fresh_config.yaml was never actually empty (bug #10)
 
 Bug #10 originally asked for an in-app upload/download screen for the "Manual" populate
