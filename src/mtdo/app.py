@@ -105,8 +105,15 @@ def _progress_bar(position, duration, width=18):
     return _block_bar(frac, width)
 
 
+WIZARD_BACK = object()  # sentinel dismiss value meaning "go back a step" -- see the
+# setup wizard's _wizard_go_back below. An object(), not a string, so it can never
+# collide with a real typed answer. Only screens passed show_back=True render/bind
+# Ctrl+B for this; every other call site of these generic screens is unaffected.
+
+
 class TextPromptScreen(ModalScreen):
-    """Generic modal: shows a prompt + text input, returns the value (or None on Escape).
+    """Generic modal: shows a prompt + text input, returns the value, WIZARD_BACK
+    (Ctrl+B, only when show_back=True), or None on Escape.
 
     multiline=True swaps the single-line Input for a TextArea sized to show ~12 lines
     with scroll (Ctrl+S to save, since Enter means newline in a TextArea) -- same fix as
@@ -114,13 +121,18 @@ class TextPromptScreen(ModalScreen):
     answer hard to review before submitting. Used for the setup wizard's free-text
     questions (some, like "what's your academic goal", can run long); left off (the
     default) for genuinely short answers like a name or a card title, where single-line
-    is the right, unsurprising affordance and Enter-to-submit is worth keeping."""
+    is the right, unsurprising affordance and Enter-to-submit is worth keeping.
 
-    def __init__(self, prompt_text, initial="", multiline=False):
+    show_back=True adds a "Ctrl+B to go back" hint and binding -- only the setup wizard
+    passes this (and only once there's an earlier step to return to); every other caller
+    leaves it False and never sees WIZARD_BACK come out of dismiss()."""
+
+    def __init__(self, prompt_text, initial="", multiline=False, show_back=False):
         super().__init__()
         self.prompt_text = prompt_text
         self.initial = initial
         self.multiline = multiline
+        self.show_back = show_back
 
     CSS = """
     TextPromptScreen { align: center middle; }
@@ -129,16 +141,17 @@ class TextPromptScreen(ModalScreen):
     """
 
     def compose(self) -> ComposeResult:
+        back_hint = ", Ctrl+B back" if self.show_back else ""
         with Center():
             with Middle():
                 with Vertical(id="prompt-box"):
                     yield Static(self.prompt_text)
                     if self.multiline:
                         yield TextArea(self.initial, id="prompt-textarea")
-                        yield Static("Ctrl+S to save, Escape to cancel", classes="dim")
+                        yield Static(f"Ctrl+S to save, Escape to cancel{back_hint}", classes="dim")
                     else:
                         yield Input(value=self.initial, id="prompt-input")
-                        yield Static("Enter to save, Escape to cancel", classes="dim")
+                        yield Static(f"Enter to save, Escape to cancel{back_hint}", classes="dim")
 
     def on_mount(self):
         if self.multiline:
@@ -158,6 +171,10 @@ class TextPromptScreen(ModalScreen):
             event.prevent_default()
             event.stop()
             self.dismiss(self.query_one(TextArea).text)
+        elif self.show_back and event.key == "ctrl+b":
+            event.prevent_default()
+            event.stop()
+            self.dismiss(WIZARD_BACK)
 
 
 class SaveInstanceScreen(ModalScreen):
@@ -397,14 +414,20 @@ class AIBackendPickScreen(ModalScreen):
 class PersonaPickScreen(ModalScreen):
     """Modal: first step of the plan-setup wizard (g) -- which of plan_wizard.PERSONAS
     you are, since the curated question set that follows differs by stage of life.
-    Dismisses with the persona's key (e.g. "college"), or None on Escape."""
+    Dismisses with the persona's key (e.g. "college"), WIZARD_BACK (Ctrl+B, only when
+    show_back=True), or None on Escape."""
 
     CSS = """
     PersonaPickScreen { align: center middle; }
     #persona-pick-box { width: 60; height: auto; border: round magenta; padding: 1 2; background: $panel; }
     """
 
+    def __init__(self, show_back=False):
+        super().__init__()
+        self.show_back = show_back
+
     def compose(self) -> ComposeResult:
+        back_hint = ", Ctrl+B back" if self.show_back else ""
         with Center():
             with Middle():
                 with Vertical(id="persona-pick-box"):
@@ -414,7 +437,7 @@ class PersonaPickScreen(ModalScreen):
                         for key, label in plan_wizard.PERSONAS
                     ]
                     yield VimListView(*items)
-                    yield Static("Enter to pick, Escape to cancel", classes="dim")
+                    yield Static(f"Enter to pick, Escape to cancel{back_hint}", classes="dim")
 
     def on_mount(self):
         self.query_one(VimListView).focus()
@@ -425,31 +448,38 @@ class PersonaPickScreen(ModalScreen):
     def on_key(self, event):
         if event.key == "escape":
             self.dismiss(None)
+        elif self.show_back and event.key == "ctrl+b":
+            event.prevent_default()
+            event.stop()
+            self.dismiss(WIZARD_BACK)
 
 
 class ChoicePickScreen(ModalScreen):
     """Generic modal: pick one of several options from a list, for the setup wizard's
     many multiple-choice questions (unlike TextPromptScreen's free-text Input). Dismisses
-    with the chosen option's exact text, or None on Escape."""
+    with the chosen option's exact text, WIZARD_BACK (Ctrl+B, only when show_back=True),
+    or None on Escape."""
 
     CSS = """
     ChoicePickScreen { align: center middle; }
     #choice-pick-box { width: 74; height: auto; max-height: 22; border: round magenta; padding: 1 2; background: $panel; }
     """
 
-    def __init__(self, prompt_text, options):
+    def __init__(self, prompt_text, options, show_back=False):
         super().__init__()
         self.prompt_text = prompt_text
         self.options = options
+        self.show_back = show_back
 
     def compose(self) -> ComposeResult:
+        back_hint = ", Ctrl+B back" if self.show_back else ""
         with Center():
             with Middle():
                 with Vertical(id="choice-pick-box"):
                     yield Static(self.prompt_text)
                     items = [ListItem(Label(opt), name=opt) for opt in self.options]
                     yield VimListView(*items)
-                    yield Static("Enter to pick, Escape to cancel", classes="dim")
+                    yield Static(f"Enter to pick, Escape to cancel{back_hint}", classes="dim")
 
     def on_mount(self):
         self.query_one(VimListView).focus()
@@ -460,6 +490,10 @@ class ChoicePickScreen(ModalScreen):
     def on_key(self, event):
         if event.key == "escape":
             self.dismiss(None)
+        elif self.show_back and event.key == "ctrl+b":
+            event.prevent_default()
+            event.stop()
+            self.dismiss(WIZARD_BACK)
 
 
 class WeeklyMenuScreen(ModalScreen):
@@ -2374,22 +2408,49 @@ class TodoApp(App):
         if you cancel out partway, stays) genuinely empty either way; nothing here writes
         categories directly -- the AI prompt this produces is what eventually does, once
         pasted into an AI and the result imported.
+
+        Every step follows the same shape for Ctrl+B back-navigation: show_back is
+        whether _wizard_stack is non-empty (nothing to go back to on the very first step
+        shown), and each step's callback pushes a closure that redisplays *that* step
+        (pre-filled with whatever was just answered, where that's meaningful) before
+        moving forward -- so going back always lands you exactly where you were, and
+        changing an earlier answer (e.g. persona) naturally reruns everything after it
+        fresh rather than leaving stale state around.
         """
+        self._wizard_stack = []
         if appconfig.get_user_name() is None:
-            def on_name(name):
-                if name and name.strip():
-                    appconfig.set_user_name(name.strip())
-                self._pick_persona_for_setup()
-            self.push_screen(TextPromptScreen("What should we call you?", ""), on_name)
+            self._wizard_ask_name()
         else:
             self._pick_persona_for_setup()
 
+    def _wizard_go_back(self):
+        if not self._wizard_stack:
+            self.toast("Already at the first step.", style="dim")
+            return
+        self._wizard_stack.pop()()
+
+    def _wizard_ask_name(self, initial=""):
+        def on_name(value):
+            if value is WIZARD_BACK:
+                self._wizard_go_back()
+                return
+            name = (value or "").strip()
+            if name:
+                appconfig.set_user_name(name)
+            self._wizard_stack.append(lambda v=value: self._wizard_ask_name(initial=v or ""))
+            self._pick_persona_for_setup()
+        self.push_screen(TextPromptScreen("What should we call you?", initial, show_back=bool(self._wizard_stack)), on_name)
+
     def _pick_persona_for_setup(self):
         def on_persona(persona):
+            if persona is WIZARD_BACK:
+                self._wizard_go_back()
+                return
             if persona is None:
                 return
+            self._wizard_stack.append(self._pick_persona_for_setup)
             self._pick_populate_method(persona)
-        self.push_screen(PersonaPickScreen(), on_persona)
+        self.push_screen(PersonaPickScreen(show_back=bool(self._wizard_stack)), on_persona)
 
     def _pick_populate_method(self, persona):
         options = [
@@ -2398,6 +2459,9 @@ class TodoApp(App):
         ]
 
         def on_choice(choice):
+            if choice is WIZARD_BACK:
+                self._wizard_go_back()
+                return
             if choice is None:
                 return
             if choice.startswith("Manual"):
@@ -2407,9 +2471,10 @@ class TodoApp(App):
                     style="bold cyan",
                 )
                 return
+            self._wizard_stack.append(lambda p=persona: self._pick_populate_method(p))
             self._pick_ai_choice(persona)
 
-        self.push_screen(ChoicePickScreen("How do you want to build your plan?", options), on_choice)
+        self.push_screen(ChoicePickScreen("How do you want to build your plan?", options, show_back=bool(self._wizard_stack)), on_choice)
 
     def _pick_ai_choice(self, persona):
         options = [
@@ -2418,32 +2483,42 @@ class TodoApp(App):
         ]
 
         def on_choice(choice):
+            if choice is WIZARD_BACK:
+                self._wizard_go_back()
+                return
             if choice is None:
                 return
             use_builtin = choice.startswith("mtdo's built-in")
+            self._wizard_stack.append(lambda p=persona: self._pick_ai_choice(p))
             questions = list(plan_wizard.questions_for(persona))
-            self._ask_plan_wizard_questions(questions, {"persona": persona}, persona, use_builtin)
+            self._ask_plan_wizard_questions(questions, 0, {"persona": persona}, persona, use_builtin)
 
-        self.push_screen(ChoicePickScreen("How do you want to build it?", options), on_choice)
+        self.push_screen(ChoicePickScreen("How do you want to build it?", options, show_back=bool(self._wizard_stack)), on_choice)
 
-    def _ask_plan_wizard_questions(self, questions, answers, persona, use_builtin):
-        if not questions:
+    def _ask_plan_wizard_questions(self, all_questions, index, answers, persona, use_builtin):
+        if index >= len(all_questions):
             self._finish_plan_wizard(persona, answers, use_builtin)
             return
-        key, prompt_text, choices = questions[0]
-        rest = questions[1:]
+        key, prompt_text, choices = all_questions[index]
 
         def on_answer(value):
+            if value is WIZARD_BACK:
+                self._wizard_go_back()
+                return
             if value is None:
                 self.toast("Setup cancelled -- nothing written.", style="dim")
                 return
             answers[key] = value.strip() if isinstance(value, str) and not choices else value
-            self._ask_plan_wizard_questions(rest, answers, persona, use_builtin)
+            self._wizard_stack.append(
+                lambda: self._ask_plan_wizard_questions(all_questions, index, answers, persona, use_builtin)
+            )
+            self._ask_plan_wizard_questions(all_questions, index + 1, answers, persona, use_builtin)
 
+        show_back = bool(self._wizard_stack)
         if choices:
-            self.push_screen(ChoicePickScreen(prompt_text, choices), on_answer)
+            self.push_screen(ChoicePickScreen(prompt_text, choices, show_back=show_back), on_answer)
         else:
-            self.push_screen(TextPromptScreen(prompt_text, "", multiline=True), on_answer)
+            self.push_screen(TextPromptScreen(prompt_text, answers.get(key, ""), multiline=True, show_back=show_back), on_answer)
 
     def _finish_plan_wizard(self, persona, answers, use_builtin):
         try:

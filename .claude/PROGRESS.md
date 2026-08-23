@@ -9,6 +9,52 @@ Add each session's PROGRESS.md entry to the same branch as the code it describes
 
 ---
 
+## 2026-08-23 (PR https://github.com/mukund1312/mtdo/pull/7) -- Ctrl+B back-navigation through the setup wizard (bugs #11, #12)
+
+Bugs #11/#12: no way to go back and edit an earlier answer anywhere in the setup wizard's
+question sequence (name, persona, populate-method, AI-choice, and each individual Q&A
+question) -- once answered, it was answered, and an accidental Escape lost everything
+with no way back in short of restarting the whole thing via `g`.
+
+**Did:** `WIZARD_BACK` sentinel (an `object()`, not a string -- can never collide with a
+real typed answer) plumbed through `TextPromptScreen`, `ChoicePickScreen`, and
+`PersonaPickScreen` -- each gains a `show_back` param that adds a "Ctrl+B back" hint and
+binding only when there's actually a previous step to return to. `TodoApp` maintains
+`self._wizard_stack`, a list of zero-arg closures, each "how to redisplay the step before
+this one, pre-filled with what was answered there." Every wizard step callback: handle
+`WIZARD_BACK` first (pop and call the top closure), then push its own redo-closure before
+advancing forward. `_ask_plan_wizard_questions` switched from slicing the question list
+(`questions[1:]`) to an explicit `index` parameter, since slicing throws away the
+information needed to redisplay "the question before this one."
+
+Changing an earlier answer just works without special-casing: since every forward step
+always recomputes "what's next" from current state (e.g. `plan_wizard.questions_for(persona)`
+called fresh each time), going back to persona and picking a different one naturally
+serves that persona's own question set on the way back down -- no stale state to clear.
+
+**Caught and fixed one real bug during implementation, not before shipping it:** initially
+wrote two separate `on_key` methods on `ChoicePickScreen` (one for Escape, one for the new
+Ctrl+B) -- Python silently keeps only the last one defined, so Ctrl+B would have been dead
+code, never actually callable. Caught by grepping for duplicate `on_key` definitions
+during testing, before it ever reached a user; merged into one method.
+
+**Tested (real tmux pty, thorough):** back from persona to name (pre-filled correctly);
+answered 2 questions deep into a persona's Q&A, went back twice in a row (question 2 ->
+question 1, pre-filled -- then question 1 -> AI-choice), continued back through
+populate-method -> persona -> name (each pre-filled), confirmed the true first step
+renders no back hint at all (nothing to go back to, not even a broken no-op affordance).
+Separately verified that going back to persona and picking a *different* one correctly
+served that new persona's own question set going forward (School's "academic goal"
+question vs. College's "main goal" question). 6 real saved instances present in the
+picker throughout, none touched. Real `~/.mtdo` untouched.
+
+**Next / open items:** bug #10 (in-app upload/download screen for the manual-populate
+path) is next. Bug #13 (fully automate the AI hand-off, no manual copy-paste) still needs
+a scoping conversation before code -- significantly overlaps the still-unstarted PR C
+(bug #6).
+
+---
+
 ## 2026-08-23 (PR https://github.com/mukund1312/mtdo/pull/6) -- wizard free-text answers get a scrollable box too (bug #8)
 
 Bug tracker triage session: went through all bugs logged to date. Closed #1, #9 (empty,
