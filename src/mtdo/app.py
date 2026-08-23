@@ -106,30 +106,47 @@ def _progress_bar(position, duration, width=18):
 
 
 class TextPromptScreen(ModalScreen):
-    """Generic modal: shows a prompt + text input, returns the value (or None on Escape)."""
+    """Generic modal: shows a prompt + text input, returns the value (or None on Escape).
+
+    multiline=True swaps the single-line Input for a TextArea sized to show ~12 lines
+    with scroll (Ctrl+S to save, since Enter means newline in a TextArea) -- same fix as
+    BugReportScreen's, for the same reason: a one-line box makes a longer free-text
+    answer hard to review before submitting. Used for the setup wizard's free-text
+    questions (some, like "what's your academic goal", can run long); left off (the
+    default) for genuinely short answers like a name or a card title, where single-line
+    is the right, unsurprising affordance and Enter-to-submit is worth keeping."""
+
+    def __init__(self, prompt_text, initial="", multiline=False):
+        super().__init__()
+        self.prompt_text = prompt_text
+        self.initial = initial
+        self.multiline = multiline
 
     CSS = """
     TextPromptScreen { align: center middle; }
     #prompt-box { width: 70; height: auto; border: round magenta; padding: 1 2; background: $panel; }
+    #prompt-box TextArea { height: 14; border: round grey; margin: 1 0; }
     """
-
-    def __init__(self, prompt_text, initial=""):
-        super().__init__()
-        self.prompt_text = prompt_text
-        self.initial = initial
 
     def compose(self) -> ComposeResult:
         with Center():
             with Middle():
                 with Vertical(id="prompt-box"):
                     yield Static(self.prompt_text)
-                    yield Input(value=self.initial, id="prompt-input")
-                    yield Static("Enter to save, Escape to cancel", classes="dim")
+                    if self.multiline:
+                        yield TextArea(self.initial, id="prompt-textarea")
+                        yield Static("Ctrl+S to save, Escape to cancel", classes="dim")
+                    else:
+                        yield Input(value=self.initial, id="prompt-input")
+                        yield Static("Enter to save, Escape to cancel", classes="dim")
 
     def on_mount(self):
-        inp = self.query_one(Input)
-        inp.focus()
-        inp.cursor_position = len(inp.value)
+        if self.multiline:
+            self.query_one(TextArea).focus()
+        else:
+            inp = self.query_one(Input)
+            inp.focus()
+            inp.cursor_position = len(inp.value)
 
     def on_input_submitted(self, event: Input.Submitted):
         self.dismiss(event.value)
@@ -137,6 +154,10 @@ class TextPromptScreen(ModalScreen):
     def on_key(self, event):
         if event.key == "escape":
             self.dismiss(None)
+        elif self.multiline and event.key == "ctrl+s":
+            event.prevent_default()
+            event.stop()
+            self.dismiss(self.query_one(TextArea).text)
 
 
 class SaveInstanceScreen(ModalScreen):
@@ -2422,7 +2443,7 @@ class TodoApp(App):
         if choices:
             self.push_screen(ChoicePickScreen(prompt_text, choices), on_answer)
         else:
-            self.push_screen(TextPromptScreen(prompt_text, ""), on_answer)
+            self.push_screen(TextPromptScreen(prompt_text, "", multiline=True), on_answer)
 
     def _finish_plan_wizard(self, persona, answers, use_builtin):
         try:
