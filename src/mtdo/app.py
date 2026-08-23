@@ -358,6 +358,41 @@ class PersonaPickScreen(ModalScreen):
             self.dismiss(None)
 
 
+class ChoicePickScreen(ModalScreen):
+    """Generic modal: pick one of several options from a list, for the setup wizard's
+    many multiple-choice questions (unlike TextPromptScreen's free-text Input). Dismisses
+    with the chosen option's exact text, or None on Escape."""
+
+    CSS = """
+    ChoicePickScreen { align: center middle; }
+    #choice-pick-box { width: 74; height: auto; max-height: 22; border: round magenta; padding: 1 2; background: $panel; }
+    """
+
+    def __init__(self, prompt_text, options):
+        super().__init__()
+        self.prompt_text = prompt_text
+        self.options = options
+
+    def compose(self) -> ComposeResult:
+        with Center():
+            with Middle():
+                with Vertical(id="choice-pick-box"):
+                    yield Static(self.prompt_text)
+                    items = [ListItem(Label(opt), name=opt) for opt in self.options]
+                    yield VimListView(*items)
+                    yield Static("Enter to pick, Escape to cancel", classes="dim")
+
+    def on_mount(self):
+        self.query_one(VimListView).focus()
+
+    def on_list_view_selected(self, event: ListView.Selected):
+        self.dismiss(event.item.name)
+
+    def on_key(self, event):
+        if event.key == "escape":
+            self.dismiss(None)
+
+
 class WeeklyMenuScreen(ModalScreen):
     """'a' opens here whenever there's a curriculum menu to pick from (see
     core.get_weekly_menu): every item due this week, across every curriculum field, in
@@ -1789,7 +1824,16 @@ class TodoApp(App):
         self.set_interval(1.0, self.on_second_tick)
         self.set_interval(2.0, self.check_goals_file)
         if not appconfig.has_onboarded():
-            self.push_screen(OnboardingScreen(), callback=lambda _r=None: appconfig.mark_onboarded())
+            def after_onboarding(_r=None):
+                appconfig.mark_onboarded()
+                if appconfig.get_user_name() is None:
+                    self._begin_setup_flow()
+            self.push_screen(OnboardingScreen(), callback=after_onboarding)
+        elif appconfig.get_user_name() is None:
+            # Onboarded before, but never actually ran the setup flow (e.g. upgraded
+            # from an older mtdo, or a saved instance from before this existed) --
+            # still worth asking, just without replaying the feature walkthrough too.
+            self._begin_setup_flow()
 
     def toast(self, text, style="dim"):
         self.query_one(ToastLine).show(text, style)
@@ -2243,38 +2287,94 @@ class TodoApp(App):
         self.push_screen(OnboardingScreen())
 
     def action_plan_wizard(self):
+        self._begin_setup_flow()
+
+    def _begin_setup_flow(self):
+        """Entry point for the whole setup wizard -- name (first time only) -> persona ->
+        how to populate goals.json (manual vs AI-guided) -> (if AI-guided) which AI ->
+        that persona's full bespoke Q&A -> build+save the AI prompt. Triggered
+        automatically right after the feature walkthrough on a genuine first run (see
+        on_mount), or any time via 'g' (action_plan_wizard) to re-run it.
+
+        Runs entirely in-app rather than as CLI-level input() prompts before the app even
+        started (an earlier version of this wizard did that specifically to avoid hot-
+        reloading a running app's category structure) -- per explicit user request that
+        the app boot first and only then start asking questions. The board starts (and,
+        if you cancel out partway, stays) genuinely empty either way; nothing here writes
+        categories directly -- the AI prompt this produces is what eventually does, once
+        pasted into an AI and the result imported.
+        """
+        if appconfig.get_user_name() is None:
+            def on_name(name):
+                if name and name.strip():
+                    appconfig.set_user_name(name.strip())
+                self._pick_persona_for_setup()
+            self.push_screen(TextPromptScreen("What should we call you?", ""), on_name)
+        else:
+            self._pick_persona_for_setup()
+
+    def _pick_persona_for_setup(self):
         def on_persona(persona):
             if persona is None:
                 return
-            if persona == "just_exploring":
-                # Only meaningful at first-run (see cli._run_first_run_wizard, where
-                # picking this loads the demo config before the app even starts) -- if
-                # you're already running the app and press g, there's nothing to load
-                # over your existing state.
-                self.toast("Nothing to set up for that -- pick a real option here anytime to build a plan.", style="dim")
-                return
-            questions = list(plan_wizard.questions_for(persona))
-            self._ask_plan_wizard_questions(questions, {"persona": persona}, persona)
-
+            self._pick_populate_method(persona)
         self.push_screen(PersonaPickScreen(), on_persona)
 
-    def _ask_plan_wizard_questions(self, questions, answers, persona):
+    def _pick_populate_method(self, persona):
+        options = [
+            "Manual -- I'll edit goals.json myself",
+            "Guided setup -- answer a few questions and let an AI build it (Recommended)",
+        ]
+
+        def on_choice(choice):
+            if choice is None:
+                return
+            if choice.startswith("Manual"):
+                self.toast(
+                    f"Okay -- edit {appconfig.GOALS_PATH} yourself (see the template for the schema), "
+                    f"or press 'a' any time to add fields/cards directly.",
+                    style="bold cyan",
+                )
+                return
+            self._pick_ai_choice(persona)
+
+        self.push_screen(ChoicePickScreen("How do you want to build your plan?", options), on_choice)
+
+    def _pick_ai_choice(self, persona):
+        options = [
+            "mtdo's built-in AI (Claude Code, Ollama, or an API key)",
+            "An AI I already use day to day (ChatGPT, Claude, Gemini, etc)",
+        ]
+
+        def on_choice(choice):
+            if choice is None:
+                return
+            use_builtin = choice.startswith("mtdo's built-in")
+            questions = list(plan_wizard.questions_for(persona))
+            self._ask_plan_wizard_questions(questions, {"persona": persona}, persona, use_builtin)
+
+        self.push_screen(ChoicePickScreen("How do you want to build it?", options), on_choice)
+
+    def _ask_plan_wizard_questions(self, questions, answers, persona, use_builtin):
         if not questions:
-            self._finish_plan_wizard(persona, answers)
+            self._finish_plan_wizard(persona, answers, use_builtin)
             return
-        key, prompt_text = questions[0]
+        key, prompt_text, choices = questions[0]
         rest = questions[1:]
 
         def on_answer(value):
             if value is None:
-                self.toast("Plan setup cancelled -- nothing written.", style="dim")
+                self.toast("Setup cancelled -- nothing written.", style="dim")
                 return
-            answers[key] = value.strip()
-            self._ask_plan_wizard_questions(rest, answers, persona)
+            answers[key] = value.strip() if isinstance(value, str) and not choices else value
+            self._ask_plan_wizard_questions(rest, answers, persona, use_builtin)
 
-        self.push_screen(TextPromptScreen(prompt_text, ""), on_answer)
+        if choices:
+            self.push_screen(ChoicePickScreen(prompt_text, choices), on_answer)
+        else:
+            self.push_screen(TextPromptScreen(prompt_text, ""), on_answer)
 
-    def _finish_plan_wizard(self, persona, answers):
+    def _finish_plan_wizard(self, persona, answers, use_builtin):
         try:
             prompt = plan_wizard.build_prompt(persona, answers)
             path, copied = plan_wizard.save_and_copy(prompt)
@@ -2282,14 +2382,15 @@ class TodoApp(App):
             app_log.exception("plan wizard failed to build/save prompt")
             self.toast(f"Plan setup hit an error -- see {LOG_PATH}", style="bold red")
             return
-        if copied:
+        if use_builtin:
             self.toast(
-                f"Copied to your clipboard -- press C, paste it (Cmd+V) into the AI panel, "
-                f"and hit enter. Also saved to {path}.",
+                f"Saved -- press C to open the built-in AI panel, paste it there (Cmd+V), and hit enter. "
+                f"Also saved to {path}.",
                 style="bold green",
             )
         else:
-            self.toast(f"Saved to {path} -- press C, then paste it into the AI panel.", style="bold yellow")
+            clip_note = " and copied to your clipboard" if copied else ""
+            self.toast(f"Saved to {path}{clip_note} -- paste it into your AI of choice.", style="bold yellow")
 
     def action_save_ai_transcript(self):
         if not self.claude_panel.is_running:
