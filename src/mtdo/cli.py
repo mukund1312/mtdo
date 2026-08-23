@@ -55,12 +55,18 @@ def cmd_run(_args):
         goals = appconfig.load_goals()
         cfg, _, _ = appconfig.goals_to_config(goals)
     except FileNotFoundError:
-        # Fallback: use config.yaml or demo if neither exists
+        # Fallback: use config.yaml or demo if neither exists. Always starts genuinely
+        # empty (never the demo) -- the app itself asks name/persona/how-to-populate
+        # in-app, right after the feature walkthrough, once it's actually running (see
+        # app.py's TodoApp._begin_setup_flow). This used to run as CLI-level input()
+        # prompts *before* the app started, specifically to avoid hot-reloading a
+        # running app's category structure -- moved in-app on explicit user request
+        # instead (asking after the walkthrough, not before the app even boots, was
+        # worth more than avoiding that complexity), so TodoApp now boots with a
+        # genuinely empty board first and stays that way until the in-app wizard (or a
+        # manual `import`) fills it in.
         if not appconfig.config_exists():
-            print("First time here -- setting you up with a demo config so you can see it working.")
-            appconfig.init_config(fresh=False)
-            print(f"Created {appconfig.CONFIG_PATH} (a real example plan).")
-            print("Edit that file anytime to make it yours, or run `mtdo init --fresh` to start over empty.\n")
+            appconfig.init_config(fresh=True)
         cfg = appconfig.load_config()
 
     from . import app as todo_app

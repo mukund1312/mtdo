@@ -1,8 +1,8 @@
-"""The guided plan-setup wizard: a short, curated Q&A -- not the full 60-question deep
-dive some career coaches use (real, but far too long to walk through one field at a
-time in a terminal) -- that ends by handing a crafted prompt to whichever AI backend
-the user is already using, so IT designs a personalized goals.json instead of mtdo
-trying to template-fill one deterministically. Triggered by 'g' (TodoApp.action_plan_wizard).
+"""The guided plan-setup wizard: a bespoke, per-persona Q&A (mostly multiple-choice,
+a few free-text) that ends by handing a crafted prompt to whichever AI backend the user
+is already using, so IT designs a personalized goals.json instead of mtdo trying to
+template-fill one deterministically. Triggered automatically on first launch, or anytime
+via 'g' (TodoApp.action_plan_wizard / _begin_setup_flow).
 
 Deliberately does NOT try to auto-inject the finished prompt into a live pty session:
 a freshly-started Claude Code session might still be sitting on its own trust prompt or
@@ -11,6 +11,13 @@ risks landing it somewhere wrong (e.g. typed into a menu selection instead of th
 input). Instead the prompt is copied to the clipboard (pbcopy) and saved to a file, and
 the user pastes it into the AI panel themselves -- one paste + enter, still entirely
 inside the terminal, just without mtdo guessing at timing it can't actually observe.
+
+Each question is (key, prompt_text, choices) -- choices is None for a free-text answer,
+or a list of option strings for a single-select multiple choice (rendered as a picker
+list in-app, see app.py's ChoicePickScreen). Unlike the earlier version of this wizard,
+there's no shared "core" question set underneath every persona -- each persona (including
+"just exploring", which used to skip the Q&A entirely and only load the demo) has its own
+complete, bespoke question list, per exact user specification.
 """
 import os
 import subprocess
@@ -20,61 +27,102 @@ from . import config as appconfig
 PROMPT_OUTPUT_PATH = os.path.join(appconfig.APP_DIR, "plan_wizard_prompt.txt")
 
 PERSONAS = [
-    ("school", "School student (class 6-12)"),
-    ("college", "College student"),
-    ("exam", "Studying for an exam or certification"),
-    ("job_switch", "Preparing for a job switch"),
+    ("school", "School Student (Class 6-12)"),
+    ("college", "College Student"),
+    ("exam", "Studying for an Exam or Certification"),
+    ("job_switch", "Preparing for a Job Switch"),
+    ("just_exploring", "Just Exploring the App"),
 ]
 
-# Asked to everyone first -- the "Universal Question Set" underneath every good plan
-# regardless of stage of life: what you want, why, by when, where you actually are,
-# and what's stopped you before. Everything persona-specific builds on top of this.
-CORE_QUESTIONS = [
-    ("goal", "What's your goal? (e.g. \"backend engineer role\", \"pass AWS SA exam\", \"finish 12th with 90%+\")"),
-    ("why", "Why does this goal matter to you?"),
-    ("deadline", "By when do you want to get there? (a date, or \"no fixed date\")"),
-    ("current_level", "Where are you today -- how would you describe your current skill level here?"),
-    ("hours_per_week", "Roughly how many hours a week can you realistically study?"),
-    ("bottleneck", "What's stopped you before, or what feels like your biggest bottleneck right now?"),
-    ("learning_style", "How do you learn best? (reading / videos / building things / teaching it to someone)"),
-]
-
-PERSONA_QUESTIONS = {
+QUESTIONS = {
     "school": [
-        ("grade", "What grade/class are you in, and which board (CBSE/ICSE/State/IB/other)?"),
-        ("subjects", "Which subjects are your strongest, and which are weakest?"),
-        ("competitive_exams", "Preparing for any competitive exams (Olympiads, NTSE, JEE/NEET Foundation)? Which, or none?"),
-        ("career_interest", "Any career direction you're curious about yet, or too early to say?"),
+        ("goal", "What's your academic goal? (e.g. \"Score 90%+ in Class 10 Boards\", "
+                 "\"Improve Maths marks\", \"Crack NTSE\", \"Get into a top college\")", None),
+        ("why", "Why is this important to you?", None),
+        ("class", "Which class are you currently in?",
+         ["Class 6", "Class 7", "Class 8", "Class 9", "Class 10", "Class 11", "Class 12"]),
+        ("subjects", "Which subjects do you want the most help with?", None),
+        ("level", "What's your current performance level?",
+         ["Top performer", "Above average", "Average", "Struggling"]),
+        ("hours_per_week", "How many hours per week can you study outside school?", None),
+        ("challenge", "What's your biggest challenge right now?",
+         ["Staying consistent", "Understanding concepts", "Memorization",
+          "Exams & test anxiety", "Time management", "Distractions"]),
+        ("learning_style", "How do you learn best?",
+         ["Reading", "Videos", "Practice questions", "Projects/Experiments", "Teaching others"]),
     ],
     "college": [
-        ("degree", "Degree, branch, and current year (e.g. \"BTech CS, 3rd year\")?"),
-        ("cgpa", "Current CGPA (or \"prefer not to say\")?"),
-        ("direction", "Job, higher studies, startup, or government exams -- which direction, or undecided?"),
-        ("tech_comfort", "How comfortable are you with DSA, and with actually building things (projects)?"),
-        ("experience", "Any internships or projects worth mentioning so far?"),
+        ("goal", "What's your main goal right now? (e.g. \"Improve GPA\", \"Learn AI/ML\", "
+                 "\"Become a Backend Engineer\", \"Build projects\", \"Get internships\", "
+                 "\"Prepare for placements\")", None),
+        ("year", "Which year are you in?", ["1st Year", "2nd Year", "3rd Year", "Final Year"]),
+        ("degree", "What degree are you pursuing?", None),
+        ("skills", "What skills are you trying to develop?", None),
+        ("level", "What's your current level?", ["Beginner", "Intermediate", "Advanced"]),
+        ("deadline", "When would you like to achieve this goal?", None),
+        ("hours_per_week", "How many hours per week can you dedicate?", None),
+        ("bottleneck", "What's your biggest bottleneck?",
+         ["Consistency", "Lack of guidance", "Too many resources", "Time management",
+          "Fear of interviews", "Weak fundamentals"]),
+        ("learning_style", "How do you learn best?",
+         ["Reading", "Videos", "Building projects", "Coding challenges", "Group study"]),
     ],
     "exam": [
-        ("exam_name", "Which exam or certification, and when is it (or when do you plan to take it)?"),
-        ("attempt", "First attempt, or a retake? If a retake, what was your score/weak areas last time?"),
-        ("weak_topics", "Which syllabus topics feel weakest right now?"),
-        ("resources", "What are you studying from -- books, a course, coaching, or not decided yet?"),
+        ("exam_name", "Which exam or certification are you preparing for? (e.g. "
+                       "\"AWS Solutions Architect\", \"GATE\", \"CAT\", \"IELTS\", \"GRE\", \"PMP\")", None),
+        ("exam_date", "When is the exam?", None),
+        ("attempt", "Is this your first attempt or a retake?", ["First Attempt", "Retake"]),
+        ("retake_notes", "If retaking, what happened last time? (say \"N/A\" if first attempt)", None),
+        ("target_score", "What score or result are you aiming for?", None),
+        ("weak_topics", "Which topics feel weakest right now?", None),
+        ("materials", "What study materials are you using?",
+         ["Books", "Online course", "Coaching", "Practice tests", "Not decided"]),
+        ("hours_per_week", "How many hours per week can you study?", None),
+        ("challenge", "What's your biggest challenge?",
+         ["Understanding concepts", "Retention", "Time management", "Practice questions",
+          "Exam anxiety", "Consistency"]),
     ],
     "job_switch": [
-        ("current_role", "Current role, company, and years of experience?"),
-        ("target", "Target role, and (if any) dream companies?"),
-        ("stack_gap", "Current tech stack vs. the stack you'd need for the target role -- what's the gap?"),
-        ("interview_history", "How many interviews have you taken for this kind of role, and what's usually gone wrong?"),
+        ("target_role", "What's your target role? (e.g. \"Backend Engineer\", \"Product Manager\", "
+                         "\"Data Scientist\", \"DevOps Engineer\", \"SDE-2\")", None),
+        ("experience", "How many years of experience do you have?", None),
+        ("current_role", "What's your current role?", None),
+        ("company_type", "What's your target company type?",
+         ["Startup", "Product Company", "FAANG / Big Tech", "Consulting", "Open to anything"]),
+        ("timeline", "What's your target timeline?",
+         ["Within 1 month", "Within 3 months", "Within 6 months", "No fixed timeline"]),
+        ("help_areas", "What areas do you need help with?",
+         ["DSA", "System Design", "Backend Development", "Frontend Development", "Resume",
+          "Mock Interviews", "Behavioral Interviews", "Job Applications"]),
+        ("obstacle", "What's your biggest obstacle today?",
+         ["Not getting interviews", "Failing coding rounds", "Failing system design",
+          "Lack of projects", "Resume issues", "Lack of consistency"]),
+        ("hours_per_week", "How many hours per week can you realistically dedicate?", None),
+    ],
+    "just_exploring": [
+        ("motivation", "What made you try the app today?", None),
+        ("curiosity", "What are you most curious about?",
+         ["Learning new skills", "Productivity", "Career growth", "AI assistance",
+          "Exam preparation", "General knowledge"]),
+        ("has_goal", "Do you currently have any goals you're working toward?", ["Yes", "No", "Not sure"]),
+        ("goal_detail", "If yes, what is it? (say \"N/A\" if not)", None),
+        ("help_style", "How would you like the app to help you?",
+         ["Personalized learning plans", "Daily guidance", "Practice questions",
+          "Progress tracking", "Accountability", "Exploring topics"]),
+        ("usage_frequency", "How often do you plan to use the app?",
+         ["Daily", "Few times a week", "Weekly", "Just trying it out"]),
+        ("value", "What would make this app valuable enough for you to keep using it?", None),
     ],
 }
 
 
 def questions_for(persona):
-    return CORE_QUESTIONS + PERSONA_QUESTIONS[persona]
+    return QUESTIONS[persona]
 
 
 def build_prompt(persona, answers):
     persona_label = dict(PERSONAS)[persona]
-    prompts_by_key = dict(questions_for(persona))
+    prompts_by_key = {key: prompt_text for key, prompt_text, _choices in questions_for(persona)}
 
     lines = [
         "I want you to design a personalized study/work plan for me as a goals.json file "
@@ -96,11 +144,11 @@ def build_prompt(persona, answers):
         "rule_9/9b/9c (give the Learning Coach real, specific guidance for each field -- rich task metadata "
         "and a coaching_framework tuned to what I'm actually studying, not generic boilerplate).",
         "",
-        "Design a complete plan that directly targets my stated goal and bottleneck above, split into "
-        "sensible fields with real curriculum content for the first 1-2 weeks (not placeholder examples). "
-        f"Write the result to {appconfig.GOALS_PATH} if it doesn't already exist, or confirm with me before "
-        f"overwriting it if it does -- otherwise write to ./goals.json in the current directory instead, and "
-        "tell me to review it and run `mtdo import goals.json`.",
+        "Design a complete plan that directly targets my stated goal and biggest challenge/bottleneck above, "
+        "split into sensible fields with real curriculum content for the first 1-2 weeks (not placeholder "
+        f"examples). Write the result to {appconfig.GOALS_PATH} if it doesn't already exist, or confirm with "
+        f"me before overwriting it if it does -- otherwise write to ./goals.json in the current directory "
+        "instead, and tell me to review it and run `mtdo import goals.json`.",
     ]
     return "\n".join(lines)
 

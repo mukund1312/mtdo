@@ -42,6 +42,74 @@ artifact.
 
 ---
 
+## 2026-08-23 (PR https://github.com/mukund1312/mtdo/pull/3, rewritten) -- in-app setup wizard, bespoke per-persona Q&A
+
+This PR was originally a CLI-level (`input()`, pre-boot) wizard -- see the superseded
+description this replaces below, kept for history. User feedback reversed that
+architecture on purpose ("the app boots up and only then the questioning should start")
+and supplied a complete, bespoke, mostly-multiple-choice question set for all 5 personas,
+replacing the old shared-core-plus-persona-extras model entirely. Nothing was merged yet,
+so this branch was reworked in place rather than left stale. **This absorbed PR #5's
+functionality too (populate-method + AI-choice questions) -- #5 was closed as superseded,
+its content is now part of this single flow.**
+
+**Did:**
+- `plan_wizard.py`: `QUESTIONS` replaces `CORE_QUESTIONS`/`PERSONA_QUESTIONS` --
+  each persona (including "Just Exploring the App", which used to skip the Q&A
+  entirely and just load the demo) has its own complete, bespoke question list, per
+  exact user specification. Each question is now `(key, prompt_text, choices)` --
+  `choices` is `None` for free text or a list of options for single-select multiple
+  choice, instead of every question being free text.
+- `app.py`: new `ChoicePickScreen` (generic multiple-choice modal, same `VimListView`
+  pattern as the existing `PersonaPickScreen`/`CategoryPickScreen`). The wizard chain
+  (`_begin_setup_flow` -> `_pick_persona_for_setup` -> `_pick_populate_method` ->
+  `_pick_ai_choice` -> `_ask_plan_wizard_questions` -> `_finish_plan_wizard`) now runs
+  entirely in-app, triggered automatically right after the feature walkthrough dismisses
+  on a genuine first run (`on_mount`), reusing the exact same chain for the manual `g`
+  re-run -- one flow, two entry points, instead of a separate CLI version and in-app
+  version. `_ask_plan_wizard_questions` branches per-question between `ChoicePickScreen`
+  (has `choices`) and `TextPromptScreen` (free text).
+- `cli.py`: `_run_first_run_wizard()` and `_pick_number()` removed entirely.
+  `cmd_run`'s fallback now unconditionally writes a genuinely empty config
+  (`init_config(fresh=True)`) when none exists and starts the app -- no CLI-level
+  prompting at all anymore.
+
+**Tested (real tmux pty, full flow):** fresh instance -> boots straight into the feature
+walkthrough (no CLI prompts beforehand) -> setup wizard chains in automatically after --
+name -> all 5 personas render with correct new labels -> picked "Just Exploring the App"
+(the one whose behavior changed most) -> populate-method question -> AI-choice question
+-> all 7 of its bespoke questions asked in order, correctly alternating between
+`TextPromptScreen` (free text) and `ChoicePickScreen` (multiple choice, all option lists
+rendered correctly) -> prompt built and saved with every answer mapped to its exact
+question text -> tailored "press C" message shown for the built-in-AI choice. Separately
+verified the "Manual" populate-method path stops immediately with the right message and
+no further questions. `user_name` file confirmed written correctly. Two real saved
+instances present in the picker throughout (a user-named one and one from a prior
+session) were deliberately never touched. Real `~/.mtdo` untouched.
+
+**Next / open items:** PR C (bug #6 -- detailed step-by-step AI config with pros/cons for
+each backend option) is still pending, stacking on top of this reworked version.
+
+<details>
+<summary>Superseded original entry (CLI-level version, before this rewrite)</summary>
+
+Real bugs from testing: a fresh install silently populated itself with demo/example
+categories instead of starting empty, and there was no first-run flow asking who the user
+is or what they want out of the app.
+
+Did: `cli._run_first_run_wizard()` -- plain `input()` prompts (name, then what you're
+using this for), run once, before any config exists at all, deliberately CLI-level to
+avoid hot-reloading a running app's category structure. New "Just exploring the app"
+persona loaded the demo plan as an explicit choice. `config.get_user_name()`/
+`set_user_name()` added.
+
+Superseded because the user explicitly asked for the app to boot first and ask
+questions in-app afterward, and supplied a much more detailed, bespoke, mostly
+multiple-choice question set per persona -- see the current entry above.
+</details>
+
+---
+
 ## 2026-08-22 (PR https://github.com/mukund1312/mtdo/pull/2) -- scrollable multi-line bug-report input
 
 User feedback from real testing: the bug-report box (`B` while testing) used a single-line
