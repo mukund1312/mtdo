@@ -9,6 +9,208 @@ Add each session's PROGRESS.md entry to the same branch as the code it describes
 
 ---
 
+## 2026-08-24 (PR https://github.com/mukund1312/mtdo/pull/9) -- bug_sync: priority labels + full triage pass on all 25 open bugs
+
+User asked to (1) give Janhwi read/write access to the dashboard, (2) add priority to
+every bug, and (3) reassign all bugs "according to what you feel is right now."
+
+(1) is not something a tool call can do -- there's no API for granting an artifact
+collaborator/editor access, only the artifact's own share menu (told the user directly,
+pointed at the share menu in the top-right of the artifact view).
+
+(2)/(3), did:
+- `bug_sync.py`: `PRIORITY_PREFIX`/`PRIORITIES` + `bug_priority(issue)` (parses a
+  `priority:<level>` label, same pattern as `assigned_person`), `_ensure_priority_labels()`,
+  and `apply_triage(plan)` -- a bulk `{number: {"priority":.., "assigned_to":..}}` applier,
+  the deliberate-judgment counterpart to `distribute_pending()`'s blanks-only fill. Only
+  edits an issue when something in the plan actually differs from its current labels, so
+  re-running the same plan is a no-op.
+- Checked git history first for an ownership signal before reassigning -- found none:
+  every file touched so far (profiles.py, practice_lab_panel.py, etc.) is 100% Mukund's
+  commits; Janhwi's few commits don't concentrate anywhere yet. So the reassignment isn't
+  based on subsystem expertise (there isn't one to point to yet) -- it's split by
+  internals-depth: bugs that need deep knowledge of code Mukund already wrote (profiles.py,
+  Practice Lab sandboxing, config validation, the AI-config wizard, the plaintext-key file)
+  stayed/moved to him; bugs that are externally observable without deep internals knowledge
+  (README/positioning, wizard UX, tests+CI as a pair, the onboarding-pacing bug Janhwi
+  herself found) went to her. Priority: High = #19 (profiles), #38 (Practice Lab sandbox,
+  genuine code-execution safety gap), #34+#35 (no tests, no CI -- real regression risk,
+  paired to one owner), #42 (onboarding shows too much at once, Janhwi's own recent find).
+  Medium = 11 bugs (real but not urgent -- music player timer, config-crash hardening,
+  forgotten-password data loss warning, API-key file review, README/pitch/positioning/
+  packaging). Low = 9 bugs, mostly the #6/#13 scoping fragments (#24/25/26/27/28 -- see
+  [[bugs_6_13_ai_automation_on_hold]], these describe on-hold work, not independent asks),
+  plus cosmetic/large-uncertain-scope items (version tags, CONTRIBUTING.md, web sign-in,
+  Alexa/Siri idea). Final split: Mukund 12 bugs (2 High/6 Medium/4 Low), Janhwi 13 (3
+  High/5 Medium/5 Low) -- close to even, both get a real mix of priorities, not all the
+  urgent work dumped on one person.
+  Applied via one `apply_triage()` call against the live tracker -- all 25 planned changes
+  landed (verified via `bug_sync.bug_priority`/`assigned_person` spot-checks after).
+- `dashboard.py`: priority pill (`pill-priority-high/medium/low`, new `--danger` theme
+  token defined in all three theme blocks per the light/dark/explicit-toggle pattern) in
+  the Issues table and the issue detail page, plus a Priority filter alongside the
+  existing found-by/assigned-to ones. Priority is currently read-only/computed from the
+  GitHub label each regeneration -- unlike assigned-to, it isn't live-editable from the
+  page yet (natural fast-follow if wanted, same `artifact.edit()` pattern already used
+  for reassignment).
+
+**Incidental, unrelated, disclosed for context:** partway through this turn, `dashboard.py`
+and `PROGRESS.md` briefly reverted to their pre-redesign contents on disk -- turned out to
+be a concurrent session doing the bug #7 fix on `feature/mu/UAT-focus-mode-ai-crash-guard`
+(cut from `main` before this dashboard work merged), sharing this same `~/mtdo` checkout.
+That branch's work was already fully committed and pushed, so nothing was lost -- just
+`git checkout`'d back to this branch and continued. The live published dashboard itself was
+never affected, since nothing publishes to it automatically; only this session's own
+`Artifact` tool calls do that.
+
+---
+
+## 2026-08-24 (PR https://github.com/mukund1312/mtdo/pull/9) -- dashboard: comment-count badge on the Issues table
+
+User asked how they'd know a dev had posted a conversation note without opening every
+bug's detail page one by one -- real gap, there was no indicator. Added a small "💬 N"
+badge next to the bug title in the Issues table, computed from that bug's actual thread
+element (`refreshCommentBadges()`, run on load and after posting), so it stays correct
+even as comments get added live by either viewer without a republish.
+
+---
+
+## 2026-08-24 (PR https://github.com/mukund1312/mtdo/pull/9) -- dashboard: editable assignment/description/conversation via the `artifact` live-doc capability + git activity per bug
+
+Follow-up to the Linear redesign below: user wanted the "assigned to" field editable
+everywhere, the description editable per bug, real git branch/commit history shown per
+bug, and a two-way conversation textbox per bug (either dev writes a note, the other
+replies).
+
+**Architecture decision:** the first three (assign/description/notes) are genuinely
+mutable, low-stakes fields -- exactly what the Artifact platform's `artifact` capability
+live-doc mode is for ("polls, sign-up sheets, checklists, trackers -- the page is the
+record", per the artifact-capabilities skill). Declared `capabilities: {"artifact": {}}`
+on publish; a viewer's click/keystroke on the page is captured and saved automatically
+(or via an explicit `artifact.edit()` call for things that aren't native input gestures,
+like the custom assign-to dropdown and posting a new comment) and reaches every other
+open view immediately -- no republish needed for these three fields specifically.
+
+**Did:**
+- `dashboard.py`: every issue now gets a real server-rendered detail section (not
+  JS-templated from a JSON blob like the last redesign -- had to drop that entirely,
+  since live-doc capture only works on content actually served in the page, not markup a
+  script builds after load). Assign-to is a custom dropdown (`<select>` values aren't
+  gesture-captured per the platform's rules) reused in both the issues table row and the
+  detail page, updated via one `artifact.edit()` call touching both copies at once so
+  they can't disagree. Description is a plain `contenteditable` div (auto-captured,
+  no explicit call needed). Conversation is a flat per-issue comment thread; posting
+  calls `create-element` to append a `<p>`, attributed by whichever name is picked in the
+  existing "Viewing as" selector (still no real auth on a static page).
+  `_bug_git_activity(issue_number)`: branches/commits containing "#<number>" as a whole
+  token, read from `git log --all` / `git branch -a` against this checkout (a naming
+  convention, not an enforced link) -- shown read-only on the detail page. Added a
+  best-effort `git fetch --all --quiet` before generating so a branch pushed from the
+  other machine shows up too.
+- Read-only handling: `getArtifact()`/`withWriter()` wrap every write call; a
+  `not_writer`/`not_granted` rejection (or `window.claude` missing at all) shows a
+  banner and disables every edit affordance, rather than silently failing.
+- Search and the "assigned to me" list now read live off the DOM (`getRowsData()`)
+  instead of a static snapshot, so they stay correct after a live reassignment.
+
+**Real tradeoff, disclosed to the user, not yet solved:** publishing new HTML (the
+`mtdo-sandbox dashboard` + republish flow, still the only way found-by/fixed/commit
+stats and brand-new bugs get pulled in) replaces the whole page, which would wipe any
+assignment/description/note edits made since the last publish. `generate(overrides=...)`
+exists so whoever republishes can read back the current live state first (e.g. via
+WebFetch) and pass it in to preserve it, but nothing automates that read-back yet --
+it's a manual step for whichever Claude Code session does the next regeneration.
+Also: reassigning on the dashboard does NOT change the `assigned:<login>` GitHub label
+`bug_sync.distribute_pending()`/`rebalance()` use, so the two can drift apart until
+someone reconciles them by hand.
+
+---
+
+## 2026-08-24 (PR https://github.com/mukund1312/mtdo/pull/9) -- dashboard: Linear-style redesign (nav, issue detail, team, search)
+
+User pasted a full ASCII mockup of Linear's UI and asked for it "in the current dashboard
+webapp." Scoped it down to the parts backed by real data in the tracker -- Cycles/Sprints,
+Projects, Roadmap, Inbox, and Goals don't map onto anything GitHub Issues here actually
+has (no priority/sprint/project field), so building decorative UI for those would just be
+empty chrome; flagged that to the user rather than building it.
+
+**Did:**
+- `bug_sync.list_all()`: added `body`/`updatedAt` to the fetched `--json` fields -- needed
+  so a real issue detail page can show the actual bug description, not just the title.
+- `dashboard.py`: rewrote `render_html` as a small client-side SPA over one embedded JSON
+  array of issues (`_issue_payload` per issue) -- hash-based routing (`#/dashboard`,
+  `#/issues`, `#/issue/<n>`, `#/team`), sidebar nav, a "Viewing as" `localStorage` selector
+  (there's no real per-viewer auth on a static snapshot page) driving a personalized
+  greeting + "assigned to me" list, a real issue detail view using the new `body`/
+  `updatedAt` fields, a Team view with commit-count velocity bars, and a Cmd+K search
+  modal (substring match over titles, plus an `assigned:me` query) -- all still generated
+  once server-side; nothing on the page fetches anything live (same hard CSP constraint as
+  before). Kept the existing found-by/assigned-to table filters, now with clickable rows
+  routing to the issue detail view.
+- Escaped `</script` in the embedded JSON payload (`_json_for_script`) -- a bug title or
+  body containing that literal string would otherwise truncate the page early.
+- Regenerated via `mtdo-sandbox dashboard`, verified structurally (nav routes, whoami/
+  filter options, one intact `<script>` tag, no `</script` splitting), and republished to
+  the existing Artifact link (same URL, no new share needed).
+
+**Not built (flagged to user, not yet confirmed as wanted):** Cycles/Sprints, Projects,
+Roadmap, Inbox/notifications, Goals, Settings -- no corresponding data model exists yet.
+**Still open:** whether the Artifact share menu can grant a second person write/editor
+access -- needed before a real per-bug conversation/notes feature (would require the
+`artifact` live-doc capability, a different mechanism from this snapshot-publish model).
+
+---
+
+## 2026-08-23 (PR https://github.com/mukund1312/mtdo/pull/9) -- dashboard: commit counts + bug distribution/rebalancing
+
+User asked for three things on the shared dashboard: (1) fix it -- it should "work
+properly", (2) track commit counts per dev, (3) a real bug-distribution system: split
+pending bugs between the two devs, and if one finishes their batch first, automatically
+move a few of the other's over so neither runs dry.
+
+**Bug found while checking "should work properly":** Janhvi didn't appear on the
+dashboard *at all* -- the person list only ever included logins with existing activity
+(found/fixed/status), and every bug synced so far was authored under mukund1312 (nobody's
+run `bugs sync`/`working-on` from her machine yet). Fixed by always showing both known
+people from `bug_sync.PEOPLE`, even at zero.
+
+**Did:**
+- `bug_sync.py`: `PEOPLE`/`DISPLAY_NAMES`/`PERSON_COLOR_VAR` moved here from dashboard.py
+  (single source of truth, since assignment needs the roster too) plus `GIT_EMAILS` --
+  each person has multiple git identities across machines (`git shortlog` showed 4
+  fragmented names/emails for 2 real people) that all need to count as one person.
+  `assigned_person(issue)` reads an `assigned:<login>` label -- deliberately NOT the
+  `assignees` field, which `mark_fixed_and_close` already uses to mean "who fixed it" at
+  close time; a second label keeps those two concepts from colliding.
+  `distribute_pending()` assigns every unassigned open bug to whoever currently has
+  fewer (safe to re-run as new bugs come in). `rebalance(fixer_login)`, called
+  automatically at the end of `mark_fixed_and_close`: if the fixer just cleared their
+  whole assigned queue while the other person still has one, moves up to 3 of the
+  other's over. `assignment_summary()` for the CLI/dashboard.
+- `mtdo-sandbox bugs distribute` / `mtdo-sandbox bugs assignments` (sandbox_entry.py).
+- `dashboard.py`: commit counts (`git log --all --pretty=%ae` against this file's own
+  repo root, mapped through `GIT_EMAILS` -- counts every branch, not just main, since
+  this is an activity signal, not a "what shipped" one), an "assigned to them" count per
+  person, and an "Assigned to" column on the bug table.
+
+**Tested (real, against the real tracker, not mocked):** `distribute` on the 6 real open
+bugs split them 3/3. Rebalancing tested with 2 throwaway test issues (created, assigned,
+deleted after) plus temporarily relabeling the real 3 assigned to Mukund over to Janhvi
+to simulate "he just finished" -- confirmed `rebalance('mukund1312')` moved exactly 3
+back, and correctly no-ops on a second call once he has bugs again. Restored the real
+distribution to a clean 3/3 split afterward. Commit counts verified correct after
+manually cross-checking `git shortlog -sn --all` (86 for Mukund across 2 fragmented
+identities, 2 for Janhvi across hers). Dashboard regenerated and republished to the
+existing Artifact URL (`.../fc424e3e-...`) -- confirmed via the rendered HTML that both
+people now show up, with correct found/fixed/commits/assigned numbers and the new
+"Assigned to" column. Real `~/.mtdo` untouched throughout.
+
+**Next / open items:** Janhvi still needs to actually run `mtdo-sandbox bugs sync` /
+`working-on` from her own machine at least once for her "found"/status numbers to become
+real instead of zero -- the fix here just makes sure she *shows up* even before that.
+
+---
+
 ## 2026-08-24 (PR https://github.com/mukund1312/mtdo/pull/10) -- Focus Mode / AI-panel priming had no crash guard (bug #7)
 
 Bug #7 (GH mukund1312/mtdo-bugs#11): "the AI we are using in focus mode is crashing
