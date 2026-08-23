@@ -9,6 +9,38 @@ Add each session's PROGRESS.md entry to the same branch as the code it describes
 
 ---
 
+## 2026-08-23 (PR https://github.com/mukund1312/mtdo/pull/5, stacked on PR #3) -- ask populate method + AI choice explicitly
+
+Bugs #4/#5 from the tracker: the first-run wizard (PR #3) already ended with a message
+mentioning both "paste into your own AI" and "press C for the built-in AI panel", but
+never actually *asked* which one, and never offered manual setup as a real alternative to
+the AI-guided flow -- both were just implied by what happened to print at the end.
+
+**Did (`cli._run_first_run_wizard`, after persona is picked and it's not "just exploring"):**
+- New question: manual vs. AI-guided (Recommended) to populate goals.json. Manual skips
+  the Q&A entirely, points at goals.json + the template, and returns immediately.
+- New question (AI-guided path only): built-in AI vs. an AI you already use day to day.
+  Tailors the closing instructions to whichever was picked, instead of mentioning both
+  every time regardless of choice.
+- Extracted `_pick_number(count)` -- the "read 1..N, reprompt on garbage" loop was about
+  to get duplicated a third time.
+
+**Branch note:** this is stacked on `feature/mu/UAT-first-run-setup-wizard` (PR #3), not
+`main` -- it extends a function that only exists on that branch. PR opened against PR #3's
+branch as its base; GitHub will offer to retarget it to `main` once #3 merges.
+
+**Tested (real tmux pty):** manual path -> empty board loaded, correct message, no Q&A
+asked; guided + built-in-AI path -> all 11 school-persona questions asked, prompt file
+generated correctly, board loaded empty afterward. Confirmed a real saved instance
+("todays-isntacne", the user's own) present in the picker was left completely untouched
+throughout -- deliberately never selected, per the safe-instance-delete lesson from
+earlier this session. Real `~/.mtdo` untouched.
+
+**Next / open items:** PR C (bug #6 -- the detailed step-by-step config walkthrough with
+pros/cons for each AI backend option) is the next piece, stacking on top of this one.
+
+---
+
 ## 2026-08-23 (PR https://github.com/mukund1312/mtdo/pull/3) -- first-run setup wizard, no more silent demo data
 
 Real bugs from testing: a fresh install silently populated itself with demo/example
