@@ -174,6 +174,26 @@ def create_profile(name, password=None):
     return slug
 
 
+def rename_profile(slug, new_name):
+    """Renames a profile's display name while keeping the same slug and storage dir."""
+    profile = get_profile(slug)
+    if profile is None:
+        raise ProfileNotFound(f"no such profile: {slug}")
+    new_name = new_name.strip()
+    if not new_name:
+        raise ProfileError("a profile needs a name.")
+    desired_slug = _slugify(new_name)
+    if desired_slug != slug and get_profile(desired_slug):
+        raise ProfileExists(f'a profile named "{new_name}" already exists.')
+    index = _load_index()
+    for entry in index["profiles"]:
+        if entry["slug"] == slug:
+            entry["name"] = new_name
+            break
+    _save_index(index)
+    return new_name
+
+
 def delete_profile(slug):
     if not get_profile(slug):
         raise ProfileNotFound(f"no such profile: {slug}")

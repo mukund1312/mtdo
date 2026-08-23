@@ -21,6 +21,7 @@ from . import ai_ask
 from . import music
 from . import plan_wizard
 from . import bug_log
+from . import profiles as pf
 from .claude_panel import ClaudePanel
 from .practice_lab_panel import PracticeLabPanel
 from .errorlog import LOG_PATH, log as app_log
@@ -29,6 +30,7 @@ from textual.app import App, ComposeResult
 from textual.containers import Horizontal, Vertical, VerticalScroll, Center, Middle
 from textual.widgets import Static, ListView, ListItem, Label, Input, Footer, TextArea, Button
 from textual.screen import ModalScreen, Screen
+from textual.message_pump import active_message_pump
 from textual.reactive import reactive
 from rich.text import Text
 from rich.table import Table
@@ -77,6 +79,48 @@ class VimListView(ListView):
     BINDINGS = [("j", "cursor_down", "Down"), ("k", "cursor_up", "Up")]
 
 
+class ProfileFooter(Static):
+    CSS = """
+    ProfileFooter {
+        dock: bottom;
+        width: auto;
+        height: 1;
+        min-width: 12;
+        max-width: 30;
+        margin: 0 1 0 auto;
+        padding: 0 1;
+        content-align: left middle;
+        background: $panel;
+        color: $text-muted;
+        border: round $border;
+    }
+    ProfileFooter:hover {
+        background: $boost;
+        color: $text;
+    }
+    ProfileFooter:focus {
+        border: round $primary;
+    }
+    """
+
+    def __init__(self):
+        super().__init__("")
+        self.refresh_label()
+
+    def refresh_label(self):
+        active = pf.get_active_slug()
+        profile = pf.get_profile(active) if active else None
+        name = profile["name"] if profile else "No profile"
+        self.update(f"👤 {name} ▾")
+
+    def on_click(self):
+        self.app.action_open_profile_menu()
+
+    def on_key(self, event):
+        if event.key in ("enter", "space"):
+            self.app.action_open_profile_menu()
+
+
 def bar(done, total, width=18, color="white"):
     frac = 0 if total == 0 else min(done / total, 1.0)
     filled = int(round(frac * width))
@@ -116,11 +160,12 @@ class TextPromptScreen(ModalScreen):
     default) for genuinely short answers like a name or a card title, where single-line
     is the right, unsurprising affordance and Enter-to-submit is worth keeping."""
 
-    def __init__(self, prompt_text, initial="", multiline=False):
+    def __init__(self, prompt_text, initial="", multiline=False, secret=False):
         super().__init__()
         self.prompt_text = prompt_text
         self.initial = initial
         self.multiline = multiline
+        self.secret = secret
 
     CSS = """
     TextPromptScreen { align: center middle; }
@@ -137,7 +182,7 @@ class TextPromptScreen(ModalScreen):
                         yield TextArea(self.initial, id="prompt-textarea")
                         yield Static("Ctrl+S to save, Escape to cancel", classes="dim")
                     else:
-                        yield Input(value=self.initial, id="prompt-input")
+                        yield Input(value=self.initial, id="prompt-input", password=self.secret)
                         yield Static("Enter to save, Escape to cancel", classes="dim")
 
     def on_mount(self):
@@ -158,6 +203,167 @@ class TextPromptScreen(ModalScreen):
             event.prevent_default()
             event.stop()
             self.dismiss(self.query_one(TextArea).text)
+
+
+class ProfileMenuScreen(ModalScreen):
+    CSS = """
+    ProfileMenuScreen { align: center middle; }
+    #profile-menu-box { width: 72; height: auto; border: round grey; padding: 1 2; background: $panel; }
+    #profile-list { height: auto; max-height: 18; }
+    #profile-list Button { width: 100%; margin: 0 0 1 0; }
+    #profile-actions { height: 3; align: center middle; }
+    #profile-actions Button { margin: 0 1; }
+    """
+
+    def compose(self) -> ComposeResult:
+        with Center():
+            with Middle():
+                with Vertical(id="profile-menu-box"):
+                    yield Static("Profile")
+                    self.profile_list = Vertical(id="profile-list")
+                    yield self.profile_list
+                    with Horizontal(id="profile-actions"):
+                        yield Button("Add Profile", id="profile-add")
+                        yield Button("Manage Profiles", id="profile-manage")
+                        yield Button("Close", id="profile-close")
+
+    def on_mount(self):
+        self._refresh_list()
+
+    def _refresh_list(self):
+        for child in list(self.profile_list.children):
+            child.remove()
+        active = pf.get_active_slug()
+        profiles = pf.list_profiles()
+        if not profiles:
+            self.profile_list.mount(Static("No profiles yet"))
+            return
+        for profile in profiles:
+            marker = "✓ " if profile["slug"] == active else "  "
+            btn = Button(f"{marker}{profile['name']}", id=f"profile-select:{profile['slug']}")
+            self.profile_list.mount(btn)
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        bid = event.button.id
+        if bid == "profile-close":
+            self.dismiss(None)
+        elif bid == "profile-add":
+            self.dismiss(None)
+            self.app.action_create_profile()
+        elif bid == "profile-manage":
+            self.dismiss(None)
+            self.app.action_manage_profiles()
+        elif bid and bid.startswith("profile-select:"):
+            slug = bid.split(":", 1)[1]
+            self.dismiss(None)
+            self.app._switch_profile(slug)
+
+
+class ProfileCreateScreen(ModalScreen):
+    CSS = """
+    ProfileCreateScreen { align: center middle; }
+    #profile-create-box { width: 50; height: auto; border: round grey; padding: 1 2; background: $panel; }
+    #profile-create-box Input { margin: 0 0 1 0; }
+    #profile-create-box Button { margin: 0 1; }
+    """
+
+    def compose(self) -> ComposeResult:
+        with Center():
+            with Middle():
+                with Vertical(id="profile-create-box"):
+                    yield Static("Create Profile")
+                    yield Input(placeholder="Display name", id="profile-name")
+                    yield Input(placeholder="Password (optional)", id="profile-password", password=True)
+                    with Horizontal(id="profile-create-actions"):
+                        yield Button("Save", id="profile-create-save", variant="primary")
+                        yield Button("Cancel", id="profile-create-cancel")
+
+    def on_mount(self):
+        self.query_one("#profile-name", Input).focus()
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "profile-create-cancel":
+            self.dismiss(None)
+            return
+        name = self.query_one("#profile-name", Input).value.strip()
+        password = self.query_one("#profile-password", Input).value.strip()
+        if not name:
+            self.query_one("#profile-name", Input).focus()
+            return
+        self.dismiss((name, password or None))
+
+
+class ProfileManageScreen(ModalScreen):
+    CSS = """
+    ProfileManageScreen { align: center middle; }
+    #profile-manage-box { width: 80; height: auto; border: round grey; padding: 1 2; background: $panel; }
+    #profile-manage-rows { height: auto; max-height: 20; }
+    #profile-manage-rows Horizontal { margin: 0 0 1 0; }
+    .profile-row-primary { width: 1fr; }
+    .profile-row-action { width: 10; margin-left: 1; }
+    #profile-manage-actions { align: center middle; }
+    #profile-manage-add { width: auto; }
+    """
+
+    def compose(self) -> ComposeResult:
+        with Center():
+            with Middle():
+                with Vertical(id="profile-manage-box"):
+                    yield Static("Manage Profiles")
+                    self.rows = Vertical(id="profile-manage-rows")
+                    yield self.rows
+                    with Horizontal(id="profile-manage-actions"):
+                        yield Button("Add Profile", id="profile-manage-add", variant="primary")
+                        yield Button("Close", id="profile-manage-close")
+
+    def on_mount(self):
+        self._refresh_rows()
+
+    def _refresh_rows(self):
+        for child in list(self.rows.children):
+            child.remove()
+        active = pf.get_active_slug()
+        if not pf.list_profiles():
+            self.rows.mount(Static("No profiles yet"))
+            return
+        for profile in pf.list_profiles():
+            row = Horizontal()
+            row.mount(Button(f"{'✓ ' if profile['slug'] == active else ''}{profile['name']}", id=f"manage-select:{profile['slug']}", classes="profile-row-primary"))
+            row.mount(Button("Rename", id=f"rename-profile:{profile['slug']}", classes="profile-row-action"))
+            row.mount(Button("Delete", id=f"delete-profile:{profile['slug']}", classes="profile-row-action"))
+            self.rows.mount(row)
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        bid = event.button.id
+        if bid == "profile-manage-close":
+            self.dismiss(None)
+            return
+        if bid == "profile-manage-add":
+            self.dismiss(None)
+            self.app.action_create_profile()
+            return
+        if bid and bid.startswith("manage-select:"):
+            self.dismiss(None)
+            self.app._switch_profile(bid.split(":", 1)[1])
+            return
+        if bid and bid.startswith("rename-profile:"):
+            slug = bid.split(":", 1)[1]
+            profile = pf.get_profile(slug)
+            if not profile:
+                return
+            self.dismiss(None)
+            self.app._push_modal(
+                TextPromptScreen("Rename profile", profile["name"]),
+                lambda value: self.app._rename_profile(slug, value),
+            )
+            return
+        if bid and bid.startswith("delete-profile:"):
+            slug = bid.split(":", 1)[1]
+            profile = pf.get_profile(slug)
+            if not profile:
+                return
+            self.dismiss(None)
+            self.app._delete_profile(slug, profile["name"])
 
 
 class SaveInstanceScreen(ModalScreen):
@@ -1746,11 +1952,28 @@ class LearningCoachPanel(Static):
 
 class ClockHeader(Static):
     def update_clock(self):
-        now = datetime.datetime.now().strftime("%I:%M:%S %p")
+        now = datetime.datetime.now()
+        name = None
+        active = pf.get_active_slug()
+        if active:
+            profile = pf.get_profile(active)
+            if profile:
+                name = profile["name"]
+        if not name:
+            name = appconfig.get_user_name()
+        if name:
+            if now.hour < 12:
+                greeting = "Good morning"
+            elif now.hour < 18:
+                greeting = "Good afternoon"
+            else:
+                greeting = "Good evening"
+            title = f"Hello, {name} · {greeting}"
+        else:
+            title = tc.APP_NAME
+        display_time = now.strftime("%I:%M:%S %p")
         today = tc.get_today()
-        name = appconfig.get_user_name()
-        title = f"{tc.APP_NAME} · {name}" if name else tc.APP_NAME
-        self.update(Text(f" {title}    {tc.DAY_NAMES[today.weekday()]}, {today.strftime('%b %d, %Y')}    {now} ",
+        self.update(Text(f" {title}    {tc.DAY_NAMES[today.weekday()]}, {today.strftime('%b %d, %Y')}    {display_time} ",
                           style="bold white on rgb(40,20,60)", justify="center"))
 
 
@@ -1800,6 +2023,7 @@ class TodoApp(App):
         ("c", "open_career", "Career"),
         ("v", "open_vault", "Vault"),
         ("?", "open_help", "Help"),
+        ("U", "open_profile_menu", "Profile"),
         ("m", "music_toggle", "Music"),
         ("[", "music_prev", "Prev"),
         ("]", "music_next", "Next"),
@@ -1819,6 +2043,7 @@ class TodoApp(App):
         self.today = tc.get_today()
         self.state = tc.load_state()
         self.state = tc.ensure_day_registered(self.state, self.today)
+        self._profile_passwords = {}
         self.focus_mode = False
         self.practice_terminal_enabled = appconfig.practice_terminal_enabled()
         # DSA problem-generation bookkeeping (see LearningCoachPanel/_check_dsa_hint_timer):
@@ -1875,8 +2100,11 @@ class TodoApp(App):
                     self.practice_panel = PracticeLabPanel()
                     yield self.practice_panel
         yield Footer()
+        self.profile_footer = ProfileFooter()
+        yield self.profile_footer
 
     def on_mount(self):
+        self._refresh_profile_footer()
         saved = tc.maybe_autosave_daily_report(self.state, self.today)
         self.refresh_side_panels()
         messages, style = [], "bold cyan"
@@ -2350,6 +2578,160 @@ class TodoApp(App):
 
     def action_open_vault(self):
         self.push_screen(VaultScreen(self), callback=lambda _r=None: self.refresh_side_panels())
+
+    def _refresh_profile_footer(self):
+        if self.profile_footer is not None:
+            self.profile_footer.refresh_label()
+        # keep the "Hello, <name>" header in sync immediately on create/switch/rename/
+        # delete, rather than waiting for the next on_second_tick.
+        self.query_one(ClockHeader).update_clock()
+
+    def _push_modal(self, screen, callback=None):
+        """push_screen wrapper that pins the result callback's requester to the App.
+
+        Screen.dismiss() delivers its result callback via requester.call_next(...),
+        where requester is whatever active_message_pump.get() resolves to at push
+        time. The profile screens routinely dismiss themselves and then immediately
+        push a follow-up modal (e.g. "close this menu, open Create Profile") in the
+        same synchronous handler -- active_message_pump still resolves to the screen
+        that just dismissed, and its message pump stops processing once torn down,
+        so the callback is silently dropped (confirmed: it never fires, no error).
+        Pinning the requester to self (the App, always alive) sidesteps that --
+        needed for any push_screen(..., callback) reachable from inside another
+        screen's own dismiss-then-push chain.
+        """
+        token = active_message_pump.set(self)
+        try:
+            return self.push_screen(screen, callback)
+        finally:
+            active_message_pump.reset(token)
+
+    def _save_current_profile(self):
+        active = pf.get_active_slug()
+        if active is None:
+            return
+        profile = pf.get_profile(active)
+        if profile is None:
+            return
+        password = self._profile_passwords.get(active)
+        if profile.get("protected") and password is None:
+            self._push_modal(
+                TextPromptScreen(f"Password for profile '{profile['name']}' (saving)", "", secret=True),
+                lambda value: self._save_current_profile_after_password(value, active),
+            )
+            return
+        if os.path.exists(appconfig.GOALS_PATH):
+            try:
+                goals = appconfig.load_goals()
+                pf.write_goals(active, goals, password)
+            except FileNotFoundError:
+                pass
+        pf.write_state(active, self.state, password)
+
+    def _save_current_profile_after_password(self, value, slug):
+        if value is None:
+            return
+        self._profile_passwords[slug] = value
+        self._save_current_profile()
+
+    def _switch_profile(self, slug, password=None):
+        target = pf.get_profile(slug)
+        if target is None:
+            self.toast("No profile selected.", style="bold red")
+            return
+        if target.get("protected") and password is None:
+            cached = self._profile_passwords.get(slug)
+            if cached is not None:
+                password = cached
+            else:
+                self._push_modal(
+                    TextPromptScreen(f"Password for profile '{target['name']}' (switching)", "", secret=True),
+                    lambda value: self._switch_profile(slug, password=value),
+                )
+                return
+        if password is not None:
+            self._profile_passwords[slug] = password
+        current = pf.get_active_slug()
+        if current is not None and current != slug:
+            self._save_current_profile()
+        try:
+            goals = pf.read_goals(slug, password)
+            state = pf.read_state(slug, password)
+        except pf.WrongPassword:
+            self.toast("Wrong password for that profile.", style="bold red")
+            return
+        if goals is not None:
+            with open(appconfig.GOALS_PATH, "w") as f:
+                import json
+                json.dump(goals, f, indent=2, sort_keys=False)
+        elif os.path.exists(appconfig.GOALS_PATH):
+            os.remove(appconfig.GOALS_PATH)
+        with open(appconfig.STATE_PATH, "w") as f:
+            import json
+            json.dump(state or {"_meta": {}}, f, indent=2, sort_keys=False)
+        pf.set_active(slug)
+        appconfig.set_user_name(target["name"])
+        self.state = state or {"_meta": {}}
+        self.reload_from_goals()
+        self._refresh_profile_footer()
+        self.toast(f"Switched to profile '{target['name']}'", style="bold green")
+
+    def action_open_profile_menu(self):
+        self.push_screen(ProfileMenuScreen())
+
+    def action_create_profile(self):
+        self._push_modal(ProfileCreateScreen(), self._on_profile_created)
+
+    def _on_profile_created(self, result):
+        if result is None:
+            return
+        name, password = result
+        try:
+            slug = pf.create_profile(name, password=password)
+        except pf.ProfileError as exc:
+            self.toast(str(exc), style="bold red")
+            return
+        if password:
+            self._profile_passwords[slug] = password
+        appconfig.set_user_name(name)
+        self._switch_profile(slug, password=password)
+
+    def action_manage_profiles(self):
+        self.push_screen(ProfileManageScreen())
+
+    def _rename_profile(self, slug, value):
+        if value is None or not value.strip():
+            return
+        try:
+            pf.rename_profile(slug, value)
+        except pf.ProfileError as exc:
+            self.toast(str(exc), style="bold red")
+            return
+        self._refresh_profile_footer()
+        self.toast("Profile renamed", style="bold green")
+
+    def _delete_profile(self, slug, name):
+        def on_confirm(value):
+            if value is None:
+                return
+            if value.strip() != name:
+                self.toast("Deletion cancelled -- name did not match.", style="bold yellow")
+                return
+            try:
+                pf.delete_profile(slug)
+            except pf.ProfileError as exc:
+                self.toast(str(exc), style="bold red")
+                return
+            if pf.get_active_slug() is None:
+                self.state = {"_meta": {}}
+                if os.path.exists(appconfig.GOALS_PATH):
+                    os.remove(appconfig.GOALS_PATH)
+                if os.path.exists(appconfig.STATE_PATH):
+                    os.remove(appconfig.STATE_PATH)
+                self.reload_from_goals()
+            self._refresh_profile_footer()
+            self.toast(f"Deleted profile '{name}'", style="bold yellow")
+        self._push_modal(TextPromptScreen(f"Type '{name}' to confirm delete", ""), on_confirm)
 
     def action_open_help(self):
         self.push_screen(HelpScreen())
