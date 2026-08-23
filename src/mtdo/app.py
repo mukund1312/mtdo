@@ -2149,26 +2149,40 @@ class TodoApp(App):
         that can be silently dropped rather than just arriving unsubmitted -- this
         used to fire after a flat 2s delay, which was confirmed too short often
         enough (Claude Code's real startup time varies) that the assistant sometimes
-        ended up with zero context at all, not just late context."""
+        ended up with zero context at all, not just late context.
+
+        Wrapped in try/except (bug #7/GH#11 -- "the AI in focus mode is crashing
+        again and again"): this used to have no guard of its own, unlike every other
+        entry point into the AI panel (see action_toggle_claude). It's reached from
+        several call sites (here, action_toggle_claude's start_backend,
+        LearningCoachPanel._store_generated, PracticeLabPanel.action_evaluate_code)
+        -- some of those already wrap their own call, but not all did, so a bad/
+        malformed active task (e.g. a stale category no longer in CATEGORY_META, or
+        a block missing an expected key from an older saved state) degrades to
+        "priming skipped, Focus Mode/the panel still opens" instead of taking the
+        whole app down with an exception no code path here was logging."""
         if not self.focus_mode:
             return
-        active = tc.current_active_task(self.state, self.today)
-        if active is None:
-            return
-        ref = (active["date_key"], active["category"], active["idx"])
-        if ref == self.ai_primed_ref:
-            return
-        category_meta = tc.CATEGORY_META.get(active["category"]) or {}
-        raw_capable = ai_backend.supports_raw_multiline_paste(self.claude_panel.command)
-        message = coaching.build_focus_context_message(
-            active["block"]["text"],
-            category_meta.get("label", active["category"]),
-            active["block"].get("dsa_problem"),
-            multiline=raw_capable,
-        )
-        self.ai_primed_ref = ref
-        if self.claude_panel.is_running:
-            self.claude_panel.send_text_when_idle(message, flatten=not raw_capable)
+        try:
+            active = tc.current_active_task(self.state, self.today)
+            if active is None:
+                return
+            ref = (active["date_key"], active["category"], active["idx"])
+            if ref == self.ai_primed_ref:
+                return
+            category_meta = tc.CATEGORY_META.get(active["category"]) or {}
+            raw_capable = ai_backend.supports_raw_multiline_paste(self.claude_panel.command)
+            message = coaching.build_focus_context_message(
+                active["block"].get("text", ""),
+                category_meta.get("label", active["category"]),
+                active["block"].get("dsa_problem"),
+                multiline=raw_capable,
+            )
+            self.ai_primed_ref = ref
+            if self.claude_panel.is_running:
+                self.claude_panel.send_text_when_idle(message, flatten=not raw_capable)
+        except Exception:
+            app_log.exception("_prime_ai_context_if_needed failed")
 
     def action_toggle_pomodoro(self):
         self.pomo_panel.running = not self.pomo_panel.running
@@ -2213,6 +2227,15 @@ class TodoApp(App):
         self.push_screen(TextPromptScreen("Work/break minutes (e.g. 25/5)", current), on_result)
 
     def action_toggle_focus_mode(self):
+        """Bound to 'f'. Wrapped in try/except (bug #7/GH#11 -- "the AI in focus
+        mode is crashing again and again"): this had no guard of its own, unlike
+        action_toggle_claude right below it -- so any failure past the display
+        toggles (pomodoro setup, blur(), refresh_side_panels/the Learning Coach's
+        own rendering, or priming the AI panel) took down the whole app with
+        nothing logged, since it's the one direct path into Focus Mode that wasn't
+        covered. The focus_mode flag and pane visibility are set before the guarded
+        section so even a failure downstream leaves the board in the state the
+        press asked for, not stuck."""
         self.focus_mode = not self.focus_mode
         show = not self.focus_mode
         self.kanban.display = show
@@ -2220,25 +2243,29 @@ class TodoApp(App):
         self.calendar_scroll.display = show
         self.claude_panel.display = self.focus_mode
         self.practice_panel.display = self.focus_mode and self.practice_terminal_enabled
-        if self.focus_mode:
-            if not self.pomo_panel.running:
-                self._set_pomodoro_length(45, 10)
-                self.pomo_panel.running = True
-        else:
-            if not self.pomo_panel.running:
-                self._set_pomodoro_length(tc.DEFAULT_POMODORO_MINUTES, tc.DEFAULT_BREAK_MINUTES)
-            if self.claude_panel.has_focus:
-                self.claude_panel.blur()
-            if self.practice_panel.has_focus_within:
-                # PracticeLabPanel is a plain container (the editor/buttons inside it
-                # are what actually take focus), not a pty widget that owns focus
-                # itself like ClaudePanel -- has_focus_within + clearing focus on the
-                # screen is the equivalent of "blur" here.
-                self.screen.set_focus(None)
-        self.toast("Focus Mode ON -- 45/10 pomodoro started, press f to exit" if self.focus_mode else "Focus Mode off",
-                   style="bold bright_green" if self.focus_mode else "dim")
-        self.refresh_side_panels()
-        self._prime_ai_context_if_needed()
+        try:
+            if self.focus_mode:
+                if not self.pomo_panel.running:
+                    self._set_pomodoro_length(45, 10)
+                    self.pomo_panel.running = True
+            else:
+                if not self.pomo_panel.running:
+                    self._set_pomodoro_length(tc.DEFAULT_POMODORO_MINUTES, tc.DEFAULT_BREAK_MINUTES)
+                if self.claude_panel.has_focus:
+                    self.claude_panel.blur()
+                if self.practice_panel.has_focus_within:
+                    # PracticeLabPanel is a plain container (the editor/buttons inside it
+                    # are what actually take focus), not a pty widget that owns focus
+                    # itself like ClaudePanel -- has_focus_within + clearing focus on the
+                    # screen is the equivalent of "blur" here.
+                    self.screen.set_focus(None)
+            self.toast("Focus Mode ON -- 45/10 pomodoro started, press f to exit" if self.focus_mode else "Focus Mode off",
+                       style="bold bright_green" if self.focus_mode else "dim")
+            self.refresh_side_panels()
+            self._prime_ai_context_if_needed()
+        except Exception:
+            app_log.exception("action_toggle_focus_mode failed")
+            self.toast(f"Focus Mode hit an error -- see {LOG_PATH}", style="bold red")
 
     def action_toggle_claude(self):
         if not self.focus_mode:
