@@ -200,6 +200,54 @@ class SaveInstanceScreen(ModalScreen):
             self.dismiss(None)
 
 
+class BugReportScreen(ModalScreen):
+    """Sandbox-only bug capture (see TodoApp.action_report_bug, bound to 'B'). Uses a
+    TextArea, not the single-line TextPromptScreen Input other prompts use -- a one-line
+    box made it hard to see what you'd already typed once a bug description ran past a
+    few words. Sized to show ~10 lines and scrolls for anything longer. Dismisses with the
+    typed text, or None on Cancel/Escape (nothing is logged)."""
+
+    CSS = """
+    BugReportScreen { align: center middle; }
+    #bug-box { width: 90; height: auto; border: round yellow; padding: 1 2; background: $panel; }
+    #bug-box TextArea { height: 14; border: round grey; margin: 1 0; }
+    #bug-buttons { height: 3; align: center middle; }
+    #bug-buttons Button { margin: 0 1; }
+    """
+
+    def compose(self) -> ComposeResult:
+        with Center():
+            with Middle():
+                with Vertical(id="bug-box"):
+                    yield Static("Describe the bug you just found")
+                    yield TextArea(id="bug-text")
+                    yield Static("Ctrl+S to save, Escape to cancel", classes="dim")
+                    with Horizontal(id="bug-buttons"):
+                        yield Button("Save", id="bug-save", variant="primary")
+                        yield Button("Cancel", id="bug-cancel")
+
+    def on_mount(self):
+        self.query_one(TextArea).focus()
+
+    def _submit(self):
+        text = self.query_one(TextArea).text.strip()
+        self.dismiss(text if text else None)
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "bug-save":
+            self._submit()
+        else:
+            self.dismiss(None)
+
+    def on_key(self, event):
+        if event.key == "escape":
+            self.dismiss(None)
+        elif event.key == "ctrl+s":
+            event.prevent_default()
+            event.stop()
+            self._submit()
+
+
 class HintPromptScreen(ModalScreen):
     """Popped up by TodoApp._check_dsa_hint_timer every 10 minutes spent on the
     active DSA task. Dismisses with True/False -- the caller reveals the next
@@ -2177,14 +2225,16 @@ class TodoApp(App):
 
     def action_report_bug(self):
         """Sandbox-only (see the SANDBOX_INSTANCE_MODE-gated BINDINGS entry above): quick-
-        capture a bug without breaking your testing flow -- keep going, and it's still
-        there in bugs.json (saved as part of the instance) for a later Claude Code session
-        to fix and mark off."""
+        capture a bug without breaking your testing flow -- keep going, and it's written
+        to disk immediately (see bug_log.py), independent of the instance's own
+        save/discard fate. Uses BugReportScreen (a real multi-line TextArea, ~10 lines
+        visible + scroll) rather than the single-line TextPromptScreen, since a one-line
+        box made longer descriptions hard to review before saving."""
         def on_result(text):
             if text and text.strip():
                 bug_id = bug_log.add_bug(text.strip())
                 self.toast(f"Bug #{bug_id} logged -- keep testing", style="bold yellow")
-        self.push_screen(TextPromptScreen("Describe the bug you just found"), on_result)
+        self.push_screen(BugReportScreen(), on_result)
 
     def action_quit(self):
         if SANDBOX_INSTANCE_MODE:

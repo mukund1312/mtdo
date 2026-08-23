@@ -42,6 +42,25 @@ artifact.
 
 ---
 
+## 2026-08-22 (PR https://github.com/mukund1312/mtdo/pull/2) -- scrollable multi-line bug-report input
+
+User feedback from real testing: the bug-report box (`B` while testing) used a single-line
+`Input`, making it hard to see what you'd already typed once a description ran past a few
+words -- wanted at least 10 lines visible with scroll.
+
+**Did:** new `BugReportScreen` (app.py) replaces `TextPromptScreen` for this one case --
+`TextArea` sized to show ~12 lines with a visible scrollbar for anything longer, Ctrl+S to
+save / Escape to cancel. `action_report_bug` updated to push it instead.
+
+**Tested (real tmux pty):** confirmed ~12 lines visible; typed a 15-line description,
+confirmed auto-scroll and that the full text (all 15 lines, newlines intact) landed
+correctly in bugs.json; confirmed Ctrl+S saves + toasts, Escape cancels without logging
+anything. Real `~/.mtdo` untouched.
+
+**Next / open items:** none.
+
+---
+
 ## 2026-08-22 (update 3) -- fix: real data loss from an app freeze + hard-killed terminal
 
 User hit a real bug while testing (an unspecified freeze -- app stopped responding) and
