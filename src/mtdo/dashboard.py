@@ -178,7 +178,7 @@ def _render_assign_control(issue_number, current_login):
     </div>"""
 
 
-def _render_issue_detail(issue, assigned_to, description, notes):
+def _render_issue_detail(issue, assigned_to, description, notes, priority=None):
     number = issue["number"]
     title = html.escape(issue["title"])
     state = issue["state"]
@@ -188,6 +188,10 @@ def _render_issue_detail(issue, assigned_to, description, notes):
     found_name = html.escape(_display_name(found_login))
     found_age = _age(issue["createdAt"])
     closed_age = _age(issue["closedAt"]) if issue.get("closedAt") else None
+    priority_html = (
+        f'<span class="pill pill-priority-{priority}">{priority.upper()}</span>'
+        if priority else '<span class="dim">not triaged</span>'
+    )
 
     activity = _bug_git_activity(number)
     if activity["branches"] or activity["commits"]:
@@ -215,6 +219,7 @@ def _render_issue_detail(issue, assigned_to, description, notes):
       <h1>#{number} {title}</h1>
       <div class="issue-meta">
         <div><span class="meta-label">Status</span><span class="pill {pill_class}">{pill_text}</span></div>
+        <div><span class="meta-label">Priority</span>{priority_html}</div>
         <div><span class="meta-label">Found by</span>{found_name}</div>
         <div><span class="meta-label">Assigned to</span>{_render_assign_control(number, assigned_to)}</div>
         <div><span class="meta-label">Found</span>{found_age}</div>
@@ -494,7 +499,8 @@ _SCRIPT = """
     }
   });
 
-  // ---------- issues table filters (found by / assigned to) ----------
+  // ---------- issues table filters (priority / found by / assigned to) ----------
+  var prioritySel = document.getElementById("filter-priority");
   var foundSel = document.getElementById("filter-found");
   var assignedSel = document.getElementById("filter-assigned");
   var clearBtn = document.getElementById("filter-clear");
@@ -502,24 +508,28 @@ _SCRIPT = """
   var emptyMsg = document.getElementById("filter-empty");
 
   function applyFilters() {
+    var wantPriority = prioritySel.value;
     var wantFound = foundSel.value;
     var wantAssigned = assignedSel.value;
     var visible = 0;
     rows.forEach(function (row) {
+      var matchesPriority = !wantPriority || row.getAttribute("data-priority") === wantPriority;
       var matchesFound = !wantFound || row.getAttribute("data-found-by") === wantFound;
       var control = row.querySelector(".assign-control");
       var assignedTo = control ? (control.getAttribute("data-assigned-to") || "") : "";
       var matchesAssigned = !wantAssigned ||
         (wantAssigned === "__unassigned__" ? assignedTo === "" : assignedTo === wantAssigned);
-      var show = matchesFound && matchesAssigned;
+      var show = matchesPriority && matchesFound && matchesAssigned;
       row.style.display = show ? "" : "none";
       if (show) visible++;
     });
     emptyMsg.style.display = visible === 0 ? "" : "none";
   }
+  prioritySel.addEventListener("change", applyFilters);
   foundSel.addEventListener("change", applyFilters);
   assignedSel.addEventListener("change", applyFilters);
   clearBtn.addEventListener("click", function () {
+    prioritySel.value = "";
     foundSel.value = "";
     assignedSel.value = "";
     applyFilters();
@@ -553,6 +563,7 @@ def render_html(issues, statuses, overrides=None):
         assigned_to = override.get("assigned_to", bug_sync.assigned_person(issue))
         description = override.get("description", issue.get("body") or "")
         notes = override.get("notes", [])
+        priority = bug_sync.bug_priority(issue)
 
         if assigned_to in assignments:
             key = "assigned_open" if issue["state"] == "OPEN" else "assigned_fixed"
@@ -565,6 +576,10 @@ def render_html(issues, statuses, overrides=None):
         found_login = issue["author"]["login"] if issue.get("author") else "unknown"
         author = html.escape(_display_name(found_login))
         age = _age(issue["closedAt"]) if issue.get("closedAt") else _age(issue["createdAt"])
+        priority_cell = (
+            f'<span class="pill pill-priority-{priority}">{priority.upper()}</span>'
+            if priority else '<span class="dim">--</span>'
+        )
 
         comment_badge = (
             f'<span class="comment-badge" data-issue="{number}">\U0001f4ac {len(notes)}</span>'
@@ -572,15 +587,16 @@ def render_html(issues, statuses, overrides=None):
             f'<span class="comment-badge" data-issue="{number}" hidden></span>'
         )
         rows += f"""
-        <tr data-found-by="{html.escape(found_login)}">
+        <tr data-found-by="{html.escape(found_login)}" data-priority="{priority or ''}">
           <td><span class="pill {pill_class}">{pill_text}</span></td>
+          <td>{priority_cell}</td>
           <td class="bug-title"><a href="#/issue/{number}">{title}</a>{comment_badge}</td>
           <td>{author}</td>
           <td>{_render_assign_control(number, assigned_to)}</td>
           <td class="dim">{age}</td>
         </tr>"""
 
-        detail_sections += _render_issue_detail(issue, assigned_to, description, notes)
+        detail_sections += _render_issue_detail(issue, assigned_to, description, notes, priority)
 
     person_cards = ""
     team_rows = ""
@@ -643,7 +659,7 @@ def render_html(issues, statuses, overrides=None):
 <style>
   :root {{
     --bg: #faf9f5; --surface: #ffffff; --surface-2: #f1efe8; --border: #e4e0d4;
-    --text: #171a18; --text-dim: #5b6660; --good: #1f8f52; --warn: #a6721f;
+    --text: #171a18; --text-dim: #5b6660; --good: #1f8f52; --warn: #a6721f; --danger: #b3261e;
     --mukund: #2f7fa8; --janhwi: #7c5cc4;
     --font-display: "IBM Plex Sans", ui-sans-serif, system-ui, sans-serif;
     --font-mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
@@ -651,13 +667,13 @@ def render_html(issues, statuses, overrides=None):
   @media (prefers-color-scheme: dark) {{
     :root:not([data-theme="light"]) {{
       --bg: #060807; --surface: #0c0f0d; --surface-2: #0a0c0b; --border: #1c2622;
-      --text: #d8ded9; --text-dim: #7c8c83; --good: #39ff88; --warn: #e0b34d;
+      --text: #d8ded9; --text-dim: #7c8c83; --good: #39ff88; --warn: #e0b34d; --danger: #ff6b5e;
       --mukund: #5fb3d9; --janhwi: #a684e8;
     }}
   }}
   :root[data-theme="dark"] {{
     --bg: #060807; --surface: #0c0f0d; --surface-2: #0a0c0b; --border: #1c2622;
-    --text: #d8ded9; --text-dim: #7c8c83; --good: #39ff88; --warn: #e0b34d;
+    --text: #d8ded9; --text-dim: #7c8c83; --good: #39ff88; --warn: #e0b34d; --danger: #ff6b5e;
     --mukund: #5fb3d9; --janhwi: #a684e8;
   }}
   * {{ box-sizing: border-box; }}
@@ -776,6 +792,9 @@ def render_html(issues, statuses, overrides=None):
   }}
   .pill-open {{ color: var(--warn); background: color-mix(in srgb, var(--warn) 16%, transparent); }}
   .pill-fixed {{ color: var(--good); background: color-mix(in srgb, var(--good) 16%, transparent); }}
+  .pill-priority-high {{ color: var(--danger); background: color-mix(in srgb, var(--danger) 16%, transparent); }}
+  .pill-priority-medium {{ color: var(--warn); background: color-mix(in srgb, var(--warn) 16%, transparent); }}
+  .pill-priority-low {{ color: var(--text-dim); background: var(--surface-2); }}
 
   .velocity-cell {{ display: flex; align-items: center; gap: 10px; min-width: 160px; }}
   .velocity-bar {{ flex: 1; height: 8px; background: var(--surface-2); border-radius: 4px; overflow: hidden; }}
@@ -896,6 +915,14 @@ def render_html(issues, statuses, overrides=None):
     <section id="view-issues" class="view" style="display:none">
       <h1>Issues</h1>
       <div class="filter-row">
+        <label>Priority
+          <select id="filter-priority">
+            <option value="">Any</option>
+            <option value="high">High</option>
+            <option value="medium">Medium</option>
+            <option value="low">Low</option>
+          </select>
+        </label>
         <label>Found by
           <select id="filter-found">
             <option value="">Anyone</option>
@@ -913,9 +940,9 @@ def render_html(issues, statuses, overrides=None):
       </div>
       <div class="table-wrap">
         <table id="bug-table">
-          <thead><tr><th>State</th><th>Bug</th><th>Found by</th><th>Assigned to</th><th>Age</th></tr></thead>
+          <thead><tr><th>State</th><th>Priority</th><th>Bug</th><th>Found by</th><th>Assigned to</th><th>Age</th></tr></thead>
           <tbody>
-            {rows if rows else '<tr><td colspan="5" class="empty">No bugs synced yet -- run `mtdo-sandbox bugs sync &lt;instance&gt;`.</td></tr>'}
+            {rows if rows else '<tr><td colspan="6" class="empty">No bugs synced yet -- run `mtdo-sandbox bugs sync &lt;instance&gt;`.</td></tr>'}
           </tbody>
         </table>
         <p id="filter-empty" class="empty" style="display:none">No bugs match this filter.</p>

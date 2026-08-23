@@ -9,6 +9,62 @@ Add each session's PROGRESS.md entry to the same branch as the code it describes
 
 ---
 
+## 2026-08-24 (PR https://github.com/mukund1312/mtdo/pull/9) -- bug_sync: priority labels + full triage pass on all 25 open bugs
+
+User asked to (1) give Janhwi read/write access to the dashboard, (2) add priority to
+every bug, and (3) reassign all bugs "according to what you feel is right now."
+
+(1) is not something a tool call can do -- there's no API for granting an artifact
+collaborator/editor access, only the artifact's own share menu (told the user directly,
+pointed at the share menu in the top-right of the artifact view).
+
+(2)/(3), did:
+- `bug_sync.py`: `PRIORITY_PREFIX`/`PRIORITIES` + `bug_priority(issue)` (parses a
+  `priority:<level>` label, same pattern as `assigned_person`), `_ensure_priority_labels()`,
+  and `apply_triage(plan)` -- a bulk `{number: {"priority":.., "assigned_to":..}}` applier,
+  the deliberate-judgment counterpart to `distribute_pending()`'s blanks-only fill. Only
+  edits an issue when something in the plan actually differs from its current labels, so
+  re-running the same plan is a no-op.
+- Checked git history first for an ownership signal before reassigning -- found none:
+  every file touched so far (profiles.py, practice_lab_panel.py, etc.) is 100% Mukund's
+  commits; Janhwi's few commits don't concentrate anywhere yet. So the reassignment isn't
+  based on subsystem expertise (there isn't one to point to yet) -- it's split by
+  internals-depth: bugs that need deep knowledge of code Mukund already wrote (profiles.py,
+  Practice Lab sandboxing, config validation, the AI-config wizard, the plaintext-key file)
+  stayed/moved to him; bugs that are externally observable without deep internals knowledge
+  (README/positioning, wizard UX, tests+CI as a pair, the onboarding-pacing bug Janhwi
+  herself found) went to her. Priority: High = #19 (profiles), #38 (Practice Lab sandbox,
+  genuine code-execution safety gap), #34+#35 (no tests, no CI -- real regression risk,
+  paired to one owner), #42 (onboarding shows too much at once, Janhwi's own recent find).
+  Medium = 11 bugs (real but not urgent -- music player timer, config-crash hardening,
+  forgotten-password data loss warning, API-key file review, README/pitch/positioning/
+  packaging). Low = 9 bugs, mostly the #6/#13 scoping fragments (#24/25/26/27/28 -- see
+  [[bugs_6_13_ai_automation_on_hold]], these describe on-hold work, not independent asks),
+  plus cosmetic/large-uncertain-scope items (version tags, CONTRIBUTING.md, web sign-in,
+  Alexa/Siri idea). Final split: Mukund 12 bugs (2 High/6 Medium/4 Low), Janhwi 13 (3
+  High/5 Medium/5 Low) -- close to even, both get a real mix of priorities, not all the
+  urgent work dumped on one person.
+  Applied via one `apply_triage()` call against the live tracker -- all 25 planned changes
+  landed (verified via `bug_sync.bug_priority`/`assigned_person` spot-checks after).
+- `dashboard.py`: priority pill (`pill-priority-high/medium/low`, new `--danger` theme
+  token defined in all three theme blocks per the light/dark/explicit-toggle pattern) in
+  the Issues table and the issue detail page, plus a Priority filter alongside the
+  existing found-by/assigned-to ones. Priority is currently read-only/computed from the
+  GitHub label each regeneration -- unlike assigned-to, it isn't live-editable from the
+  page yet (natural fast-follow if wanted, same `artifact.edit()` pattern already used
+  for reassignment).
+
+**Incidental, unrelated, disclosed for context:** partway through this turn, `dashboard.py`
+and `PROGRESS.md` briefly reverted to their pre-redesign contents on disk -- turned out to
+be a concurrent session doing the bug #7 fix on `feature/mu/UAT-focus-mode-ai-crash-guard`
+(cut from `main` before this dashboard work merged), sharing this same `~/mtdo` checkout.
+That branch's work was already fully committed and pushed, so nothing was lost -- just
+`git checkout`'d back to this branch and continued. The live published dashboard itself was
+never affected, since nothing publishes to it automatically; only this session's own
+`Artifact` tool calls do that.
+
+---
+
 ## 2026-08-24 (PR https://github.com/mukund1312/mtdo/pull/9) -- dashboard: comment-count badge on the Issues table
 
 User asked how they'd know a dev had posted a conversation note without opening every

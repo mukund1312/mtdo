@@ -21,6 +21,8 @@ from . import bug_log
 TRACKER_REPO = "mukund1312/mtdo-bugs"
 LABEL = "sandbox-bug"
 ASSIGN_PREFIX = "assigned:"
+PRIORITY_PREFIX = "priority:"
+PRIORITIES = ["high", "medium", "low"]
 
 # The known two-person roster. Each maps to a friendly display name/color for the
 # dashboard, and to every git identity (name+email pairs are inconsistent across
@@ -128,6 +130,81 @@ def assigned_person(issue):
         if name.startswith(ASSIGN_PREFIX):
             return name[len(ASSIGN_PREFIX):]
     return None
+
+
+def bug_priority(issue):
+    """A `priority:<level>` label (one of PRIORITIES), or None if never triaged."""
+    for label in issue.get("labels", []):
+        name = label["name"] if isinstance(label, dict) else label
+        if name.startswith(PRIORITY_PREFIX):
+            return name[len(PRIORITY_PREFIX):]
+    return None
+
+
+def _ensure_priority_labels():
+    existing = set(_run([
+        "gh", "label", "list", "--repo", TRACKER_REPO, "--json", "name", "-q", ".[].name",
+    ]).splitlines())
+    colors = {"high": "b60205", "medium": "d4a72c", "low": "5c6672"}
+    for level in PRIORITIES:
+        label = f"{PRIORITY_PREFIX}{level}"
+        if label not in existing:
+            subprocess.run(
+                ["gh", "label", "create", label, "--repo", TRACKER_REPO,
+                 "--color", colors[level], "--description", f"{level.title()} priority"],
+                capture_output=True,
+            )
+
+
+def apply_triage(plan):
+    """Bulk-apply a `{issue_number: {"priority": <level or None>, "assigned_to": <login or
+    None>}}` plan in one pass -- the deliberate-judgment counterpart to distribute_pending()
+    (which only fills in blanks). Only issues an edit per issue when something in the plan
+    actually differs from the issue's current label state, so re-running with the same plan
+    is a no-op. Returns {number: {"priority": bool_changed, "assigned_to": bool_changed}}
+    for whichever issues had at least one change."""
+    _ensure_priority_labels()
+    _ensure_assignment_labels()
+    issues = {i["number"]: i for i in list_all()}
+    changes = {}
+    for number, desired in plan.items():
+        issue = issues.get(number)
+        if issue is None:
+            continue
+        add_labels, remove_labels = [], []
+        changed = {"priority": False, "assigned_to": False}
+
+        if "priority" in desired:
+            current = bug_priority(issue)
+            wanted = desired["priority"]
+            if wanted != current:
+                if current:
+                    remove_labels.append(f"{PRIORITY_PREFIX}{current}")
+                if wanted:
+                    add_labels.append(f"{PRIORITY_PREFIX}{wanted}")
+                changed["priority"] = True
+
+        if "assigned_to" in desired:
+            current = assigned_person(issue)
+            wanted = desired["assigned_to"]
+            if wanted != current:
+                if current:
+                    remove_labels.append(f"{ASSIGN_PREFIX}{current}")
+                if wanted:
+                    add_labels.append(f"{ASSIGN_PREFIX}{wanted}")
+                changed["assigned_to"] = True
+
+        if not add_labels and not remove_labels:
+            continue
+
+        args = ["gh", "issue", "edit", str(number), "--repo", TRACKER_REPO]
+        for label in add_labels:
+            args += ["--add-label", label]
+        for label in remove_labels:
+            args += ["--remove-label", label]
+        _run(args)
+        changes[number] = changed
+    return changes
 
 
 def _ensure_assignment_labels():
