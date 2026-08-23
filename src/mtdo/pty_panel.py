@@ -480,17 +480,30 @@ class PtyPanel(Widget):
 
     def on_mouse_scroll_up(self, event) -> None:
         # Scroll into history -- doesn't need keyboard focus, same as scrolling any
-        # other pane with the wheel/trackpad.
-        if self._screen is not None:
-            self._screen.prev_page()
-            self.refresh()
-        event.stop()
+        # other pane with the wheel/trackpad. Guarded like every other handler here
+        # (see on_click/on_key/render) -- these two were the one pair left uncaught,
+        # found while tracking down bug #7/GH#11 ("the AI in focus mode is crashing
+        # again and again"): pyte's HistoryScreen paging isn't part of this app's
+        # code, so a wheel scroll at some buffer state throwing inside it would have
+        # taken the whole app down with nothing in error.log to show for it.
+        try:
+            if self._screen is not None:
+                self._screen.prev_page()
+                self.refresh()
+        except Exception:
+            log.exception("%s on_mouse_scroll_up failed", type(self).__name__)
+        finally:
+            event.stop()
 
     def on_mouse_scroll_down(self, event) -> None:
-        if self._screen is not None:
-            self._screen.next_page()
-            self.refresh()
-        event.stop()
+        try:
+            if self._screen is not None:
+                self._screen.next_page()
+                self.refresh()
+        except Exception:
+            log.exception("%s on_mouse_scroll_down failed", type(self).__name__)
+        finally:
+            event.stop()
 
     def save_transcript(self):
         """Dumps everything currently captured (scrollback + visible screen, in

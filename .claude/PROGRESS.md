@@ -211,6 +211,136 @@ real instead of zero -- the fix here just makes sure she *shows up* even before 
 
 ---
 
+## 2026-08-24 (PR https://github.com/mukund1312/mtdo/pull/10) -- Focus Mode / AI-panel priming had no crash guard (bug #7)
+
+Bug #7 (GH mukund1312/mtdo-bugs#11): "the AI we are using in focus mode is crashing
+again and again" -- no repro steps, no stack trace, and `~/.mtdo/error.log` /
+every `~/.mtdo-sandbox/instances/*/error.log` had nothing from around when it was
+filed, despite nearly every AI-panel code path already logging failures via
+errorlog.py, AND `TodoApp._handle_exception` overriding Textual's own hook to log
+literally any uncaught exception reachable through the message pump (action_/on_/
+timer callbacks -- confirmed by reading Textual's own source, message_pump.py/
+worker.py/timer.py all route through it). That combination is what actually
+narrowed this down: the crash had to be in one of the only spots NOT covered.
+
+**Root cause (best-supported, not proven with a live repro):**
+`TodoApp.action_toggle_focus_mode` ('f') and `_prime_ai_context_if_needed` (primes
+the embedded AI panel with the active task's context) had no try/except of their
+own -- the one pair of AI-panel entry points not wrapped, unlike `action_toggle_claude`
+right next to them. Confirmed via a headless `App.run_test()` with a deliberately
+malformed active task that a crash CAN reach these two unguarded (though a block
+missing `"text"` specifically turned out to crash much earlier/more broadly --
+kanban card render, the active-task panel -- ruling that exact malformation out as
+the real trigger, but proving the principle: nothing stopped some other bad state
+reaching these two from taking the whole app down silently).
+
+**Did:** wrapped both in try/except (`app_log.exception` + toast, same pattern as
+`action_toggle_claude`), hardened `active["block"]["text"]` to `.get("text", "")` in
+the priming message. Also found and fixed `PtyPanel.on_mouse_scroll_up`/
+`on_mouse_scroll_down` (mouse-wheel scroll in the AI panel) -- the only two handlers
+in `pty_panel.py` missing the same guard every other handler there already has.
+
+**Tested:** `py_compile` both files; headless `App.run_test()` twice -- once with a
+malformed active task (confirmed the guard doesn't mask anything new, the real
+crash surface for that specific malformation is elsewhere), once with realistic
+data pressing `f` twice (Focus Mode toggles cleanly both ways, `ai_primed_ref` sets
+correctly, nothing new logged). Could not get a live repro of the actual reported
+crash itself.
+
+**Incident during this session, disclosed here on purpose:** while trying to
+reproduce live via tmux, ran `pkill -f "/opt/homebrew/bin/mtdo$"` to clean up a
+debug process and it matched far more broadly than intended -- it killed two
+long-running real `mtdo` processes (PIDs 21403 and 21646, both up since Tue 7PM),
+one of which was hosted in a tmux session called "mt6" that has since closed as a
+result. mtdo writes state.json on every mutation already (not just on exit), so
+tracked task/streak data itself should be safe, but any live unsaved AI-panel
+conversation in those sessions is gone, and the "mt6" terminal window itself is
+gone. Told the user directly in the session this happened in. **Lesson for next
+time: never `pkill`/`kill` by a pattern that matches the plain `mtdo`/`mtdo-sandbox`
+binary path -- it matches every running instance, not just ones this session
+started. Kill only an exact PID captured right after spawning it yourself.**
+
+Bug #7 marked fixed in `~/.mtdo-sandbox/bugs.json` and GH issue #11 closed via
+`bug_sync.mark_fixed_and_close` (this branch was cut from `main`, pre-dashboard-PR,
+so that function's older form here has no rebalance step -- not a bug, just an
+older version of bug_sync.py than the still-unmerged dashboard branch has).
+
+---
+
+## 2026-08-23 (PR https://github.com/mukund1312/mtdo/pull/8) -- fresh_config.yaml was never actually empty (bug #10)
+
+Bug #10 originally asked for an in-app upload/download screen for the "Manual" populate
+path. Before building that, asked the user to clarify -- turned out "Manual" was always
+meant as "use the app genuinely blank, add fields yourself via 'a'", not "hand-edit
+goals.json". No upload/download UI needed at all.
+
+Checking that surfaced the *real* bug: `fresh_config.yaml` (what `init_config(fresh=True)`
+actually writes) shipped with 3 placeholder categories (work/personal/health -- health
+even had a `fixed_labels: ["Move your body today"]` auto-generating a card), not truly
+empty. So picking "Manual" never actually gave a blank board.
+
+**Did:** Rewrote `fresh_config.yaml` to `category_order: []`, `categories: {}` -- genuinely
+zero categories, matching `config._EMPTY_CONFIG`'s intent (the Option-A equivalent, used
+elsewhere). Updated the wizard's "Manual" option label and confirmation toast to say what
+it actually does (press 'a' to add fields) instead of implying JSON editing.
+
+**Tested (real tmux pty):** confirmed the app renders correctly with zero categories --
+`Backlog (0) Todo (0) In Progress (0) Done (0)`, no crash, every side panel (stats,
+calendar, pomodoro, now playing, coach) renders its empty state correctly. Confirmed 'a'
+(add field) still works from this genuinely blank state. Real `~/.mtdo` untouched; 8 real
+saved instances present throughout (several created by the user concurrently during this
+session), none touched -- net zero change from my own test instance (created, then
+discarded).
+
+**Next / open items:** bugs #6 and #13 (AI-config walkthrough + full automation of the AI
+hand-off) still need a scoping conversation before code -- next up.
+
+## 2026-08-23 (PR https://github.com/mukund1312/mtdo/pull/7) -- Ctrl+B back-navigation through the setup wizard (bugs #11, #12)
+
+Bugs #11/#12: no way to go back and edit an earlier answer anywhere in the setup wizard's
+question sequence (name, persona, populate-method, AI-choice, and each individual Q&A
+question) -- once answered, it was answered, and an accidental Escape lost everything
+with no way back in short of restarting the whole thing via `g`.
+
+**Did:** `WIZARD_BACK` sentinel (an `object()`, not a string -- can never collide with a
+real typed answer) plumbed through `TextPromptScreen`, `ChoicePickScreen`, and
+`PersonaPickScreen` -- each gains a `show_back` param that adds a "Ctrl+B back" hint and
+binding only when there's actually a previous step to return to. `TodoApp` maintains
+`self._wizard_stack`, a list of zero-arg closures, each "how to redisplay the step before
+this one, pre-filled with what was answered there." Every wizard step callback: handle
+`WIZARD_BACK` first (pop and call the top closure), then push its own redo-closure before
+advancing forward. `_ask_plan_wizard_questions` switched from slicing the question list
+(`questions[1:]`) to an explicit `index` parameter, since slicing throws away the
+information needed to redisplay "the question before this one."
+
+Changing an earlier answer just works without special-casing: since every forward step
+always recomputes "what's next" from current state (e.g. `plan_wizard.questions_for(persona)`
+called fresh each time), going back to persona and picking a different one naturally
+serves that persona's own question set on the way back down -- no stale state to clear.
+
+**Caught and fixed one real bug during implementation, not before shipping it:** initially
+wrote two separate `on_key` methods on `ChoicePickScreen` (one for Escape, one for the new
+Ctrl+B) -- Python silently keeps only the last one defined, so Ctrl+B would have been dead
+code, never actually callable. Caught by grepping for duplicate `on_key` definitions
+during testing, before it ever reached a user; merged into one method.
+
+**Tested (real tmux pty, thorough):** back from persona to name (pre-filled correctly);
+answered 2 questions deep into a persona's Q&A, went back twice in a row (question 2 ->
+question 1, pre-filled -- then question 1 -> AI-choice), continued back through
+populate-method -> persona -> name (each pre-filled), confirmed the true first step
+renders no back hint at all (nothing to go back to, not even a broken no-op affordance).
+Separately verified that going back to persona and picking a *different* one correctly
+served that new persona's own question set going forward (School's "academic goal"
+question vs. College's "main goal" question). 6 real saved instances present in the
+picker throughout, none touched. Real `~/.mtdo` untouched.
+
+**Next / open items:** bug #10 (in-app upload/download screen for the manual-populate
+path) is next. Bug #13 (fully automate the AI hand-off, no manual copy-paste) still needs
+a scoping conversation before code -- significantly overlaps the still-unstarted PR C
+(bug #6).
+
+---
+
 ## 2026-08-23 (PR https://github.com/mukund1312/mtdo/pull/6) -- wizard free-text answers get a scrollable box too (bug #8)
 
 Bug tracker triage session: went through all bugs logged to date. Closed #1, #9 (empty,
