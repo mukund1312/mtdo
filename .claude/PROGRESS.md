@@ -9,6 +9,43 @@ Add each session's PROGRESS.md entry to the same branch as the code it describes
 
 ---
 
+## 2026-08-23 (PR https://github.com/mukund1312/mtdo/pull/6) -- wizard free-text answers get a scrollable box too (bug #8)
+
+Bug tracker triage session: went through all bugs logged to date. Closed #1, #9 (empty,
+no content), and marked #2-#5 fixed (already resolved by the merged setup-wizard PR).
+Bug #8 ("the bug capturing window has not been fixed and there is no scrolling") looked
+like a regression at first, but re-testing confirmed the actual `B` bug-report screen
+(fixed earlier) still works correctly -- the real culprit was a *different* screen: the
+setup wizard's free-text questions (e.g. "What's your academic goal?") still used the
+old single-line `Input`.
+
+**Did:** `TextPromptScreen` gains `multiline=True` (same `TextArea` approach as
+`BugReportScreen` -- ~12 lines visible, scroll, Ctrl+S to save instead of Enter, since
+Enter means newline in a TextArea). Applied only to the wizard's free-text question
+branch in `_ask_plan_wizard_questions` -- left as single-line everywhere else
+(names, card titles, pomodoro settings, etc) where that's the correct, unsurprising
+affordance and Enter-to-submit is worth keeping.
+
+**Tested (real tmux pty):** confirmed the large scrollable box now shows for a wizard
+free-text question, typed a long multi-sentence answer, Ctrl+S advanced correctly to the
+next question (still showing the fix), then to a multiple-choice question after that --
+full chain intact. Escape correctly cancels the whole wizard with "Setup cancelled --
+nothing written." Real `~/.mtdo` and all real saved instances (several now, users are
+actively testing) confirmed untouched throughout.
+
+**Next / open items:** Bugs #10-#13 came in during this session (real, substantial):
+back-navigation through wizard questions (#11, #12 -- generalized to "everywhere with a
+question sequence"), an in-app upload/download screen for the manual goals.json path
+(#10), and a large one (#13) asking for the AI hand-off to become fully automatic --
+no manual copy-paste into Focus Mode, incremental week-1-then-week-2 plan building, the
+AI reading the template and answers itself and writing goals.json behind the scenes.
+#13 significantly overlaps with the still-unstarted PR C (bug #6, the step-by-step
+AI-config walkthrough) -- likely need to treat them as one combined design rather than
+two separate features. Needs a scoping conversation with the user before writing code,
+same as the original wizard redesign did.
+
+---
+
 ## 2026-08-23 (PR https://github.com/mukund1312/mtdo/pull/4) -- confirm-gated instance delete
 
 A raw `rm -rf` on `~/.mtdo-sandbox/instances/` during test cleanup (in this same session)
