@@ -150,7 +150,7 @@ def render_html(issues, statuses):
   :root {{
     --bg: #faf9f5; --surface: #ffffff; --surface-2: #f1efe8; --border: #e4e0d4;
     --text: #171a18; --text-dim: #5b6660; --good: #1f8f52; --warn: #a6721f;
-    --mukund: #2f7fa8; --janhvi: #7c5cc4;
+    --mukund: #2f7fa8; --janhwi: #7c5cc4;
     --font-display: "IBM Plex Sans", ui-sans-serif, system-ui, sans-serif;
     --font-mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
   }}
@@ -158,13 +158,13 @@ def render_html(issues, statuses):
     :root:not([data-theme="light"]) {{
       --bg: #060807; --surface: #0c0f0d; --surface-2: #0a0c0b; --border: #1c2622;
       --text: #d8ded9; --text-dim: #7c8c83; --good: #39ff88; --warn: #e0b34d;
-      --mukund: #5fb3d9; --janhvi: #a684e8;
+      --mukund: #5fb3d9; --janhwi: #a684e8;
     }}
   }}
   :root[data-theme="dark"] {{
     --bg: #060807; --surface: #0c0f0d; --surface-2: #0a0c0b; --border: #1c2622;
     --text: #d8ded9; --text-dim: #7c8c83; --good: #39ff88; --warn: #e0b34d;
-    --mukund: #5fb3d9; --janhvi: #a684e8;
+    --mukund: #5fb3d9; --janhwi: #a684e8;
   }}
   * {{ box-sizing: border-box; }}
   body {{

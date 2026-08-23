@@ -26,8 +26,8 @@ ASSIGN_PREFIX = "assigned:"
 # dashboard, and to every git identity (name+email pairs are inconsistent across
 # machines/accounts -- see PROGRESS.md 2026-08-23) that should count toward their commits.
 PEOPLE = ["mukund1312", "janhwirai"]
-DISPLAY_NAMES = {"mukund1312": "Mukund", "janhwirai": "Janhvi"}
-PERSON_COLOR_VAR = {"mukund1312": "--mukund", "janhwirai": "--janhvi"}
+DISPLAY_NAMES = {"mukund1312": "Mukund", "janhwirai": "Janhwi"}
+PERSON_COLOR_VAR = {"mukund1312": "--mukund", "janhwirai": "--janhwi"}
 GIT_EMAILS = {
     "mukund1312": {"mukundumashankar@gmail.com", "85414863+mukund1312@users.noreply.github.com"},
     "janhwirai": {"janhwirai5@gmail.com", "104694618+janhwirai@users.noreply.github.com"},
