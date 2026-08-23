@@ -3,6 +3,43 @@
 Newest entries first. Read this before starting work; append before finishing.
 See `~/.claude/agents/mtdo-dev.md` for the full project onboarding/architecture doc.
 
+**Workflow note (2026-08-22 onward):** changes go on a `feature/mu/UAT-<description>`
+branch + PR into main, not straight to main -- see the Git workflow section at the bottom.
+Add each session's PROGRESS.md entry to the same branch as the code it describes.
+
+---
+
+## 2026-08-23 (PR https://github.com/mukund1312/mtdo/pull/4) -- confirm-gated instance delete
+
+A raw `rm -rf` on `~/.mtdo-sandbox/instances/` during test cleanup (in this same session)
+deleted a real, user-named saved instance ("found few bugs related to the setup of the
+app when opened for the 1st time") along with the agent's own test data -- there was no
+dedicated deletion command, only ever a blanket shell command with no way to tell
+"obviously mine" apart from "somebody's real saved work". Caught and disclosed
+immediately after; the instance's board/task state is unrecoverable, though the actual
+bug *reports* from it survived independently (bug capture is already decoupled from
+instance lifecycle, see the 2026-08-22 durability fix below).
+
+**Did:**
+- `instance_store.delete_instance(slug)` -- raises `FileNotFoundError` on an unknown slug
+  rather than silently no-oping.
+- `mtdo-sandbox instance list` / `mtdo-sandbox instance delete <slug>` -- shows what it's
+  about to delete, requires typing the exact slug back to confirm (same pattern as
+  `mtdo-sandbox reset` requiring the word "reset").
+- Documented as the one sanctioned way to remove an instance, in this file, in
+  `mtdo-dev.md`, and as a standing personal-conduct memory: never `rm -rf` under
+  `~/.mtdo-sandbox/instances/` (or any real user data) during cleanup without explicit
+  confirmation -- treat a real, specific name/description as a strong signal of real user
+  work, not disposable test debris, unless it's something created in the same session.
+
+**Tested (real):** created a genuine test instance, confirmed `instance list` shows it;
+wrong confirmation text declined and left it untouched; correct confirmation (the slug)
+deleted it, confirmed gone. Real `~/.mtdo` untouched throughout.
+
+**Next / open items:** none. If this comes up again: check `instance list` and confirm
+with the user before touching anything that isn't unambiguously a same-session test
+artifact.
+
 ---
 
 ## 2026-08-22 (update 3) -- fix: real data loss from an app freeze + hard-killed terminal
