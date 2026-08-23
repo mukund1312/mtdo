@@ -127,18 +127,23 @@ def render_html(issues, statuses):
         pill_class = "pill-open" if state == "OPEN" else "pill-fixed"
         pill_text = "OPEN" if state == "OPEN" else "FIXED"
         title = html.escape(issue["title"])
-        author = html.escape(_display_name(issue["author"]["login"] if issue.get("author") else "unknown"))
+        found_login = issue["author"]["login"] if issue.get("author") else "unknown"
+        author = html.escape(_display_name(found_login))
         age = _age(issue["closedAt"] if state == "CLOSED" and issue.get("closedAt") else issue["createdAt"])
         assignee = bug_sync.assigned_person(issue)
         assignee_cell = html.escape(_display_name(assignee)) if assignee else '<span class="dim">unassigned</span>'
         rows += f"""
-        <tr>
+        <tr data-found-by="{html.escape(found_login)}" data-assigned-to="{html.escape(assignee or '')}">
           <td><span class="pill {pill_class}">{pill_text}</span></td>
           <td class="bug-title">{title}</td>
           <td>{author}</td>
           <td>{assignee_cell}</td>
           <td class="dim">{age}</td>
         </tr>"""
+
+    filter_options = "".join(
+        f'<option value="{login}">{html.escape(_display_name(login))}</option>' for login in PEOPLE
+    )
 
     refreshed = datetime.datetime.now().strftime("%b %-d, %Y at %-I:%M %p")
 
@@ -236,6 +241,20 @@ def render_html(issues, statuses):
 
   .footer {{ margin-top: 28px; font-size: 0.75rem; color: var(--text-dim); text-align: center; }}
   .empty {{ color: var(--text-dim); font-size: 0.85rem; padding: 20px; text-align: center; }}
+
+  .filter-row {{ display: flex; align-items: center; gap: 16px; margin-bottom: 10px; flex-wrap: wrap; }}
+  .filter-row label {{
+    display: flex; align-items: center; gap: 6px; font-size: 0.8rem; color: var(--text-dim);
+  }}
+  .filter-row select {{
+    font-family: var(--font-mono); font-size: 0.8rem; color: var(--text); background: var(--surface);
+    border: 1px solid var(--border); border-radius: 6px; padding: 4px 8px;
+  }}
+  .filter-row button {{
+    font-family: var(--font-display); font-size: 0.75rem; color: var(--text-dim); background: none;
+    border: 1px solid var(--border); border-radius: 6px; padding: 4px 10px; cursor: pointer;
+  }}
+  .filter-row button:hover {{ color: var(--text); border-color: var(--text-dim); }}
 </style>
 
 <div class="wrap">
@@ -254,19 +273,70 @@ def render_html(issues, statuses):
   </div>
 
   <p class="section-label">Bugs (found by, currently assigned to)</p>
+  <div class="filter-row">
+    <label>Found by
+      <select id="filter-found">
+        <option value="">Anyone</option>
+        {filter_options}
+      </select>
+    </label>
+    <label>Assigned to
+      <select id="filter-assigned">
+        <option value="">Anyone</option>
+        <option value="__unassigned__">Unassigned</option>
+        {filter_options}
+      </select>
+    </label>
+    <button id="filter-clear" type="button">Clear</button>
+  </div>
   <div class="table-wrap">
-    <table>
+    <table id="bug-table">
       <thead><tr><th>State</th><th>Bug</th><th>Found by</th><th>Assigned to</th><th>Age</th></tr></thead>
       <tbody>
         {rows if rows else '<tr><td colspan="5" class="empty">No bugs synced yet -- run `mtdo-sandbox bugs sync &lt;instance&gt;`.</td></tr>'}
       </tbody>
     </table>
+    <p id="filter-empty" class="empty" style="display:none">No bugs match this filter.</p>
   </div>
 
   <p class="footer">Static snapshot, not live -- ask Claude to run `mtdo-sandbox dashboard` again and republish to refresh.
   Distribution: `mtdo-sandbox bugs distribute` assigns unassigned open bugs to whoever has fewer; finishing your queue first
   automatically pulls a few of the other person's over (see bug_sync.rebalance).</p>
 </div>
+
+<script>
+  (function () {{
+    var foundSel = document.getElementById('filter-found');
+    var assignedSel = document.getElementById('filter-assigned');
+    var clearBtn = document.getElementById('filter-clear');
+    var rows = Array.prototype.slice.call(document.querySelectorAll('#bug-table tbody tr[data-found-by]'));
+    var emptyMsg = document.getElementById('filter-empty');
+
+    function apply() {{
+      var wantFound = foundSel.value;
+      var wantAssigned = assignedSel.value;
+      var visible = 0;
+      rows.forEach(function (row) {{
+        var matchesFound = !wantFound || row.getAttribute('data-found-by') === wantFound;
+        var assignedTo = row.getAttribute('data-assigned-to') || '';
+        var matchesAssigned = !wantAssigned
+          || (wantAssigned === '__unassigned__' ? assignedTo === '' : assignedTo === wantAssigned);
+        var show = matchesFound && matchesAssigned;
+        row.style.display = show ? '' : 'none';
+        if (show) visible++;
+      }});
+      emptyMsg.style.display = visible === 0 ? '' : 'none';
+    }}
+
+    foundSel.addEventListener('change', apply);
+    assignedSel.addEventListener('change', apply);
+    clearBtn.addEventListener('click', function () {{
+      foundSel.value = '';
+      assignedSel.value = '';
+      apply();
+    }});
+  }})();
+</script>
 """
 
 
