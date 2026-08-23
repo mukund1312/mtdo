@@ -9,6 +9,56 @@ Add each session's PROGRESS.md entry to the same branch as the code it describes
 
 ---
 
+## 2026-08-23 (PR https://github.com/mukund1312/mtdo/pull/9) -- dashboard: commit counts + bug distribution/rebalancing
+
+User asked for three things on the shared dashboard: (1) fix it -- it should "work
+properly", (2) track commit counts per dev, (3) a real bug-distribution system: split
+pending bugs between the two devs, and if one finishes their batch first, automatically
+move a few of the other's over so neither runs dry.
+
+**Bug found while checking "should work properly":** Janhvi didn't appear on the
+dashboard *at all* -- the person list only ever included logins with existing activity
+(found/fixed/status), and every bug synced so far was authored under mukund1312 (nobody's
+run `bugs sync`/`working-on` from her machine yet). Fixed by always showing both known
+people from `bug_sync.PEOPLE`, even at zero.
+
+**Did:**
+- `bug_sync.py`: `PEOPLE`/`DISPLAY_NAMES`/`PERSON_COLOR_VAR` moved here from dashboard.py
+  (single source of truth, since assignment needs the roster too) plus `GIT_EMAILS` --
+  each person has multiple git identities across machines (`git shortlog` showed 4
+  fragmented names/emails for 2 real people) that all need to count as one person.
+  `assigned_person(issue)` reads an `assigned:<login>` label -- deliberately NOT the
+  `assignees` field, which `mark_fixed_and_close` already uses to mean "who fixed it" at
+  close time; a second label keeps those two concepts from colliding.
+  `distribute_pending()` assigns every unassigned open bug to whoever currently has
+  fewer (safe to re-run as new bugs come in). `rebalance(fixer_login)`, called
+  automatically at the end of `mark_fixed_and_close`: if the fixer just cleared their
+  whole assigned queue while the other person still has one, moves up to 3 of the
+  other's over. `assignment_summary()` for the CLI/dashboard.
+- `mtdo-sandbox bugs distribute` / `mtdo-sandbox bugs assignments` (sandbox_entry.py).
+- `dashboard.py`: commit counts (`git log --all --pretty=%ae` against this file's own
+  repo root, mapped through `GIT_EMAILS` -- counts every branch, not just main, since
+  this is an activity signal, not a "what shipped" one), an "assigned to them" count per
+  person, and an "Assigned to" column on the bug table.
+
+**Tested (real, against the real tracker, not mocked):** `distribute` on the 6 real open
+bugs split them 3/3. Rebalancing tested with 2 throwaway test issues (created, assigned,
+deleted after) plus temporarily relabeling the real 3 assigned to Mukund over to Janhvi
+to simulate "he just finished" -- confirmed `rebalance('mukund1312')` moved exactly 3
+back, and correctly no-ops on a second call once he has bugs again. Restored the real
+distribution to a clean 3/3 split afterward. Commit counts verified correct after
+manually cross-checking `git shortlog -sn --all` (86 for Mukund across 2 fragmented
+identities, 2 for Janhvi across hers). Dashboard regenerated and republished to the
+existing Artifact URL (`.../fc424e3e-...`) -- confirmed via the rendered HTML that both
+people now show up, with correct found/fixed/commits/assigned numbers and the new
+"Assigned to" column. Real `~/.mtdo` untouched throughout.
+
+**Next / open items:** Janhvi still needs to actually run `mtdo-sandbox bugs sync` /
+`working-on` from her own machine at least once for her "found"/status numbers to become
+real instead of zero -- the fix here just makes sure she *shows up* even before that.
+
+---
+
 ## 2026-08-23 (PR https://github.com/mukund1312/mtdo/pull/6) -- wizard free-text answers get a scrollable box too (bug #8)
 
 Bug tracker triage session: went through all bugs logged to date. Closed #1, #9 (empty,

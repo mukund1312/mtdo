@@ -12,14 +12,17 @@ same link.
 import datetime
 import html
 import os
+import subprocess
 
 from . import bug_sync, status_sync
+from .bug_sync import DISPLAY_NAMES, PEOPLE, PERSON_COLOR_VAR
 
 DASHBOARD_PATH = os.path.expanduser("~/.mtdo-sandbox/dashboard.html")
 
-# Known collaborators, for a friendly display name -- anyone else shows up by raw login.
-DISPLAY_NAMES = {"mukund1312": "Mukund", "janhwirai": "Janhvi"}
-PERSON_COLOR_VAR = {"mukund1312": "--mukund", "janhwirai": "--janhvi"}
+# The repo root, derived from this file's own location (src/mtdo/dashboard.py -> repo
+# root is two levels up) -- works on whichever machine this runs on via the editable
+# install, so commit counts always reflect that machine's local checkout after a pull.
+_REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 
 def _display_name(login):
@@ -48,12 +51,48 @@ def _tally(issues):
     return found_by, fixed_by
 
 
+def _commit_counts():
+    """Commits per person, matched by git identity email (see bug_sync.GIT_EMAILS --
+    each person has more than one across machines/accounts). Counts every branch
+    (--all), not just main, so in-progress feature-branch work counts too -- this is an
+    activity signal, not a "what's shipped" metric. Returns {} if git isn't available or
+    this isn't actually a checkout (shouldn't happen via the normal install, but this
+    must never crash the whole dashboard over it)."""
+    try:
+        result = subprocess.run(
+            ["git", "-C", _REPO_ROOT, "log", "--all", "--pretty=%ae"],
+            capture_output=True, text=True, timeout=10,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return {}
+    if result.returncode != 0:
+        return {}
+    counts = {p: 0 for p in PEOPLE}
+    for email in result.stdout.splitlines():
+        email = email.strip()
+        for person, emails in bug_sync.GIT_EMAILS.items():
+            if email in emails:
+                counts[person] += 1
+                break
+    return counts
+
+
 def render_html(issues, statuses):
     open_count = sum(1 for i in issues if i["state"] == "OPEN")
     closed_count = sum(1 for i in issues if i["state"] == "CLOSED")
     found_by, fixed_by = _tally(issues)
+    commits = _commit_counts()
+    assignments = {p: {"assigned_open": 0, "assigned_fixed": 0} for p in PEOPLE}
+    for issue in issues:
+        who = bug_sync.assigned_person(issue)
+        if who in assignments:
+            key = "assigned_open" if issue["state"] == "OPEN" else "assigned_fixed"
+            assignments[who][key] += 1
 
-    people = sorted(set(found_by) | set(fixed_by) | set(statuses), key=lambda p: _display_name(p))
+    # Always show both known people, even with zero activity so far (e.g. before anyone
+    # has synced from their own machine) -- previously this list only included whoever
+    # already had data, so a person who'd never used the tracker yet didn't appear at all.
+    people = sorted(set(PEOPLE) | set(found_by) | set(fixed_by) | set(statuses), key=_display_name)
 
     person_cards = ""
     for login in people:
@@ -63,6 +102,7 @@ def render_html(issues, statuses):
         status_line = html.escape(st["status"]) if st else "no status set"
         status_age = _age(st["updated_at"]) if st else ""
         initial = name[0].upper()
+        a = assignments.get(login, {"assigned_open": 0, "assigned_fixed": 0})
         person_cards += f"""
         <div class="person-card">
           <div class="person-head">
@@ -74,6 +114,10 @@ def render_html(issues, statuses):
           <div class="person-tally">
             <span><b class="num">{found_by.get(login, 0)}</b> found</span>
             <span><b class="num">{fixed_by.get(login, 0)}</b> fixed</span>
+            <span><b class="num">{commits.get(login, 0)}</b> commits</span>
+          </div>
+          <div class="person-tally assign-tally">
+            <span><b class="num">{a['assigned_open']}</b> assigned to them</span>
           </div>
         </div>"""
 
@@ -85,11 +129,14 @@ def render_html(issues, statuses):
         title = html.escape(issue["title"])
         author = html.escape(_display_name(issue["author"]["login"] if issue.get("author") else "unknown"))
         age = _age(issue["closedAt"] if state == "CLOSED" and issue.get("closedAt") else issue["createdAt"])
+        assignee = bug_sync.assigned_person(issue)
+        assignee_cell = html.escape(_display_name(assignee)) if assignee else '<span class="dim">unassigned</span>'
         rows += f"""
         <tr>
           <td><span class="pill {pill_class}">{pill_text}</span></td>
           <td class="bug-title">{title}</td>
           <td>{author}</td>
+          <td>{assignee_cell}</td>
           <td class="dim">{age}</td>
         </tr>"""
 
@@ -164,8 +211,9 @@ def render_html(issues, statuses):
   .person-name {{ font-family: var(--font-display); font-weight: 600; font-size: 0.95rem; }}
   .status-line {{ font-size: 0.85rem; margin: 0 0 2px; line-height: 1.5; }}
   .status-age {{ font-size: 0.75rem; color: var(--text-dim); margin: 0 0 10px; }}
-  .person-tally {{ display: flex; gap: 16px; font-size: 0.8rem; color: var(--text-dim); }}
+  .person-tally {{ display: flex; gap: 16px; font-size: 0.8rem; color: var(--text-dim); flex-wrap: wrap; }}
   .person-tally .num {{ color: var(--text); font-variant-numeric: tabular-nums; }}
+  .assign-tally {{ margin-top: 6px; padding-top: 6px; border-top: 1px dashed var(--border); }}
 
   .table-wrap {{ overflow-x: auto; border: 1px solid var(--border); border-radius: 10px; }}
   table {{ width: 100%; border-collapse: collapse; font-size: 0.85rem; background: var(--surface); }}
@@ -176,7 +224,7 @@ def render_html(issues, statuses):
   }}
   td {{ padding: 9px 14px; border-bottom: 1px solid var(--border); vertical-align: middle; }}
   tr:last-child td {{ border-bottom: none; }}
-  .bug-title {{ max-width: 360px; }}
+  .bug-title {{ max-width: 320px; }}
   .dim {{ color: var(--text-dim); }}
 
   .pill {{
@@ -202,20 +250,22 @@ def render_html(issues, statuses):
 
   <p class="section-label">Working on</p>
   <div class="person-row">
-    {person_cards if person_cards else '<div class="person-card"><p class="status-line dim">No status set yet -- run `mtdo-sandbox status "..."`.</p></div>'}
+    {person_cards}
   </div>
 
-  <p class="section-label">Bugs</p>
+  <p class="section-label">Bugs (found by, currently assigned to)</p>
   <div class="table-wrap">
     <table>
-      <thead><tr><th>State</th><th>Bug</th><th>Found by</th><th>Age</th></tr></thead>
+      <thead><tr><th>State</th><th>Bug</th><th>Found by</th><th>Assigned to</th><th>Age</th></tr></thead>
       <tbody>
-        {rows if rows else '<tr><td colspan="4" class="empty">No bugs synced yet -- run `mtdo-sandbox bugs sync &lt;instance&gt;`.</td></tr>'}
+        {rows if rows else '<tr><td colspan="5" class="empty">No bugs synced yet -- run `mtdo-sandbox bugs sync &lt;instance&gt;`.</td></tr>'}
       </tbody>
     </table>
   </div>
 
-  <p class="footer">Static snapshot, not live -- ask Claude to run `mtdo-sandbox dashboard` again and republish to refresh.</p>
+  <p class="footer">Static snapshot, not live -- ask Claude to run `mtdo-sandbox dashboard` again and republish to refresh.
+  Distribution: `mtdo-sandbox bugs distribute` assigns unassigned open bugs to whoever has fewer; finishing your queue first
+  automatically pulls a few of the other person's over (see bug_sync.rebalance).</p>
 </div>
 """
 

@@ -8,6 +8,10 @@ Each local bug is filed as exactly one issue, labeled 'sandbox-bug'; the issue n
 stamped back onto the local bug entry (bug_log.set_github_issue) so re-running sync never
 double-files it. Fixing a synced bug should go through mark_fixed_and_close() below, not
 bug_log.mark_fixed() directly, so the issue actually closes too.
+
+PEOPLE/DISPLAY_NAMES/PERSON_COLOR_VAR live here (not dashboard.py) since assignment
+(distribute_pending/rebalance below) needs the roster too -- dashboard.py imports them
+rather than keeping its own separate copy.
 """
 import json
 import subprocess
@@ -16,6 +20,18 @@ from . import bug_log
 
 TRACKER_REPO = "mukund1312/mtdo-bugs"
 LABEL = "sandbox-bug"
+ASSIGN_PREFIX = "assigned:"
+
+# The known two-person roster. Each maps to a friendly display name/color for the
+# dashboard, and to every git identity (name+email pairs are inconsistent across
+# machines/accounts -- see PROGRESS.md 2026-08-23) that should count toward their commits.
+PEOPLE = ["mukund1312", "janhwirai"]
+DISPLAY_NAMES = {"mukund1312": "Mukund", "janhwirai": "Janhvi"}
+PERSON_COLOR_VAR = {"mukund1312": "--mukund", "janhwirai": "--janhvi"}
+GIT_EMAILS = {
+    "mukund1312": {"mukundumashankar@gmail.com", "85414863+mukund1312@users.noreply.github.com"},
+    "janhwirai": {"janhwirai5@gmail.com", "104694618+janhwirai@users.noreply.github.com"},
+}
 
 
 def _run(args):
@@ -61,7 +77,12 @@ def mark_fixed_and_close(bug_id, fix_note=""):
 
     Assigns the issue to whoever's `gh` identity is running this *before* closing it --
     `gh issue list --json` has no "closedBy" field, so this is how "fixed by" attribution
-    on the dashboard actually works (via the assignee on a closed issue), not a guess."""
+    on the dashboard actually works (via the assignee on a closed issue), not a guess.
+
+    Also triggers a rebalance check afterward (see rebalance() below): if this was the
+    fixer's last open assigned bug, some of the other person's queue moves over so nobody
+    runs dry while the other still has a backlog. Returns the rebalance result dict
+    (person -> how many bugs moved to them), empty if nothing moved."""
     bug_log.mark_fixed(bug_id, fix_note)
     bug = next((b for b in bug_log.list_bugs() if b["id"] == bug_id), None)
     if bug and bug.get("github_issue"):
@@ -72,6 +93,9 @@ def mark_fixed_and_close(bug_id, fix_note=""):
         if fix_note:
             args += ["--comment", fix_note]
         _run(args)
+        if who in PEOPLE:
+            return rebalance(who)
+    return {}
 
 
 def board():
@@ -85,10 +109,102 @@ def board():
 def list_all():
     """Every synced bug issue, full detail -- used by the dashboard for per-person
     found/fixed attribution (author = found by; assignee on a closed issue = fixed by,
-    set by mark_fixed_and_close)."""
+    set by mark_fixed_and_close) and for assignment tracking (labels)."""
     out = _run([
         "gh", "issue", "list", "--repo", TRACKER_REPO, "--label", LABEL,
-        "--state", "all", "--json", "number,title,author,assignees,state,createdAt,closedAt",
+        "--state", "all",
+        "--json", "number,title,author,assignees,state,createdAt,closedAt,labels",
         "--limit", "1000",
     ])
     return json.loads(out)
+
+
+def assigned_person(issue):
+    """Who a bug is currently assigned to work on -- an `assigned:<login>` label, distinct
+    from `assignees` (which mark_fixed_and_close only ever sets at *close* time, meaning
+    "who fixed it"). None if not yet distributed to anyone."""
+    for label in issue.get("labels", []):
+        name = label["name"] if isinstance(label, dict) else label
+        if name.startswith(ASSIGN_PREFIX):
+            return name[len(ASSIGN_PREFIX):]
+    return None
+
+
+def _ensure_assignment_labels():
+    existing = set(_run([
+        "gh", "label", "list", "--repo", TRACKER_REPO, "--json", "name", "-q", ".[].name",
+    ]).splitlines())
+    colors = ["1d76db", "b60205"]
+    for person, color in zip(PEOPLE, colors):
+        label = f"{ASSIGN_PREFIX}{person}"
+        if label not in existing:
+            subprocess.run(
+                ["gh", "label", "create", label, "--repo", TRACKER_REPO,
+                 "--color", color, "--description", f"Assigned to {person} to fix"],
+                capture_output=True,
+            )
+
+
+def distribute_pending():
+    """Assigns every open, not-yet-assigned bug to whoever currently has fewer
+    open+assigned bugs, one at a time -- keeps it balanced rather than a rigid 50/50
+    split, and is safe to re-run any time new bugs come in (already-assigned ones are
+    left alone). Returns {person: count_newly_assigned}."""
+    _ensure_assignment_labels()
+    issues = list_all()
+    open_issues = [i for i in issues if i["state"] == "OPEN"]
+    counts = {p: 0 for p in PEOPLE}
+    for i in open_issues:
+        who = assigned_person(i)
+        if who in counts:
+            counts[who] += 1
+
+    result = {p: 0 for p in PEOPLE}
+    for issue in open_issues:
+        if assigned_person(issue) is not None:
+            continue
+        target = min(PEOPLE, key=lambda p: counts[p])
+        _run(["gh", "issue", "edit", str(issue["number"]), "--repo", TRACKER_REPO,
+              "--add-label", f"{ASSIGN_PREFIX}{target}"])
+        counts[target] += 1
+        result[target] += 1
+    return result
+
+
+def rebalance(fixer_login):
+    """If `fixer_login` has just cleared their entire assigned open queue while someone
+    else still has one, moves up to 3 of the other person's open+assigned bugs over --
+    so finishing your batch first means picking up some of theirs next, not running out
+    of things to do while they're still working through a backlog. Returns
+    {person: count_moved_to_them}, empty if fixer still has bugs left or nobody else does."""
+    issues = list_all()
+    open_issues = [i for i in issues if i["state"] == "OPEN"]
+    mine = [i for i in open_issues if assigned_person(i) == fixer_login]
+    if mine:
+        return {}
+
+    moved = 0
+    for other in PEOPLE:
+        if other == fixer_login:
+            continue
+        other_open = [i for i in open_issues if assigned_person(i) == other]
+        for issue in other_open[:3]:
+            _run(["gh", "issue", "edit", str(issue["number"]), "--repo", TRACKER_REPO,
+                  "--remove-label", f"{ASSIGN_PREFIX}{other}",
+                  "--add-label", f"{ASSIGN_PREFIX}{fixer_login}"])
+            moved += 1
+    return {fixer_login: moved} if moved else {}
+
+
+def assignment_summary():
+    """{person: {"assigned_open": n, "assigned_fixed": n}} -- how the current distribution
+    stands, for the dashboard."""
+    issues = list_all()
+    summary = {p: {"assigned_open": 0, "assigned_fixed": 0} for p in PEOPLE}
+    for issue in issues:
+        who = assigned_person(issue)
+        if who not in summary:
+            continue
+        key = "assigned_open" if issue["state"] == "OPEN" else "assigned_fixed"
+        summary[who][key] += 1
+    return summary
