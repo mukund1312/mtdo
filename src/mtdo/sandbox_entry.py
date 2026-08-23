@@ -32,6 +32,12 @@ shared Artifact -- it can't be a live-updating page itself (the Artifact sandbox
 published page from ever calling GitHub's API directly), so "refresh" means regenerating
 and republishing, not something that happens automatically.
 
+`mtdo-sandbox instance list` / `mtdo-sandbox instance delete <slug>` (see
+_instance_command below) is the one sanctioned way to permanently delete a saved
+instance -- requires typing the slug back to confirm. Added after a real incident where
+an agent's raw `rm -rf` on instances/ during test cleanup deleted a real user instance
+along with its own test data. Never delete under ~/.mtdo-sandbox/instances/ by hand.
+
 Sets MTDO_HOME before importing anything else from the package -- every module's
 ~/.mtdo-rooted path constants (config.APP_DIR and everything built from it) are computed
 once, at first import, so setting the env var later would be too late.
@@ -193,6 +199,51 @@ def _dashboard_command():
     print("Ask this Claude Code session to publish/update it as a shared Artifact.")
 
 
+def _instance_command(args):
+    """`mtdo-sandbox instance list|delete <slug>` -- the one supported way to permanently
+    remove a saved instance, requiring you to type its exact slug back to confirm (same
+    pattern as `mtdo-sandbox reset` requiring the word "reset").
+
+    Exists specifically because a raw `rm -rf` on ~/.mtdo-sandbox/instances/ during an
+    agent's test cleanup once deleted a real, user-named saved instance along with the
+    agent's own test data -- there was no dedicated deletion command, only ever a blanket
+    shell command with no way to tell "obviously mine" apart from "somebody's real saved
+    work". Claude Code sessions working on this project should use this command (or ask
+    the user first) for any instance that isn't unambiguously one they created themselves
+    in the same cleanup pass -- never a bare `rm -rf` against this directory again."""
+    from . import instance_store
+
+    if not args or args[0] == "list":
+        instances = instance_store.list_instances()
+        if not instances:
+            print("No saved instances.")
+            return
+        for inst in instances:
+            print(f"{inst['slug']}  ({inst['name']}) -- {inst.get('description') or 'no description'}  (last used {inst.get('updated_at', '?')})")
+        return
+
+    if args[0] == "delete":
+        if len(args) < 2:
+            print("Usage: mtdo-sandbox instance delete <slug>")
+            return
+        slug = args[1]
+        try:
+            meta = instance_store.get_instance_meta(slug)
+        except Exception:
+            print(f"No saved instance '{slug}' -- see `mtdo-sandbox instance list`.")
+            return
+        print(f"About to permanently delete '{meta['name']}' ({slug}) -- {meta.get('description') or 'no description'}.")
+        confirm = input(f"Type the slug ({slug}) to confirm: ").strip()
+        if confirm != slug:
+            print("Not confirmed -- nothing deleted.")
+            return
+        instance_store.delete_instance(slug)
+        print(f"Deleted '{slug}'.")
+        return
+
+    print("Usage: mtdo-sandbox instance list | delete <slug>")
+
+
 def main():
     if len(sys.argv) > 1:
         if sys.argv[1] == "bugs":
@@ -203,6 +254,9 @@ def main():
             return
         if sys.argv[1] == "dashboard":
             _dashboard_command()
+            return
+        if sys.argv[1] == "instance":
+            _instance_command(sys.argv[2:])
             return
         os.environ.setdefault("MTDO_HOME", _SANDBOX_ROOT)
         from .cli import main as real_main

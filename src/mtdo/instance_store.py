@@ -129,6 +129,24 @@ def discard_scratch(scratch_dir):
     shutil.rmtree(scratch_dir, ignore_errors=True)
 
 
+def delete_instance(slug):
+    """Permanently deletes a SAVED instance (instances/<slug> + its meta.json) -- not a
+    scratch dir. Added after a real incident: an agent doing test cleanup ran a raw
+    `rm -rf` directly against ~/.mtdo-sandbox/instances/ and deleted a real, user-named
+    instance along with its own actual test data, because there was no dedicated,
+    confirmable way to delete just one instance -- only ever a blanket shell command with
+    no distinction between "obviously mine" and "somebody's real saved work". Raises
+    FileNotFoundError if the slug doesn't exist, so callers can't silently no-op a typo
+    into looking like a successful delete."""
+    if not os.path.isdir(_data_path(slug)):
+        raise FileNotFoundError(f"No saved instance '{slug}'")
+    shutil.rmtree(_data_path(slug))
+    try:
+        os.remove(_meta_path(slug))
+    except OSError:
+        pass
+
+
 def autosave_scratch(scratch_dir, slug=None):
     """Silent fallback save for when the terminal closed or the process was killed
     before the normal save/discard prompt could ever show. Existing instances keep their
