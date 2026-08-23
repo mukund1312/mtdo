@@ -1,19 +1,35 @@
 """Generates the shared bug/status dashboard HTML from the private mukund1312/mtdo-bugs
-tracker (bug_sync.py + status_sync.py). This is a *snapshot*, not a live page -- the
-Artifact viewer's CSP blocks a published page from ever fetching GitHub's API itself (and
-embedding a token that could would leak private-repo access to anyone with the link), so
-refreshing means re-running this and republishing, not auto-updating. See PROGRESS.md for
-why that tradeoff was chosen over other options.
+tracker (bug_sync.py + status_sync.py).
 
-Structured as a small client-side SPA (sidebar nav + hash routing: Dashboard/Issues/Team,
-plus a real per-issue detail page and Cmd+K search) over one embedded JSON blob of the
-current issues -- all still generated once, server-side, at snapshot time; nothing here
-fetches anything live. Deliberately does NOT attempt Linear's Cycles/Sprints, Projects,
-Roadmap, or Inbox concepts (2026-08-24 request) -- none of those map onto anything that
-actually exists in this tracker yet (no priority/project/sprint scheduling data), and
-building empty decorative UI for them would be worse than not having them. If those get
-real backing data later (e.g. a `priority:*` label, a cycle/milestone convention), it's a
-natural follow-up.
+This page declares the `artifact` runtime capability (see the artifact-capabilities skill)
+and uses its live-doc mode: reassigning a bug, editing a bug's description, and posting a
+note in a bug's conversation thread all write directly into the published page itself --
+both viewers see each other's edits live, with no republish needed. Assignment/found-by
+attribution/commit counts/state (open vs fixed) are still computed fresh from GitHub each
+time this module runs -- only the three human-editable surfaces (assigned-to, description,
+conversation) live on the page.
+
+That creates one real tradeoff: since publishing new HTML replaces the whole page, a plain
+`mtdo-sandbox dashboard` + republish would blow away any assignment/description/note edits
+made on the page since the last publish. `generate(overrides=...)` exists for exactly this:
+pass in `{issue_number: {"assigned_to": login_or_None, "description": str, "notes": [{"author":
+str, "text": str}, ...]}}` read back from the currently-live page (e.g. via WebFetch from a
+Claude Code session) and those values seed the new snapshot instead of GitHub's. A bare CLI
+run with no overrides is fine when nobody's used the live editing yet, or when you're OK
+resetting it back to GitHub's state.
+
+Also NOT synced back to GitHub: reassigning on the dashboard does not change the
+`assigned:<login>` label bug_sync.distribute_pending()/rebalance() use, so the two can drift
+until someone reconciles them by hand (edit the GitHub label to match, or vice versa).
+
+Related git activity per bug is read straight from this checkout's git history (branch names
+and commit messages containing "#<issue-number>" as a whole token) -- a naming convention,
+not an enforced link: name a branch or commit that way and it shows up automatically.
+
+Deliberately does NOT attempt Linear's Cycles/Sprints, Projects, Roadmap, or Inbox concepts
+(2026-08-24 request) -- none of those map onto anything that actually exists in this tracker
+yet (no priority/project/sprint scheduling data), and building empty decorative UI for them
+would be worse than not having them.
 
 `mtdo-sandbox dashboard` writes the result to DASHBOARD_PATH; a Claude Code session then
 publishes/updates it as a Claude Artifact from that file so both machines can open the
@@ -23,6 +39,7 @@ import datetime
 import html
 import json
 import os
+import re
 import subprocess
 
 from . import bug_sync, status_sync
@@ -88,45 +105,186 @@ def _commit_counts():
     return counts
 
 
-def _issue_payload(issue):
-    """One issue's data shaped for embedding as JSON and driving the client-side issue
-    detail view/search -- the only place the raw GitHub issue body is actually used."""
+def _fetch_remotes_quiet():
+    """Best-effort `git fetch --all` so a branch the other dev pushed (and named after a
+    bug, see _bug_git_activity) shows up here too, on whichever machine regenerates the
+    dashboard. Silently does nothing if offline or this isn't a real checkout -- this must
+    never be the reason dashboard generation fails."""
+    try:
+        subprocess.run(
+            ["git", "-C", _REPO_ROOT, "fetch", "--all", "--quiet"],
+            capture_output=True, timeout=15,
+        )
+    except (OSError, subprocess.SubprocessError):
+        pass
+
+
+def _bug_git_activity(issue_number):
+    """Branches and commits that reference this bug, by convention: a branch name or
+    commit message containing "#<issue_number>" (or the bare number as a standalone
+    token in a branch name, since `/` in branch names already delimits it) -- e.g. branch
+    `fix/42-flicker`, commit `Fixes #42`. Nothing here is an enforced link, just a naming
+    convention devs opt into; best-effort and never fatal if git isn't available."""
+    number_pat = re.compile(rf"(?<!\d){re.escape(str(issue_number))}(?!\d)")
+    try:
+        branch_out = subprocess.run(
+            ["git", "-C", _REPO_ROOT, "branch", "-a", "--format=%(refname:short)"],
+            capture_output=True, text=True, timeout=10,
+        )
+        commit_out = subprocess.run(
+            ["git", "-C", _REPO_ROOT, "log", "--all",
+             "--pretty=%h|%an|%ad|%s", "--date=short", "--grep", f"#{issue_number}"],
+            capture_output=True, text=True, timeout=10,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return {"branches": [], "commits": []}
+
+    branches = []
+    if branch_out.returncode == 0:
+        for name in branch_out.stdout.splitlines():
+            name = name.strip()
+            if name.startswith("origin/HEAD"):
+                continue
+            name = name.replace("origin/", "", 1) if name.startswith("origin/") else name
+            if name and number_pat.search(name) and name not in branches:
+                branches.append(name)
+
+    commits = []
+    if commit_out.returncode == 0:
+        for line in commit_out.stdout.splitlines():
+            parts = line.split("|", 3)
+            if len(parts) == 4:
+                sha, author, date, subject = parts
+                commits.append({"sha": sha, "author": author, "date": date, "subject": subject})
+    return {"branches": branches, "commits": commits}
+
+
+def _render_assign_control(issue_number, current_login):
+    """One editable "assigned to" control -- reused for both the issues table row and the
+    issue detail page for the same bug. Clicking a name in the dropdown fires an explicit
+    `artifact.edit()` call (see the script) that updates every copy of this control for
+    this issue at once, so the table and the detail page never disagree."""
+    current_name = _display_name(current_login) if current_login else "Unassigned"
+    options = "".join(
+        f'<button type="button" class="assign-option" data-login="{login}">{html.escape(_display_name(login))}</button>'
+        for login in PEOPLE
+    )
+    return f"""<div class="assign-control edit-affordance" data-issue="{issue_number}" data-assigned-to="{html.escape(current_login or '')}">
+      <button type="button" class="assign-current">{html.escape(current_name)}</button>
+      <div class="assign-menu">
+        {options}
+        <button type="button" class="assign-option" data-login="">Unassign</button>
+      </div>
+    </div>"""
+
+
+def _render_issue_detail(issue, assigned_to, description, notes):
+    number = issue["number"]
+    title = html.escape(issue["title"])
+    state = issue["state"]
+    pill_class = "pill-open" if state == "OPEN" else "pill-fixed"
+    pill_text = "OPEN" if state == "OPEN" else "FIXED"
     found_login = issue["author"]["login"] if issue.get("author") else "unknown"
-    assigned = bug_sync.assigned_person(issue)
-    return {
-        "number": issue["number"],
-        "title": issue["title"],
-        "body": issue.get("body") or "",
-        "state": issue["state"],
-        "found_by": found_login,
-        "found_by_name": _display_name(found_login),
-        "assigned_to": assigned,
-        "assigned_to_name": _display_name(assigned) if assigned else None,
-        "found_age": _age(issue["createdAt"]),
-        "updated_age": _age(issue["updatedAt"]) if issue.get("updatedAt") else None,
-        "closed_age": _age(issue["closedAt"]) if issue.get("closedAt") else None,
-    }
+    found_name = html.escape(_display_name(found_login))
+    found_age = _age(issue["createdAt"])
+    closed_age = _age(issue["closedAt"]) if issue.get("closedAt") else None
+
+    activity = _bug_git_activity(number)
+    if activity["branches"] or activity["commits"]:
+        branch_items = "".join(f"<li>branch <code>{html.escape(b)}</code></li>" for b in activity["branches"])
+        commit_items = "".join(
+            f"<li><code>{html.escape(c['sha'])}</code> {html.escape(c['subject'])} "
+            f"<span class=\"dim\">-- {html.escape(c['author'])}, {c['date']}</span></li>"
+            for c in activity["commits"]
+        )
+        git_section = f'<ul class="git-list">{branch_items}{commit_items}</ul>'
+    else:
+        git_section = (
+            f'<p class="dim">None yet -- name a branch or commit message with '
+            f'"#{number}" to link it here.</p>'
+        )
+
+    comment_items = "".join(
+        f'<p class="comment">{html.escape(n.get("author", "?"))}: {html.escape(n.get("text", ""))}</p>'
+        for n in notes
+    )
+
+    return f"""
+    <section class="view issue-detail-view" id="issue-detail-{number}" style="display:none">
+      <button type="button" class="back-to-issues">&larr; Back to Issues</button>
+      <h1>#{number} {title}</h1>
+      <div class="issue-meta">
+        <div><span class="meta-label">Status</span><span class="pill {pill_class}">{pill_text}</span></div>
+        <div><span class="meta-label">Found by</span>{found_name}</div>
+        <div><span class="meta-label">Assigned to</span>{_render_assign_control(number, assigned_to)}</div>
+        <div><span class="meta-label">Found</span>{found_age}</div>
+        {f'<div><span class="meta-label">Fixed</span>{closed_age}</div>' if closed_age else ''}
+      </div>
+      <p class="section-label">Description</p>
+      <div class="issue-body edit-affordance" contenteditable="true" spellcheck="false">{html.escape(description)}</div>
+      <p class="section-label">Related git activity</p>
+      {git_section}
+      <p class="section-label">Conversation</p>
+      <div class="thread" id="thread-{number}">{comment_items}</div>
+      <div class="thread-compose edit-affordance" artifact-local>
+        <input type="text" class="thread-input" data-issue="{number}" placeholder="Write a note for the other dev...">
+        <button type="button" class="thread-post" data-issue="{number}">Post</button>
+      </div>
+    </section>"""
 
 
 _SCRIPT = """
 <script>
 (function () {
-  var ISSUES = __ISSUES_JSON__;
   var DISPLAY_NAMES = __DISPLAY_NAMES_JSON__;
   var WHOAMI_KEY = "mtdo_dashboard_whoami";
 
-  function escapeHtml(s) {
-    var d = document.createElement("div");
-    d.textContent = s === null || s === undefined ? "" : String(s);
-    return d.innerHTML;
-  }
-
   function whoami() { return localStorage.getItem(WHOAMI_KEY) || ""; }
 
-  function pill(state) {
-    return state === "OPEN"
-      ? '<span class="pill pill-open">OPEN</span>'
-      : '<span class="pill pill-fixed">FIXED</span>';
+  // ---------- writer access (artifact live-doc capability) ----------
+  var artifactApi = null;
+  var artifactChecked = false;
+  var readOnly = false;
+
+  function showReadOnlyBanner() {
+    if (readOnly) return;
+    readOnly = true;
+    document.querySelectorAll(".edit-affordance").forEach(function (el) { el.classList.add("is-readonly"); });
+    document.querySelectorAll('[contenteditable="true"]').forEach(function (el) { el.contentEditable = "false"; });
+    var banner = document.getElementById("readonly-banner");
+    if (banner) banner.style.display = "";
+  }
+  document.addEventListener("claude:sync-off", showReadOnlyBanner);
+  document.addEventListener("claude:sync-lost", showReadOnlyBanner);
+
+  function getArtifact() {
+    if (artifactChecked) return Promise.resolve(artifactApi);
+    artifactChecked = true;
+    if (!window.claude || typeof window.claude.use !== "function") {
+      showReadOnlyBanner();
+      return Promise.resolve(null);
+    }
+    return window.claude.use("artifact").then(function (api) {
+      artifactApi = api;
+      if (!api) showReadOnlyBanner();
+      return api;
+    }).catch(function () {
+      showReadOnlyBanner();
+      return null;
+    });
+  }
+
+  function withWriter(fn) {
+    return getArtifact().then(function (api) {
+      if (!api) return false;
+      return fn(api).then(function () { return true; }).catch(function (err) {
+        var code = err && err.code;
+        if (code === "not_writer" || code === "not_granted" || code === "not_declared" || code === "capability_disabled") {
+          showReadOnlyBanner();
+        }
+        return false;
+      });
+    });
   }
 
   // ---------- routing ----------
@@ -137,7 +295,9 @@ _SCRIPT = """
     document.querySelectorAll(".nav-item[data-route]").forEach(function (b) { b.classList.remove("active"); });
 
     if (parts[0] === "issue" && parts[1]) {
-      showIssueDetail(parseInt(parts[1], 10));
+      var section = document.getElementById("issue-detail-" + parts[1]);
+      if (section) { section.style.display = ""; return; }
+      document.getElementById("view-issues").style.display = "";
       return;
     }
     var name = (parts[0] === "issues" || parts[0] === "team") ? parts[0] : "dashboard";
@@ -150,6 +310,25 @@ _SCRIPT = """
   document.querySelectorAll(".nav-item[data-route]").forEach(function (b) {
     b.addEventListener("click", function () { location.hash = "#/" + b.dataset.route; });
   });
+  document.addEventListener("click", function (e) {
+    if (e.target.classList.contains("back-to-issues")) location.hash = "#/issues";
+  });
+
+  // ---------- read current row/assignment state straight from the DOM (always live,
+  // since assignment lives on the page itself now, not a static snapshot blob) ----------
+  function getRowsData() {
+    return Array.prototype.map.call(document.querySelectorAll("#bug-table tbody tr[data-found-by]"), function (row) {
+      var link = row.querySelector(".bug-title a");
+      var control = row.querySelector(".assign-control");
+      return {
+        number: link ? parseInt(link.getAttribute("href").split("/").pop(), 10) : null,
+        title: link ? link.textContent : "",
+        state: row.querySelector(".pill-open") ? "OPEN" : "CLOSED",
+        foundBy: row.getAttribute("data-found-by"),
+        assignedTo: control ? (control.getAttribute("data-assigned-to") || "") : "",
+      };
+    });
+  }
 
   // ---------- dashboard view ----------
   function renderDashboard() {
@@ -164,14 +343,17 @@ _SCRIPT = """
       list.innerHTML = '<li class="dim">Pick "Viewing as" in the sidebar to see your assigned bugs here.</li>';
       return;
     }
-    var mine = ISSUES.filter(function (i) { return i.state === "OPEN" && i.assigned_to === me; });
+    var mine = getRowsData().filter(function (r) { return r.state === "OPEN" && r.assignedTo === me; });
     if (!mine.length) {
       list.innerHTML = '<li class="dim">Nothing assigned to you right now.</li>';
       return;
     }
-    mine.forEach(function (i) {
+    mine.forEach(function (r) {
       var li = document.createElement("li");
-      li.innerHTML = '<a href="#/issue/' + i.number + '">#' + i.number + " " + escapeHtml(i.title) + "</a>";
+      var a = document.createElement("a");
+      a.href = "#/issue/" + r.number;
+      a.textContent = "#" + r.number + " " + r.title;
+      li.appendChild(a);
       list.appendChild(li);
     });
   }
@@ -183,31 +365,68 @@ _SCRIPT = """
     renderDashboard();
   });
 
-  // ---------- issue detail view ----------
-  function showIssueDetail(number) {
-    document.getElementById("view-issue").style.display = "";
-    var issue = ISSUES.filter(function (i) { return i.number === number; })[0];
-    var el = document.getElementById("issue-detail-content");
-    if (!issue) {
-      el.innerHTML = '<p class="dim">Issue not found in this snapshot -- it may be newer than the last refresh.</p>';
-      return;
-    }
-    el.innerHTML =
-      "<h1>#" + issue.number + " " + escapeHtml(issue.title) + "</h1>" +
-      '<div class="issue-meta">' +
-        '<div><span class="meta-label">Status</span>' + pill(issue.state) + "</div>" +
-        '<div><span class="meta-label">Found by</span>' + escapeHtml(issue.found_by_name) + "</div>" +
-        '<div><span class="meta-label">Assigned to</span>' +
-          (issue.assigned_to_name ? escapeHtml(issue.assigned_to_name) : '<span class="dim">unassigned</span>') +
-        "</div>" +
-        '<div><span class="meta-label">Found</span>' + escapeHtml(issue.found_age) + "</div>" +
-        (issue.closed_age ? '<div><span class="meta-label">Fixed</span>' + escapeHtml(issue.closed_age) + "</div>" : "") +
-      "</div>" +
-      '<p class="section-label">Description</p>' +
-      '<pre class="issue-body">' + escapeHtml(issue.body || "(no description)") + "</pre>";
-  }
-  document.getElementById("back-to-issues").addEventListener("click", function () {
-    location.hash = "#/issues";
+  // ---------- editable "assigned to" (table rows + issue detail, kept in sync) ----------
+  document.querySelectorAll(".assign-current").forEach(function (btn) {
+    btn.addEventListener("click", function (e) {
+      e.stopPropagation();
+      if (btn.closest(".edit-affordance").classList.contains("is-readonly")) return;
+      var control = btn.closest(".assign-control");
+      var isOpen = control.getAttribute("data-local-open") === "true";
+      document.querySelectorAll(".assign-control").forEach(function (c) { c.removeAttribute("data-local-open"); });
+      if (!isOpen) control.setAttribute("data-local-open", "true");
+    });
+  });
+  document.addEventListener("click", function () {
+    document.querySelectorAll(".assign-control").forEach(function (c) { c.removeAttribute("data-local-open"); });
+  });
+  document.querySelectorAll(".assign-option").forEach(function (btn) {
+    btn.addEventListener("click", function (e) {
+      e.stopPropagation();
+      var login = btn.dataset.login;
+      var name = login ? (DISPLAY_NAMES[login] || login) : "Unassigned";
+      var issueNum = btn.closest(".assign-control").dataset.issue;
+      var controls = document.querySelectorAll('.assign-control[data-issue="' + issueNum + '"]');
+      var ops = [];
+      controls.forEach(function (c) {
+        var label = c.querySelector(".assign-current");
+        ops.push({ op: "set-attr", target: c.dataset.id, key: "data-assigned-to", val: login });
+        ops.push({ op: "set-text", target: label.dataset.id, text: name });
+      });
+      withWriter(function (api) { return api.edit(ops); }).then(function (ok) {
+        if (!ok) return;
+        controls.forEach(function (c) {
+          c.setAttribute("data-assigned-to", login);
+          c.querySelector(".assign-current").textContent = name;
+          c.removeAttribute("data-local-open");
+        });
+        applyFilters();
+        renderDashboard();
+      });
+    });
+  });
+
+  // ---------- conversation thread (post a note, either dev, either direction) ----------
+  document.querySelectorAll(".thread-post").forEach(function (btn) {
+    btn.addEventListener("click", function () {
+      var issueNum = btn.dataset.issue;
+      var input = document.querySelector('.thread-input[data-issue="' + issueNum + '"]');
+      var text = input.value.trim();
+      if (!text) return;
+      var me = whoami();
+      var name = DISPLAY_NAMES[me] || me || "Someone";
+      var thread = document.getElementById("thread-" + issueNum);
+      withWriter(function (api) {
+        return api.edit([{ op: "create-element", target: thread.dataset.id, tag: "p",
+                            text: name + ": " + text, attrs: { "class": "comment" } }]);
+      }).then(function (ok) {
+        if (!ok) return;
+        var p = document.createElement("p");
+        p.className = "comment";
+        p.textContent = name + ": " + text;
+        thread.appendChild(p);
+        input.value = "";
+      });
+    });
   });
 
   // ---------- search (Cmd+K) ----------
@@ -224,12 +443,12 @@ _SCRIPT = """
 
   function renderSearchResults(query) {
     var q = query.trim().toLowerCase();
-    var results = ISSUES;
+    var results = getRowsData();
     if (q === "assigned:me") {
       var me = whoami();
-      results = ISSUES.filter(function (i) { return i.assigned_to === me; });
+      results = results.filter(function (r) { return r.assignedTo === me; });
     } else if (q) {
-      results = ISSUES.filter(function (i) { return i.title.toLowerCase().indexOf(q) !== -1; });
+      results = results.filter(function (r) { return r.title.toLowerCase().indexOf(q) !== -1; });
     }
     results = results.slice(0, 20);
     var container = document.getElementById("search-results");
@@ -238,11 +457,15 @@ _SCRIPT = """
       container.innerHTML = '<p class="dim" style="padding:12px">No matches. Try a word from the title, or "assigned:me".</p>';
       return;
     }
-    results.forEach(function (i) {
+    results.forEach(function (r) {
       var row = document.createElement("a");
-      row.href = "#/issue/" + i.number;
+      row.href = "#/issue/" + r.number;
       row.className = "search-result";
-      row.innerHTML = pill(i.state) + " #" + i.number + " " + escapeHtml(i.title);
+      var pillSpan = document.createElement("span");
+      pillSpan.className = "pill " + (r.state === "OPEN" ? "pill-open" : "pill-fixed");
+      pillSpan.textContent = r.state;
+      row.appendChild(pillSpan);
+      row.appendChild(document.createTextNode(" #" + r.number + " " + r.title));
       row.addEventListener("click", closeSearch);
       container.appendChild(row);
     });
@@ -273,7 +496,8 @@ _SCRIPT = """
     var visible = 0;
     rows.forEach(function (row) {
       var matchesFound = !wantFound || row.getAttribute("data-found-by") === wantFound;
-      var assignedTo = row.getAttribute("data-assigned-to") || "";
+      var control = row.querySelector(".assign-control");
+      var assignedTo = control ? (control.getAttribute("data-assigned-to") || "") : "";
       var matchesAssigned = !wantAssigned ||
         (wantAssigned === "__unassigned__" ? assignedTo === "" : assignedTo === wantAssigned);
       var show = matchesFound && matchesAssigned;
@@ -290,29 +514,56 @@ _SCRIPT = """
     applyFilters();
   });
 
+  getArtifact();
   route();
 })();
 </script>
 """
 
 
-def render_html(issues, statuses):
+def render_html(issues, statuses, overrides=None):
+    overrides = overrides or {}
     open_count = sum(1 for i in issues if i["state"] == "OPEN")
     closed_count = sum(1 for i in issues if i["state"] == "CLOSED")
     found_by, fixed_by = _tally(issues)
     commits = _commit_counts()
-    assignments = {p: {"assigned_open": 0, "assigned_fixed": 0} for p in PEOPLE}
-    for issue in issues:
-        who = bug_sync.assigned_person(issue)
-        if who in assignments:
-            key = "assigned_open" if issue["state"] == "OPEN" else "assigned_fixed"
-            assignments[who][key] += 1
 
-    # Always show both known people, even with zero activity so far (e.g. before anyone
-    # has synced from their own machine) -- previously this list only included whoever
-    # already had data, so a person who'd never used the tracker yet didn't appear at all.
     people = sorted(set(PEOPLE) | set(found_by) | set(fixed_by) | set(statuses), key=_display_name)
     max_commits = max([commits.get(p, 0) for p in people] + [1])
+
+    rows = ""
+    detail_sections = ""
+    assignments = {p: {"assigned_open": 0, "assigned_fixed": 0} for p in PEOPLE}
+
+    for issue in sorted(issues, key=lambda i: (i["state"] != "OPEN", i["number"] * -1)):
+        number = issue["number"]
+        override = overrides.get(number, overrides.get(str(number), {}))
+        assigned_to = override.get("assigned_to", bug_sync.assigned_person(issue))
+        description = override.get("description", issue.get("body") or "")
+        notes = override.get("notes", [])
+
+        if assigned_to in assignments:
+            key = "assigned_open" if issue["state"] == "OPEN" else "assigned_fixed"
+            assignments[assigned_to][key] += 1
+
+        state = issue["state"]
+        pill_class = "pill-open" if state == "OPEN" else "pill-fixed"
+        pill_text = "OPEN" if state == "OPEN" else "FIXED"
+        title = html.escape(issue["title"])
+        found_login = issue["author"]["login"] if issue.get("author") else "unknown"
+        author = html.escape(_display_name(found_login))
+        age = _age(issue["closedAt"]) if issue.get("closedAt") else _age(issue["createdAt"])
+
+        rows += f"""
+        <tr data-found-by="{html.escape(found_login)}">
+          <td><span class="pill {pill_class}">{pill_text}</span></td>
+          <td class="bug-title"><a href="#/issue/{number}">{title}</a></td>
+          <td>{author}</td>
+          <td>{_render_assign_control(number, assigned_to)}</td>
+          <td class="dim">{age}</td>
+        </tr>"""
+
+        detail_sections += _render_issue_detail(issue, assigned_to, description, notes)
 
     person_cards = ""
     team_rows = ""
@@ -354,47 +605,19 @@ def render_html(issues, statuses):
           </td>
         </tr>"""
 
-    rows = ""
-    issue_payloads = []
-    for issue in sorted(issues, key=lambda i: (i["state"] != "OPEN", i["number"] * -1)):
-        payload = _issue_payload(issue)
-        issue_payloads.append(payload)
-        state = issue["state"]
-        pill_class = "pill-open" if state == "OPEN" else "pill-fixed"
-        pill_text = "OPEN" if state == "OPEN" else "FIXED"
-        title = html.escape(issue["title"])
-        author = html.escape(payload["found_by_name"])
-        age = payload["closed_age"] or payload["found_age"]
-        assignee = payload["assigned_to"]
-        assignee_cell = html.escape(payload["assigned_to_name"]) if assignee else '<span class="dim">unassigned</span>'
-        rows += f"""
-        <tr data-found-by="{html.escape(payload['found_by'])}" data-assigned-to="{html.escape(assignee or '')}">
-          <td><span class="pill {pill_class}">{pill_text}</span></td>
-          <td class="bug-title"><a href="#/issue/{issue['number']}">{title}</a></td>
-          <td>{author}</td>
-          <td>{assignee_cell}</td>
-          <td class="dim">{age}</td>
-        </tr>"""
-
     filter_options = "".join(
         f'<option value="{login}">{html.escape(_display_name(login))}</option>' for login in PEOPLE
     )
-    whoami_options = "".join(
-        f'<option value="{login}">{html.escape(_display_name(login))}</option>' for login in PEOPLE
-    )
+    whoami_options = filter_options
 
     refreshed = datetime.datetime.now().strftime("%b %-d, %Y at %-I:%M %p")
 
     def _json_for_script(obj):
-        # A bug title/body containing a literal "</script>" would otherwise close the
-        # tag early and truncate the page -- escape the slash so it round-trips as data.
+        # Defensive: a display name containing a literal "</script>" would otherwise
+        # close the tag early and truncate the page -- escape the slash so it round-trips.
         return json.dumps(obj).replace("</", "<\\/")
 
-    script = (
-        _SCRIPT
-        .replace("__ISSUES_JSON__", _json_for_script(issue_payloads))
-        .replace("__DISPLAY_NAMES_JSON__", _json_for_script(DISPLAY_NAMES))
-    )
+    script = _SCRIPT.replace("__DISPLAY_NAMES_JSON__", _json_for_script(DISPLAY_NAMES))
 
     return f"""<title>mtdo Bug Board</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -455,6 +678,11 @@ def render_html(issues, statuses):
   .content {{ flex: 1; padding: 32px 28px 60px; max-width: 900px; }}
   .view h1 {{
     font-family: var(--font-display); font-weight: 700; font-size: 1.5rem; margin: 0 0 18px; text-wrap: balance;
+  }}
+
+  #readonly-banner {{
+    display: none; background: color-mix(in srgb, var(--warn) 14%, transparent); color: var(--warn);
+    border: 1px solid var(--warn); border-radius: 8px; padding: 8px 14px; font-size: 0.8rem; margin-bottom: 16px;
   }}
 
   .stat-row {{ display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-bottom: 28px; }}
@@ -535,11 +763,11 @@ def render_html(issues, statuses):
   .velocity-bar {{ flex: 1; height: 8px; background: var(--surface-2); border-radius: 4px; overflow: hidden; }}
   .velocity-fill {{ height: 100%; border-radius: 4px; }}
 
-  #back-to-issues {{
+  .back-to-issues {{
     font-family: var(--font-display); font-size: 0.8rem; color: var(--text-dim); background: none;
     border: none; cursor: pointer; padding: 0 0 16px; display: block;
   }}
-  #back-to-issues:hover {{ color: var(--text); }}
+  .back-to-issues:hover {{ color: var(--text); }}
   .issue-meta {{ display: flex; gap: 24px; flex-wrap: wrap; margin-bottom: 18px; }}
   .meta-label {{
     display: block; font-family: var(--font-display); font-size: 0.65rem; text-transform: uppercase;
@@ -547,7 +775,48 @@ def render_html(issues, statuses):
   }}
   .issue-body {{
     white-space: pre-wrap; word-wrap: break-word; font-family: var(--font-mono); font-size: 0.85rem;
-    background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 14px; margin: 0;
+    background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 14px; margin: 0 0 4px;
+    outline: none;
+  }}
+  .issue-body[contenteditable="true"]:focus {{ border-color: var(--text-dim); }}
+  .issue-body[contenteditable="true"]::after {{ content: ""; }}
+
+  .assign-control {{ position: relative; display: inline-block; }}
+  .assign-current {{
+    font-family: var(--font-mono); font-size: 0.8rem; color: var(--text); background: var(--surface-2);
+    border: 1px solid var(--border); border-radius: 6px; padding: 3px 10px; cursor: pointer;
+  }}
+  .assign-menu {{
+    display: none; position: absolute; top: 100%; left: 0; margin-top: 4px; z-index: 20;
+    background: var(--surface); border: 1px solid var(--border); border-radius: 8px;
+    box-shadow: 0 8px 24px rgba(0,0,0,0.18); overflow: hidden; min-width: 130px;
+  }}
+  .assign-control[data-local-open="true"] .assign-menu {{ display: block; }}
+  .assign-option {{
+    display: block; width: 100%; text-align: left; font-family: var(--font-mono); font-size: 0.8rem;
+    color: var(--text); background: none; border: none; padding: 7px 12px; cursor: pointer;
+  }}
+  .assign-option:hover {{ background: var(--surface-2); }}
+  .is-readonly {{ opacity: 0.5; pointer-events: none; }}
+
+  .git-list {{ list-style: none; padding: 0; margin: 0 0 4px; font-size: 0.8rem; }}
+  .git-list li {{ padding: 5px 0; border-bottom: 1px solid var(--border); }}
+  .git-list li:last-child {{ border-bottom: none; }}
+  .git-list code {{ font-size: 0.78rem; background: var(--surface-2); padding: 1px 5px; border-radius: 4px; }}
+
+  .thread {{ display: flex; flex-direction: column; gap: 6px; margin-bottom: 10px; }}
+  .comment {{
+    margin: 0; font-size: 0.85rem; background: var(--surface); border: 1px solid var(--border);
+    border-radius: 8px; padding: 8px 12px; white-space: pre-wrap;
+  }}
+  .thread-compose {{ display: flex; gap: 8px; }}
+  .thread-input {{
+    flex: 1; font-family: var(--font-mono); font-size: 0.85rem; color: var(--text); background: var(--surface);
+    border: 1px solid var(--border); border-radius: 6px; padding: 7px 10px;
+  }}
+  .thread-post {{
+    font-family: var(--font-display); font-size: 0.8rem; font-weight: 600; color: var(--bg); background: var(--text);
+    border: none; border-radius: 6px; padding: 0 16px; cursor: pointer;
   }}
 
   .search-modal {{
@@ -590,6 +859,8 @@ def render_html(issues, statuses):
   </nav>
 
   <main class="content">
+    <p id="readonly-banner">Read-only here -- ask to be added as an editor from this artifact's share menu to reassign bugs, edit descriptions, or post notes.</p>
+
     <section id="view-dashboard" class="view">
       <h1 id="greeting">Good day</h1>
       <p id="whoami-hint" class="dim"></p>
@@ -599,7 +870,7 @@ def render_html(issues, statuses):
         <div class="stat-card open"><p class="stat-label">Open</p><p class="stat-num">{open_count}</p></div>
       </div>
       <p class="section-label">Assigned to me</p>
-      <ul id="assigned-to-me-list" class="issue-mini-list"></ul>
+      <ul id="assigned-to-me-list" class="issue-mini-list" artifact-local></ul>
       <p class="section-label">Team</p>
       <div class="person-row">{person_cards}</div>
     </section>
@@ -633,11 +904,6 @@ def render_html(issues, statuses):
       </div>
     </section>
 
-    <section id="view-issue" class="view" style="display:none">
-      <button id="back-to-issues">&larr; Back to Issues</button>
-      <div id="issue-detail-content"></div>
-    </section>
-
     <section id="view-team" class="view" style="display:none">
       <h1>Team</h1>
       <div class="table-wrap">
@@ -647,10 +913,11 @@ def render_html(issues, statuses):
         </table>
       </div>
     </section>
+    {detail_sections}
 
-    <p class="footer">Static snapshot, not live -- ask Claude to run `mtdo-sandbox dashboard` again and republish to refresh.
-    Distribution: `mtdo-sandbox bugs distribute` assigns unassigned open bugs to whoever has fewer; finishing your queue first
-    automatically pulls a few of the other person's over (see bug_sync.rebalance).</p>
+    <p class="footer">Assigning, editing a description, and posting notes save live to this page and are visible to
+    both of you immediately. Found-by/fixed/commit stats and new bugs still come from GitHub -- ask Claude to run
+    `mtdo-sandbox dashboard` again and republish to pull those in (it preserves your edits when it does).</p>
   </main>
 
   <div id="search-modal" class="search-modal" style="display:none">
@@ -664,10 +931,11 @@ def render_html(issues, statuses):
 """
 
 
-def generate():
+def generate(overrides=None):
+    _fetch_remotes_quiet()
     issues = bug_sync.list_all()
     statuses = status_sync.get_all_status()
-    content = render_html(issues, statuses)
+    content = render_html(issues, statuses, overrides=overrides)
     os.makedirs(os.path.dirname(DASHBOARD_PATH), exist_ok=True)
     with open(DASHBOARD_PATH, "w") as f:
         f.write(content)

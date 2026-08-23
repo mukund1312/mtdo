@@ -9,6 +9,57 @@ Add each session's PROGRESS.md entry to the same branch as the code it describes
 
 ---
 
+## 2026-08-24 (PR https://github.com/mukund1312/mtdo/pull/9) -- dashboard: editable assignment/description/conversation via the `artifact` live-doc capability + git activity per bug
+
+Follow-up to the Linear redesign below: user wanted the "assigned to" field editable
+everywhere, the description editable per bug, real git branch/commit history shown per
+bug, and a two-way conversation textbox per bug (either dev writes a note, the other
+replies).
+
+**Architecture decision:** the first three (assign/description/notes) are genuinely
+mutable, low-stakes fields -- exactly what the Artifact platform's `artifact` capability
+live-doc mode is for ("polls, sign-up sheets, checklists, trackers -- the page is the
+record", per the artifact-capabilities skill). Declared `capabilities: {"artifact": {}}`
+on publish; a viewer's click/keystroke on the page is captured and saved automatically
+(or via an explicit `artifact.edit()` call for things that aren't native input gestures,
+like the custom assign-to dropdown and posting a new comment) and reaches every other
+open view immediately -- no republish needed for these three fields specifically.
+
+**Did:**
+- `dashboard.py`: every issue now gets a real server-rendered detail section (not
+  JS-templated from a JSON blob like the last redesign -- had to drop that entirely,
+  since live-doc capture only works on content actually served in the page, not markup a
+  script builds after load). Assign-to is a custom dropdown (`<select>` values aren't
+  gesture-captured per the platform's rules) reused in both the issues table row and the
+  detail page, updated via one `artifact.edit()` call touching both copies at once so
+  they can't disagree. Description is a plain `contenteditable` div (auto-captured,
+  no explicit call needed). Conversation is a flat per-issue comment thread; posting
+  calls `create-element` to append a `<p>`, attributed by whichever name is picked in the
+  existing "Viewing as" selector (still no real auth on a static page).
+  `_bug_git_activity(issue_number)`: branches/commits containing "#<number>" as a whole
+  token, read from `git log --all` / `git branch -a` against this checkout (a naming
+  convention, not an enforced link) -- shown read-only on the detail page. Added a
+  best-effort `git fetch --all --quiet` before generating so a branch pushed from the
+  other machine shows up too.
+- Read-only handling: `getArtifact()`/`withWriter()` wrap every write call; a
+  `not_writer`/`not_granted` rejection (or `window.claude` missing at all) shows a
+  banner and disables every edit affordance, rather than silently failing.
+- Search and the "assigned to me" list now read live off the DOM (`getRowsData()`)
+  instead of a static snapshot, so they stay correct after a live reassignment.
+
+**Real tradeoff, disclosed to the user, not yet solved:** publishing new HTML (the
+`mtdo-sandbox dashboard` + republish flow, still the only way found-by/fixed/commit
+stats and brand-new bugs get pulled in) replaces the whole page, which would wipe any
+assignment/description/note edits made since the last publish. `generate(overrides=...)`
+exists so whoever republishes can read back the current live state first (e.g. via
+WebFetch) and pass it in to preserve it, but nothing automates that read-back yet --
+it's a manual step for whichever Claude Code session does the next regeneration.
+Also: reassigning on the dashboard does NOT change the `assigned:<login>` GitHub label
+`bug_sync.distribute_pending()`/`rebalance()` use, so the two can drift apart until
+someone reconciles them by hand.
+
+---
+
 ## 2026-08-24 (PR https://github.com/mukund1312/mtdo/pull/9) -- dashboard: Linear-style redesign (nav, issue detail, team, search)
 
 User pasted a full ASCII mockup of Linear's UI and asked for it "in the current dashboard
