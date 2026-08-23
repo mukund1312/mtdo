@@ -3,6 +3,46 @@
 Newest entries first. Read this before starting work; append before finishing.
 See `~/.claude/agents/mtdo-dev.md` for the full project onboarding/architecture doc.
 
+**Workflow note (2026-08-22 onward):** changes go on a `feature/mu/UAT-<description>`
+branch + PR into main, not straight to main -- see the Git workflow section at the bottom.
+Add each session's PROGRESS.md entry to the same branch as the code it describes.
+
+---
+
+## 2026-08-23 (PR https://github.com/mukund1312/mtdo/pull/3) -- first-run setup wizard, no more silent demo data
+
+Real bugs from testing: a fresh install silently populated itself with demo/example
+categories instead of starting empty, and there was no first-run flow asking who the user
+is or what they want out of the app. Investigated before writing anything -- a lot of this
+already existed (`mtdo init --fresh`, the `g`-triggered `plan_wizard.py` Q&A-to-AI-prompt
+flow, `mtdo template`/`mtdo import`) just not wired up as the automatic first-run path.
+
+**Did:**
+- `cli._run_first_run_wizard()`: plain `input()` prompts (name, then what you're using
+  this for), run once, before any config exists at all -- deliberately CLI-level, not a
+  Textual screen, since it decides which config to bootstrap *before* `TodoApp` is
+  constructed (its board layout is built once from whatever config existed at that
+  point -- doing this as an in-app screen afterward would mean hot-reloading a running
+  app's whole category structure for a one-time event, which nothing in this codebase
+  does outside of goals.json's own change-polling).
+- New "Just exploring the app" persona (`plan_wizard.PERSONAS`) -- loading the demo plan
+  is now an explicit choice, not the silent default. Real personas start genuinely empty
+  and route into the existing AI-prompt-building flow, unchanged.
+- `config.get_user_name()`/`set_user_name()` -- plain marker file (same pattern as
+  `has_onboarded()`), shown in the header once set. The in-app `g` wizard also gained the
+  new persona (a no-op toast there -- nothing to load over an already-running session).
+
+**Tested (real tmux pty):** fresh instance -> wizard triggers automatically; "Just
+exploring" -> demo config loaded, all 5 options rendered correctly; a real persona (job
+switch) -> all 11 questions asked/answered correctly, prompt built and saved with accurate
+content, empty board loaded after. `get_user_name()`/`set_user_name()` round-trip verified
+directly. Real `~/.mtdo` untouched throughout.
+
+**Known follow-up, not blocking:** the header (where the name would show) doesn't appear
+to render in ANY tmux pty capture across this whole project's testing history -- looks
+like a pre-existing, unrelated display issue, not something this PR introduced. Worth its
+own investigation later.
+
 ---
 
 ## 2026-08-22 (update 3) -- fix: real data loss from an app freeze + hard-killed terminal
