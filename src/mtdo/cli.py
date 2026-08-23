@@ -50,6 +50,19 @@ def cmd_import(args):
     print(f"\nConfig written to {appconfig.CONFIG_PATH}. Your tracked progress in state.json was not touched.")
 
 
+def _pick_number(count):
+    """Reads a 1..count choice from stdin, reprompting on anything else. Shared by every
+    numbered-menu step in _run_first_run_wizard below."""
+    choice = None
+    while choice is None:
+        raw = input(f"Pick 1-{count}: ").strip()
+        if raw.isdigit() and 1 <= int(raw) <= count:
+            choice = int(raw)
+        else:
+            print(f"Enter a number from 1 to {count}.")
+    return choice
+
+
 def _run_first_run_wizard():
     """One-time, CLI-level setup for a genuinely first run (no goals.json, no config.yaml
     at all yet) -- asks name + what you're using mtdo for, before the app itself starts.
@@ -66,6 +79,12 @@ def _run_first_run_wizard():
     Previously this path just silently wrote the demo config -- fixed after a user
     complaint that a fresh install should never start pre-populated with someone else's
     example fields, only ever loading the demo as an explicit choice ("just exploring").
+
+    Also explicitly asks (rather than leaving unstated) how the user wants to populate
+    goals.json -- manual vs. AI-guided (recommended) -- and, if AI-guided, which AI they
+    want to use it with -- built-in vs. their own day-to-day AI -- since testing surfaced
+    that neither choice was ever actually offered, just implied by what happened to print
+    at the end of the flow.
     """
     print(f"Welcome to {_PROG} -- let's get you set up.\n")
     name = input("What should we call you? ").strip()
@@ -75,14 +94,7 @@ def _run_first_run_wizard():
     print("\nWhat are you planning to use this for?")
     for i, (_key, label) in enumerate(plan_wizard.PERSONAS, start=1):
         print(f"  {i}. {label}")
-    choice = None
-    while choice is None:
-        raw = input(f"Pick 1-{len(plan_wizard.PERSONAS)}: ").strip()
-        if raw.isdigit() and 1 <= int(raw) <= len(plan_wizard.PERSONAS):
-            choice = int(raw) - 1
-        else:
-            print(f"Enter a number from 1 to {len(plan_wizard.PERSONAS)}.")
-    persona = plan_wizard.PERSONAS[choice][0]
+    persona = plan_wizard.PERSONAS[_pick_number(len(plan_wizard.PERSONAS)) - 1][0]
 
     if persona == "just_exploring":
         appconfig.init_config(fresh=False)
@@ -92,6 +104,21 @@ def _run_first_run_wizard():
         return
 
     appconfig.init_config(fresh=True)
+
+    print("\nThere are two ways to build your plan:")
+    print("  1. Manual -- edit goals.json yourself, or add fields/cards once the app starts")
+    print("  2. Guided setup -- answer a few questions, hand them to an AI, and it writes goals.json for you (Recommended)")
+    if _pick_number(2) == 1:
+        print(f"\nStarting empty. Edit {appconfig.GOALS_PATH} yourself -- see {appconfig.GOALS_TEMPLATE_PATH} "
+              f"for the schema and rules -- then run `{_PROG} import <path>`.")
+        print("Or just press 'a' inside the app any time to add fields/cards directly.\n")
+        return
+
+    print("\nHow do you want to build it?")
+    print("  1. mtdo's built-in AI (configured inside the app -- Claude Code, Ollama, or an API key)")
+    print("  2. An AI you already use day to day (ChatGPT, Claude, Gemini, etc)")
+    use_builtin_ai = _pick_number(2) == 1
+
     print()
     answers = {"persona": persona}
     for key, prompt_text in plan_wizard.questions_for(persona):
@@ -99,7 +126,10 @@ def _run_first_run_wizard():
     prompt = plan_wizard.build_prompt(persona, answers)
     path, copied = plan_wizard.save_and_copy(prompt)
     print(f"\nSaved your plan-setup prompt to {path}" + (" and copied it to your clipboard." if copied else "."))
-    print("Paste it into whichever AI you use day to day (or press C inside the app for the built-in AI panel).")
+    if use_builtin_ai:
+        print("Press C once the app starts to open the built-in AI panel, paste it there (Cmd+V), and hit enter.")
+    else:
+        print("Paste it into your AI of choice.")
     print(f"Once it hands you back a goals.json, run: {_PROG} import <path-to-that-file>")
     print("Starting with an empty board for now -- it'll fill in once you import.\n")
 
