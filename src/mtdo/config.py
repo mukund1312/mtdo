@@ -21,6 +21,25 @@ CONFIG_PATH = os.path.join(APP_DIR, "config.yaml")
 STATE_PATH = os.path.join(APP_DIR, "state.json")
 REPORTS_DIR = os.path.join(APP_DIR, "reports")
 ONBOARDED_PATH = os.path.join(APP_DIR, "onboarded")
+USER_NAME_PATH = os.path.join(APP_DIR, "user_name")
+
+
+def get_user_name():
+    """The name given at first-run setup (see cli._run_first_run_wizard), or None if
+    never set. A plain marker file, same pattern as has_onboarded()/practice_terminal_
+    enabled() below -- deliberately NOT in config.yaml, which gets regenerated from
+    goals.json in Option A mode and would silently lose this on the next import."""
+    if not os.path.exists(USER_NAME_PATH):
+        return None
+    with open(USER_NAME_PATH) as f:
+        name = f.read().strip()
+    return name or None
+
+
+def set_user_name(name):
+    os.makedirs(APP_DIR, exist_ok=True)
+    with open(USER_NAME_PATH, "w") as f:
+        f.write(name)
 
 
 def has_onboarded():
