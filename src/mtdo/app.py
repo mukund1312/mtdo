@@ -2454,7 +2454,7 @@ class TodoApp(App):
 
     def _pick_populate_method(self, persona):
         options = [
-            "Manual -- I'll edit goals.json myself",
+            "Manual -- I'll build it myself in the app (press 'a' to add fields)",
             "Guided setup -- answer a few questions and let an AI build it (Recommended)",
         ]
 
@@ -2466,8 +2466,8 @@ class TodoApp(App):
                 return
             if choice.startswith("Manual"):
                 self.toast(
-                    f"Okay -- edit {appconfig.GOALS_PATH} yourself (see the template for the schema), "
-                    f"or press 'a' any time to add fields/cards directly.",
+                    "Okay -- your board is empty. Press 'a' any time to add a field, "
+                    "then start adding cards to it.",
                     style="bold cyan",
                 )
                 return
