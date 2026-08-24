@@ -20,6 +20,7 @@ dependencies = [
 [project.optional-dependencies]
 spotify = []  # Spotify controls use AppleScript on macOS -- no extra package needed, just macOS + Spotify.app
 webchat = ["anthropic", "openai", "google-generativeai"]  # browser-free API chat options in the AI panel picker -- see ai_backend.py / web_chat.py
+dev = ["pytest>=8.0", "pytest-asyncio>=0.24"]
 
 [project.scripts]
 mtdo = "mtdo.cli:main"
@@ -30,3 +31,6 @@ where = ["src"]
 
 [tool.setuptools.package-data]
 mtdo = ["*.yaml", "*.json"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
