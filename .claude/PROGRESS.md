@@ -9,6 +9,41 @@ Add each session's PROGRESS.md entry to the same branch as the code it describes
 
 ---
 
+## 2026-08-24 -- dashboard: sortable Priority/Age columns (click to sort, click again to reverse)
+
+**Caught a real, pre-existing correctness issue while implementing this, not by
+inspection:** sorting means reordering `<tr>` elements in the DOM via a click -- and per
+the artifact live-doc rules, "whatever a writer's own click... does to the DOM... is
+appended to the document... and reaches every other view." That means the EXISTING
+found-by/assigned-to/priority filter (`row.style.display = 'none'`, triggered by a
+`<select>` change event) was almost certainly already being captured and synced to every
+other viewer -- one person filtering their own view would have silently changed what
+everyone else saw too. Never caught because nobody had two browser tabs open comparing
+views while testing it.
+
+**Fix, covering both:** added `artifact-local` to `#bug-table`'s `<tbody>`. Per the
+capability docs this only suppresses IMPLICIT gesture-capture for that region -- it does
+NOT affect the explicit `artifact.edit()` calls the assign-to reassignment already uses
+(those are id-addressed and independent of local/sync marking), so reassignment inside
+the table keeps syncing correctly; only row order and visibility (filter + the new sort)
+become genuinely per-viewer, which is what they should have been all along.
+
+**Did:**
+- `dashboard.py`: `_age_days(iso_ts)` alongside the existing `_age()` (refactored to share
+  the same day-count) -- age needs a raw sortable number, not just the display string.
+  Each `<tr>` gets `data-age-days`. `<th>` for Priority/Age are now `class="sortable"
+  data-sort="..."` with a small arrow indicator.
+- JS: `applySort(column)` re-sorts the row array (priority via a rank map high<medium<
+  low<untriaged, age via the raw day count) and re-appends in order; click same column
+  again to reverse. Verified the comparator logic offline (Node, synthetic rows, both
+  columns, both directions) before wiring it into the DOM version.
+
+Regenerated, checked the live artifact for uncommitted comments/reassignments first (none
+-- safe to republish directly), republished. Real `~/.mtdo/goals.json`/`state.json`
+confirmed untouched throughout, as always.
+
+---
+
 ## 2026-08-24 -- Shift+B now fires sync/triage/dashboard entirely in the background
 
 Follow-up to the auto-triage work below: user wanted the whole 3-command flow (`bugs

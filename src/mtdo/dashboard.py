@@ -57,10 +57,14 @@ def _display_name(login):
     return DISPLAY_NAMES.get(login, login)
 
 
-def _age(iso_ts):
+def _age_days(iso_ts):
     then = datetime.datetime.fromisoformat(iso_ts.replace("Z", "+00:00"))
     now = datetime.datetime.now(then.tzinfo)
-    days = (now - then).days
+    return (now - then).days
+
+
+def _age(iso_ts):
+    days = _age_days(iso_ts)
     if days < 1:
         return "today"
     if days == 1:
@@ -535,6 +539,43 @@ _SCRIPT = """
     applyFilters();
   });
 
+  // ---------- sortable columns (priority / age) -- purely a per-viewer preference, never
+  // synced: the table body carries `artifact-local` (see the HTML) specifically so
+  // reordering rows here -- and the filter's show/hide above -- never pushes onto anyone
+  // else's view. ----------
+  var PRIORITY_RANK = { high: 0, medium: 1, low: 2, "": 3 };
+  var sortState = { column: null, dir: 1 };
+
+  function applySort(column) {
+    var tbody = document.querySelector("#bug-table tbody");
+    var rowsArr = Array.prototype.slice.call(tbody.querySelectorAll("tr[data-found-by]"));
+    if (sortState.column === column) {
+      sortState.dir *= -1;
+    } else {
+      sortState.column = column;
+      sortState.dir = 1;
+    }
+    rowsArr.sort(function (a, b) {
+      var av, bv;
+      if (column === "priority") {
+        av = PRIORITY_RANK[a.getAttribute("data-priority") || ""];
+        bv = PRIORITY_RANK[b.getAttribute("data-priority") || ""];
+      } else {
+        av = parseInt(a.getAttribute("data-age-days"), 10) || 0;
+        bv = parseInt(b.getAttribute("data-age-days"), 10) || 0;
+      }
+      return (av - bv) * sortState.dir;
+    });
+    rowsArr.forEach(function (row) { tbody.appendChild(row); });
+    document.querySelectorAll(".sortable").forEach(function (th) {
+      var arrow = th.querySelector(".sort-arrow");
+      arrow.textContent = th.dataset.sort === sortState.column ? (sortState.dir === 1 ? "▲" : "▼") : "";
+    });
+  }
+  document.querySelectorAll(".sortable").forEach(function (th) {
+    th.addEventListener("click", function () { applySort(th.dataset.sort); });
+  });
+
   getArtifact();
   refreshCommentBadges();
   route();
@@ -575,7 +616,9 @@ def render_html(issues, statuses, overrides=None):
         title = html.escape(issue["title"])
         found_login = issue["author"]["login"] if issue.get("author") else "unknown"
         author = html.escape(_display_name(found_login))
-        age = _age(issue["closedAt"]) if issue.get("closedAt") else _age(issue["createdAt"])
+        age_source = issue["closedAt"] if issue.get("closedAt") else issue["createdAt"]
+        age = _age(age_source)
+        age_days = _age_days(age_source)
         priority_cell = (
             f'<span class="pill pill-priority-{priority}">{priority.upper()}</span>'
             if priority else '<span class="dim">--</span>'
@@ -587,7 +630,7 @@ def render_html(issues, statuses, overrides=None):
             f'<span class="comment-badge" data-issue="{number}" hidden></span>'
         )
         rows += f"""
-        <tr data-found-by="{html.escape(found_login)}" data-priority="{priority or ''}">
+        <tr data-found-by="{html.escape(found_login)}" data-priority="{priority or ''}" data-age-days="{age_days}">
           <td><span class="pill {pill_class}">{pill_text}</span></td>
           <td>{priority_cell}</td>
           <td class="bug-title"><a href="#/issue/{number}">{title}</a>{comment_badge}</td>
@@ -780,6 +823,9 @@ def render_html(issues, statuses, overrides=None):
   }}
   td {{ padding: 9px 14px; border-bottom: 1px solid var(--border); vertical-align: middle; }}
   tr:last-child td {{ border-bottom: none; }}
+  th.sortable {{ cursor: pointer; user-select: none; white-space: nowrap; }}
+  th.sortable:hover {{ color: var(--text); }}
+  .sort-arrow {{ font-size: 0.6rem; display: inline-block; width: 8px; }}
   .bug-title {{ max-width: 320px; }}
   .bug-title a {{ text-decoration: none; }}
   .bug-title a:hover {{ text-decoration: underline; }}
@@ -940,8 +986,13 @@ def render_html(issues, statuses, overrides=None):
       </div>
       <div class="table-wrap">
         <table id="bug-table">
-          <thead><tr><th>State</th><th>Priority</th><th>Bug</th><th>Found by</th><th>Assigned to</th><th>Age</th></tr></thead>
-          <tbody>
+          <thead><tr>
+            <th>State</th>
+            <th class="sortable" data-sort="priority">Priority <span class="sort-arrow"></span></th>
+            <th>Bug</th><th>Found by</th><th>Assigned to</th>
+            <th class="sortable" data-sort="age">Age <span class="sort-arrow"></span></th>
+          </tr></thead>
+          <tbody artifact-local>
             {rows if rows else '<tr><td colspan="6" class="empty">No bugs synced yet -- run `mtdo-sandbox bugs sync &lt;instance&gt;`.</td></tr>'}
           </tbody>
         </table>
