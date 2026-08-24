@@ -9,6 +9,46 @@ Add each session's PROGRESS.md entry to the same branch as the code it describes
 
 ---
 
+## 2026-08-24 -- bug_sync: fully automatic triage, no Claude Code session needed
+
+User's explicit ask: pressing Shift+B to log a bug, then running the existing 3-command
+flow (`mtdo-sandbox bugs sync`, `gh issue list ...`, `mtdo-sandbox dashboard`) should
+result in every bug getting a priority and an assignee on its own -- "i dont need claude
+code to do it for me." Every triage pass up to now (the full 25-bug pass, then #43/#44)
+was me reading each bug's text and making a judgment call -- not something the CLI could
+do by itself. This converts that into a deterministic heuristic baked into bug_sync.py.
+
+**Did:**
+- `bug_sync._guess_priority(title, body)`: keyword match against the bug's title --
+  crash/security/data-loss/broken-feature language (`crash`, `password`, `plaintext`,
+  `sandbox`, `traceback`, `broken`, ...) -> high; README/positioning/docs/idea language
+  (`readme`, `contributing.md`, `not a bug`, `cosmetic`, ...) -> low; else medium. Unit
+  tested against 9 real bug titles from this tracker (crash/security/auth/no-tests all
+  correctly high, README/CONTRIBUTING/feature-idea all correctly low, ordinary bugs
+  medium) -- all 9 matched expectation.
+- `bug_sync.auto_triage_pending()`: the unattended version of `apply_triage()` -- guesses
+  a priority for anything missing one, then assigns anything unassigned to whoever
+  currently has FEWER bugs at that same priority level (not just fewer total), so both
+  devs keep getting a mix of urgent/non-urgent work rather than one person accumulating
+  every high-priority bug. Verified the balancing logic in isolation (offline simulation,
+  no real API calls) before wiring it in. Leaves anything already carrying both a
+  priority and an assignee completely alone -- safe to call on every run.
+- Wired into `sandbox_entry.py`: `mtdo-sandbox bugs sync` calls it right after filing new
+  issues (prints which bugs got auto-triaged and how); `mtdo-sandbox dashboard` also
+  calls it first as a safety net (covers a bug created some other way, or `dashboard` run
+  without `sync` first) -- both no-op instantly once nothing's left untriaged, confirmed
+  live (ran `bugs sync` and `dashboard` for real; both correctly did nothing since the
+  25+2 already-triaged bugs from the manual passes were still fully triaged).
+
+**Explicitly NOT automated:** matching a bug to whoever's code it actually touches (what
+made #43's assignment-to-Janhwi a good call, tying it to her just-merged PR #11) needs
+real reading comprehension of both the bug and the codebase -- a keyword heuristic can't
+do that. `auto_triage_pending()` only automates the *balancing* half of the original
+manual process, not the *subsystem-matching* half. Mis-triaged bugs are still fixable by
+hand any time via `bug_sync.apply_triage({number: {...}})`.
+
+---
+
 ## 2026-08-24 -- triage bugs #43/#44 (2 new bugs found after the dashboard branch merged)
 
 Two new bugs came in after PR #9 (dashboard) and PR #11 (Janhwi's profile-menu-crash fix,

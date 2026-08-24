@@ -27,6 +27,16 @@ actually fixes it); `mtdo-sandbox bugs assignments` prints the current split. Fi
 your assigned queue first automatically pulls a few of the other person's over
 (bug_sync.rebalance, called from mark_fixed_and_close) so nobody runs dry.
 
+Every `bugs sync` (and `dashboard`, as a safety net) also calls
+`bug_sync.auto_triage_pending()` -- fully automatic, no Claude Code session needed: any bug
+still missing a priority gets one guessed from its title's wording (crash/security/data-loss
+language -> high, README/positioning/docs language -> low, else medium), and any still
+unassigned gets whoever currently has fewer bugs at THAT priority level (so both devs keep
+getting a mix of urgent and non-urgent work, not just an even raw count). It's a heuristic,
+not judgment -- it will get some wrong; re-triage any of those by hand with
+`bug_sync.apply_triage({number: {"priority": "high"}})`, and it leaves anything already
+triaged alone on every later run (2026-08-24, replacing the earlier one-off manual pass).
+
 `mtdo-sandbox working-on "..."` posts a one-line status for whoever's `gh` identity is
 running it (see status_sync.py) -- named "working-on", not "status", because `mtdo status`
 is already a real subcommand (prints today's board) and would otherwise be shadowed.
@@ -170,6 +180,18 @@ def _bugs_command(args):
         instance = args[1] if len(args) > 1 else None
         filed = bug_sync.sync_pending(instance=instance)
         print(f"Filed {filed} new issue(s) to {bug_sync.TRACKER_REPO}." if filed else "Nothing new to sync.")
+        # Every freshly-filed (or previously untriaged) bug gets a priority + an assignee
+        # automatically -- no separate ask needed, see bug_sync.auto_triage_pending().
+        triaged = bug_sync.auto_triage_pending()
+        if triaged:
+            print(f"Auto-triaged {len(triaged)} bug(s):")
+            for number, changed in sorted(triaged.items()):
+                bits = []
+                if changed.get("priority"):
+                    bits.append("priority")
+                if changed.get("assigned_to"):
+                    bits.append("assigned")
+                print(f"  #{number}: {' + '.join(bits)}")
         return
 
     if args and args[0] == "distribute":
@@ -219,7 +241,11 @@ def _working_on_command(args):
 
 
 def _dashboard_command():
-    from . import dashboard
+    from . import bug_sync, dashboard
+    # Safety net: covers a bug that got created some other way, or `dashboard` run without
+    # `bugs sync` first. No-ops instantly if everything's already triaged (see
+    # bug_sync.auto_triage_pending()'s own docstring on why re-running is always safe).
+    bug_sync.auto_triage_pending()
     path = dashboard.generate()
     print(f"Dashboard written to {path}")
     print("Ask this Claude Code session to publish/update it as a shared Artifact.")

@@ -285,3 +285,83 @@ def assignment_summary():
         key = "assigned_open" if issue["state"] == "OPEN" else "assigned_fixed"
         summary[who][key] += 1
     return summary
+
+
+# Keyword heuristic for _guess_priority() below -- a deterministic stand-in for the
+# judgment call a human/Claude Code session made on 2026-08-24's full triage pass (see
+# PROGRESS.md), so `auto_triage_pending()` can run unattended from `bugs sync`/`dashboard`.
+# It WILL misjudge some bugs -- a title alone often doesn't carry enough signal -- re-triage
+# any of them by hand any time via apply_triage({number: {"priority": "..."}}).
+_HIGH_KEYWORDS = [
+    "crash", "crashes", "crashing", "security", "vulnerab", "plaintext", "password",
+    "auth", "sandbox", "data loss", "destroys", "destroy", "no recovery", "exploit",
+    "no tests", "no automated tests", "no ci ", "corrupt", "traceback", "error:",
+    "doesn't work", "isn't working", "not working", " fails", "broken", "breaks",
+]
+_LOW_KEYWORDS = [
+    "readme", "one-line pitch", "no tags", "no releases", "contributing.md",
+    "documentation", "not a bug", "feature i am planning", "nice to have", "cosmetic",
+]
+
+
+def _guess_priority(title, body=""):
+    """High if it names a crash/security/data-loss/broken-feature symptom; low if it reads
+    as cosmetic/positioning/documentation/a future idea; medium otherwise -- the same three
+    buckets the manual pass used, just decided by keyword match instead of judgment."""
+    text = f"{title} {body}".lower()
+    if any(k in text for k in _HIGH_KEYWORDS):
+        return "high"
+    if any(k in text for k in _LOW_KEYWORDS):
+        return "low"
+    return "medium"
+
+
+def auto_triage_pending():
+    """The unattended version of the 2026-08-24 manual triage pass -- give every open bug
+    missing one a priority (via _guess_priority) and an assignee, with NO Claude Code
+    session in the loop. Meant to run as part of `mtdo-sandbox bugs sync` and
+    `mtdo-sandbox dashboard` so triage just happens as a side effect of the normal 3-command
+    flow (sync / gh issue list / dashboard), not a separate ask.
+
+    Assignment balances the *mix* of priorities each person carries, not just the raw
+    count: a bug guessed "high" goes to whoever currently has fewer open HIGH-priority
+    bugs specifically, so one person doesn't end up with every urgent bug just because the
+    other happened to get more bugs overall first. This is the automatable half of what the
+    manual pass did (balance); the other half (matching bugs to whoever's code they touch)
+    needed real reading comprehension and isn't attempted here -- reassign by hand via
+    apply_triage() when that context matters.
+
+    Safe to call on every sync/dashboard run: already-triaged bugs (has both a priority and
+    an assignee) are left completely alone, so re-running never overrides a human's earlier
+    call on a specific bug."""
+    _ensure_priority_labels()
+    _ensure_assignment_labels()
+    issues = list_all()
+    open_issues = [i for i in issues if i["state"] == "OPEN"]
+
+    counts = {p: {lvl: 0 for lvl in PRIORITIES} for p in PEOPLE}
+    for issue in open_issues:
+        who = assigned_person(issue)
+        level = bug_priority(issue)
+        if who in counts and level in counts[who]:
+            counts[who][level] += 1
+
+    plan = {}
+    for issue in open_issues:
+        level = bug_priority(issue)
+        already_assigned = assigned_person(issue) is not None
+        desired = {}
+
+        if level is None:
+            level = _guess_priority(issue["title"], issue.get("body", ""))
+            desired["priority"] = level
+
+        if not already_assigned:
+            target = min(PEOPLE, key=lambda p: counts[p][level])
+            desired["assigned_to"] = target
+            counts[target][level] += 1
+
+        if desired:
+            plan[issue["number"]] = desired
+
+    return apply_triage(plan)
