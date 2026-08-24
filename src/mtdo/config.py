@@ -275,12 +275,17 @@ def add_category_to_goals(new_category):
     the running app re-reads it (see app.py's file-watch reload) rather than this function
     mutating the live app state directly.
 
-    Raises FileNotFoundError if there's no goals.json yet, ValueError if the name is taken.
+    Bootstraps a fresh goals.json (just {"categories": []}) if none exists yet --
+    a profile with no goals.json is a normal, valid state (a brand-new profile,
+    or one whose active profile has no goals set -- see TodoApp._switch_profile),
+    and "Add Field" is often the first thing you'd do to start populating one, so
+    it shouldn't be a dead end. Raises ValueError if the name is taken.
     """
-    if not os.path.exists(GOALS_PATH):
-        raise FileNotFoundError(f"No goals.json at {GOALS_PATH} yet.")
-    with open(GOALS_PATH) as f:
-        goals = json.load(f)
+    if os.path.exists(GOALS_PATH):
+        with open(GOALS_PATH) as f:
+            goals = json.load(f)
+    else:
+        goals = {}
     goals.setdefault("categories", [])
     if any(c.get("name") == new_category["name"] for c in goals["categories"]):
         raise ValueError(f"Category '{new_category['name']}' already exists.")
