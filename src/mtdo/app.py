@@ -28,7 +28,7 @@ from .errorlog import LOG_PATH, log as app_log
 
 from textual.app import App, ComposeResult
 from textual.containers import Horizontal, Vertical, VerticalScroll, Center, Middle
-from textual.widgets import Static, ListView, ListItem, Label, Input, Footer, TextArea, Button
+from textual.widgets import Static, ListView, ListItem, Label, Input, Footer, TextArea, Button, DirectoryTree
 from textual.screen import ModalScreen, Screen
 from textual.message_pump import active_message_pump
 from textual.reactive import reactive
@@ -188,9 +188,11 @@ def _progress_bar(position, duration, width=18):
     return _block_bar(frac, width)
 
 
-WIZARD_BACK = object()  # sentinel dismiss value meaning "go back a step" -- see the
-# setup wizard's _wizard_go_back below. An object(), not a string, so it can never
-# collide with a real typed answer. Only screens passed show_back=True render/bind
+WIZARD_BACK = object()  # sentinel dismiss value meaning "go back a step" -- for a
+# multi-step wizard's own back-stack (a list of redisplay closures, popped on
+# WIZARD_BACK; the plan-setup wizard used one until its 2026-08-24 rework collapsed it
+# to a single step, see _pick_populate_method). An object(), not a string, so it can
+# never collide with a real typed answer. Only screens passed show_back=True render/bind
 # Ctrl+B for this; every other call site of these generic screens is unaffected.
 
 
@@ -675,47 +677,121 @@ class AIBackendPickScreen(ModalScreen):
             self.dismiss(None)
 
 
-class PersonaPickScreen(ModalScreen):
-    """Modal: first step of the plan-setup wizard (g) -- which of plan_wizard.PERSONAS
-    you are, since the curated question set that follows differs by stage of life.
-    Dismisses with the persona's key (e.g. "college"), WIZARD_BACK (Ctrl+B, only when
-    show_back=True), or None on Escape."""
+class GuidedSetupScreen(ModalScreen):
+    """Guided setup, reworked 2026-08-24 (gh47): no in-app questions, no AI called by
+    mtdo itself. Three self-contained actions -- export the self-documenting template,
+    copy a short fixed prompt to go with it, import whatever goals.json the user's own
+    AI hands back -- reusing appconfig.import_goals() (already existed for the CLI
+    `mtdo import`). See plan_wizard.py's module docstring for why this replaces the
+    older persona+Q&A wizard (bugs #6/#13) entirely rather than extending it.
+
+    Deliberately stays open across actions instead of dismissing after one -- export,
+    then later come back and import, all in one visit. Escape closes it once done."""
 
     CSS = """
-    PersonaPickScreen { align: center middle; }
-    #persona-pick-box { width: 60; height: auto; border: round magenta; padding: 1 2; background: $panel; }
+    GuidedSetupScreen { align: center middle; }
+    #guided-setup-box { width: 84; height: auto; max-height: 26; border: round magenta; padding: 1 2; background: $panel; }
+    #guided-setup-intro { margin-bottom: 1; }
+    #guided-setup-status { color: $text-muted; margin-top: 1; }
     """
 
-    def __init__(self, show_back=False):
-        super().__init__()
-        self.show_back = show_back
+    ACTIONS = [
+        ("export", "1. Export the template  ->  saves goals_template.json to ~/Downloads"),
+        ("copy_prompt", "2. Copy the AI prompt  ->  paste it (with the template) into any AI"),
+        ("import", "3. Import your goals.json  ->  browse for the file your AI gave back"),
+    ]
 
     def compose(self) -> ComposeResult:
-        back_hint = ", Ctrl+B back" if self.show_back else ""
         with Center():
             with Middle():
-                with Vertical(id="persona-pick-box"):
-                    yield Static("Set up a plan -- which describes you best?")
-                    items = [
-                        ListItem(Label(label), name=key)
-                        for key, label in plan_wizard.PERSONAS
-                    ]
-                    yield VimListView(*items)
-                    yield Static(f"Enter to pick, Escape to cancel{back_hint}", classes="dim")
+                with Vertical(id="guided-setup-box"):
+                    yield Static(
+                        "Guided setup -- no questions here. Export the template, hand it "
+                        "to any AI you already use (ChatGPT, Claude, Gemini, ...) along "
+                        "with what you want to work on, then import the goals.json it "
+                        "gives back.",
+                        id="guided-setup-intro",
+                    )
+                    items = [ListItem(Label(label), name=key) for key, label in self.ACTIONS]
+                    yield VimListView(*items, id="guided-setup-list")
+                    yield Static("", id="guided-setup-status")
+                    yield Static("Enter to run, Escape when done", classes="dim")
 
     def on_mount(self):
         self.query_one(VimListView).focus()
 
+    def _set_status(self, text):
+        self.query_one("#guided-setup-status", Static).update(text)
+
     def on_list_view_selected(self, event: ListView.Selected):
-        self.dismiss(event.item.name)
+        action = event.item.name
+        if action == "export":
+            try:
+                dest = plan_wizard.export_template()
+                self._set_status(f"Exported -> {dest}")
+            except Exception:
+                app_log.exception("guided setup: export_template failed")
+                self._set_status(f"Export failed -- see {LOG_PATH}")
+        elif action == "copy_prompt":
+            path, copied = plan_wizard.save_and_copy(plan_wizard.GUIDED_SETUP_PROMPT)
+            note = "Copied to your clipboard and saved" if copied else "Saved"
+            self._set_status(f"{note} -> {path}")
+        elif action == "import":
+            self.app.push_screen(GoalsFilePickScreen(), self._on_file_picked)
+
+    def _on_file_picked(self, path):
+        if not path:
+            return
+        try:
+            added, updated = appconfig.import_goals(path)
+        except Exception:
+            app_log.exception("guided setup: import_goals failed for %s", path)
+            self._set_status(f"Import failed -- see {LOG_PATH}")
+            return
+        self._set_status(
+            f"Imported -- {len(added)} new field(s), {len(updated)} updated. "
+            "Loads within a couple seconds."
+        )
+
+    def on_key(self, event):
+        if event.key == "escape":
+            self.dismiss()
+
+
+class GoalsFilePickScreen(ModalScreen):
+    """Browse for a completed goals.json -- arrow keys + Enter, no path to type. A
+    terminal app has no native OS file-picker; this is the closest real equivalent
+    (Textual's DirectoryTree). Starts in ~/Downloads, since that's where both the
+    exported template and a typical AI-chat/browser download land. Dismisses with the
+    picked file's path, or None on Escape."""
+
+    CSS = """
+    GoalsFilePickScreen { align: center middle; }
+    #file-pick-box { width: 76; height: 26; border: round magenta; padding: 1 2; background: $panel; }
+    """
+
+    def __init__(self):
+        super().__init__()
+        downloads = os.path.expanduser("~/Downloads")
+        self.start_dir = downloads if os.path.isdir(downloads) else os.path.expanduser("~")
+
+    def compose(self) -> ComposeResult:
+        with Center():
+            with Middle():
+                with Vertical(id="file-pick-box"):
+                    yield Static("Pick your completed goals.json")
+                    yield DirectoryTree(self.start_dir, id="goals-file-tree")
+                    yield Static("Enter to import, Escape to cancel", classes="dim")
+
+    def on_mount(self):
+        self.query_one(DirectoryTree).focus()
+
+    def on_directory_tree_file_selected(self, event: DirectoryTree.FileSelected):
+        self.dismiss(str(event.path))
 
     def on_key(self, event):
         if event.key == "escape":
             self.dismiss(None)
-        elif self.show_back and event.key == "ctrl+b":
-            event.prevent_default()
-            event.stop()
-            self.dismiss(WIZARD_BACK)
 
 
 class ChoicePickScreen(ModalScreen):
@@ -2209,10 +2285,10 @@ class TodoApp(App):
         if not appconfig.has_onboarded():
             def after_onboarding(_r=None):
                 appconfig.mark_onboarded()
-                if appconfig.get_user_name() is None:
+                if not appconfig.has_configured_plan():
                     self._begin_setup_flow()
             self.push_screen(OnboardingScreen(), callback=after_onboarding)
-        elif appconfig.get_user_name() is None:
+        elif not appconfig.has_configured_plan():
             # Onboarded before, but never actually ran the setup flow (e.g. upgraded
             # from an older mtdo, or a saved instance from before this existed) --
             # still worth asking, just without replaying the feature walkthrough too.
@@ -2894,75 +2970,30 @@ class TodoApp(App):
         self._begin_setup_flow()
 
     def _begin_setup_flow(self):
-        """Entry point for the whole setup wizard -- name (first time only) -> persona ->
-        how to populate goals.json (manual vs AI-guided) -> (if AI-guided) which AI ->
-        that persona's full bespoke Q&A -> build+save the AI prompt. Triggered
-        automatically right after the feature walkthrough on a genuine first run (see
-        on_mount), or any time via 'g' (action_plan_wizard) to re-run it.
+        """Entry point for the whole setup wizard: straight to "how do you want to build
+        your plan" (Manual vs Guided setup) -- Triggered automatically right after the
+        feature walkthrough on a genuine first run (see on_mount), or any time via 'g'
+        (action_plan_wizard) to re-run it.
 
-        Runs entirely in-app rather than as CLI-level input() prompts before the app even
-        started (an earlier version of this wizard did that specifically to avoid hot-
-        reloading a running app's category structure) -- per explicit user request that
-        the app boot first and only then start asking questions. The board starts (and,
-        if you cancel out partway, stays) genuinely empty either way; nothing here writes
-        categories directly -- the AI prompt this produces is what eventually does, once
-        pasted into an AI and the result imported.
-
-        Every step follows the same shape for Ctrl+B back-navigation: show_back is
-        whether _wizard_stack is non-empty (nothing to go back to on the very first step
-        shown), and each step's callback pushes a closure that redisplays *that* step
-        (pre-filled with whatever was just answered, where that's meaningful) before
-        moving forward -- so going back always lands you exactly where you were, and
-        changing an earlier answer (e.g. persona) naturally reruns everything after it
-        fresh rather than leaving stale state around.
+        Reworked 2026-08-24 (gh47): previously asked for a name, then a persona, then
+        (for guided setup) walked a persona-specific Q&A before building an AI prompt.
+        All of that's gone -- profiles already carry identity (ClockHeader's greeting
+        already prefers the active profile's name), and Guided setup no longer asks
+        anything in-app either; see GuidedSetupScreen and plan_wizard.py for why. The
+        board starts (and, if you cancel out, stays) genuinely empty either way.
         """
-        self._wizard_stack = []
-        if appconfig.get_user_name() is None:
-            self._wizard_ask_name()
-        else:
-            self._pick_persona_for_setup()
+        self._pick_populate_method()
 
-    def _wizard_go_back(self):
-        if not self._wizard_stack:
-            self.toast("Already at the first step.", style="dim")
-            return
-        self._wizard_stack.pop()()
-
-    def _wizard_ask_name(self, initial=""):
-        def on_name(value):
-            if value is WIZARD_BACK:
-                self._wizard_go_back()
-                return
-            name = (value or "").strip()
-            if name:
-                appconfig.set_user_name(name)
-            self._wizard_stack.append(lambda v=value: self._wizard_ask_name(initial=v or ""))
-            self._pick_persona_for_setup()
-        self.push_screen(TextPromptScreen("What should we call you?", initial, show_back=bool(self._wizard_stack)), on_name)
-
-    def _pick_persona_for_setup(self):
-        def on_persona(persona):
-            if persona is WIZARD_BACK:
-                self._wizard_go_back()
-                return
-            if persona is None:
-                return
-            self._wizard_stack.append(self._pick_persona_for_setup)
-            self._pick_populate_method(persona)
-        self.push_screen(PersonaPickScreen(show_back=bool(self._wizard_stack)), on_persona)
-
-    def _pick_populate_method(self, persona):
+    def _pick_populate_method(self):
         options = [
             "Manual -- I'll build it myself in the app (press 'a' to add fields)",
-            "Guided setup -- answer a few questions and let an AI build it (Recommended)",
+            "Guided setup -- export a template, hand it to any AI, import the result",
         ]
 
         def on_choice(choice):
-            if choice is WIZARD_BACK:
-                self._wizard_go_back()
-                return
             if choice is None:
                 return
+            appconfig.mark_plan_configured()
             if choice.startswith("Manual"):
                 self.toast(
                     "Okay -- your board is empty. Press 'a' any time to add a field, "
@@ -2970,72 +3001,9 @@ class TodoApp(App):
                     style="bold cyan",
                 )
                 return
-            self._wizard_stack.append(lambda p=persona: self._pick_populate_method(p))
-            self._pick_ai_choice(persona)
+            self.push_screen(GuidedSetupScreen())
 
-        self.push_screen(ChoicePickScreen("How do you want to build your plan?", options, show_back=bool(self._wizard_stack)), on_choice)
-
-    def _pick_ai_choice(self, persona):
-        options = [
-            "mtdo's built-in AI (Claude Code, Ollama, or an API key)",
-            "An AI I already use day to day (ChatGPT, Claude, Gemini, etc)",
-        ]
-
-        def on_choice(choice):
-            if choice is WIZARD_BACK:
-                self._wizard_go_back()
-                return
-            if choice is None:
-                return
-            use_builtin = choice.startswith("mtdo's built-in")
-            self._wizard_stack.append(lambda p=persona: self._pick_ai_choice(p))
-            questions = list(plan_wizard.questions_for(persona))
-            self._ask_plan_wizard_questions(questions, 0, {"persona": persona}, persona, use_builtin)
-
-        self.push_screen(ChoicePickScreen("How do you want to build it?", options, show_back=bool(self._wizard_stack)), on_choice)
-
-    def _ask_plan_wizard_questions(self, all_questions, index, answers, persona, use_builtin):
-        if index >= len(all_questions):
-            self._finish_plan_wizard(persona, answers, use_builtin)
-            return
-        key, prompt_text, choices = all_questions[index]
-
-        def on_answer(value):
-            if value is WIZARD_BACK:
-                self._wizard_go_back()
-                return
-            if value is None:
-                self.toast("Setup cancelled -- nothing written.", style="dim")
-                return
-            answers[key] = value.strip() if isinstance(value, str) and not choices else value
-            self._wizard_stack.append(
-                lambda: self._ask_plan_wizard_questions(all_questions, index, answers, persona, use_builtin)
-            )
-            self._ask_plan_wizard_questions(all_questions, index + 1, answers, persona, use_builtin)
-
-        show_back = bool(self._wizard_stack)
-        if choices:
-            self.push_screen(ChoicePickScreen(prompt_text, choices, show_back=show_back), on_answer)
-        else:
-            self.push_screen(TextPromptScreen(prompt_text, answers.get(key, ""), multiline=True, show_back=show_back), on_answer)
-
-    def _finish_plan_wizard(self, persona, answers, use_builtin):
-        try:
-            prompt = plan_wizard.build_prompt(persona, answers)
-            path, copied = plan_wizard.save_and_copy(prompt)
-        except Exception:
-            app_log.exception("plan wizard failed to build/save prompt")
-            self.toast(f"Plan setup hit an error -- see {LOG_PATH}", style="bold red")
-            return
-        if use_builtin:
-            self.toast(
-                f"Saved -- press C to open the built-in AI panel, paste it there (Cmd+V), and hit enter. "
-                f"Also saved to {path}.",
-                style="bold green",
-            )
-        else:
-            clip_note = " and copied to your clipboard" if copied else ""
-            self.toast(f"Saved to {path}{clip_note} -- paste it into your AI of choice.", style="bold yellow")
+        self.push_screen(ChoicePickScreen("How do you want to build your plan?", options), on_choice)
 
     def action_save_ai_transcript(self):
         if not self.claude_panel.is_running:

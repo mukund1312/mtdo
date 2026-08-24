@@ -55,6 +55,27 @@ def mark_onboarded():
         f.write("")
 
 
+PLAN_CONFIGURED_PATH = os.path.join(APP_DIR, "plan_configured")
+
+
+def has_configured_plan():
+    """Whether the user has already been through the "how do you want to build your
+    plan" step (Manual vs Guided setup) at least once. Replaces the old auto-launch
+    signal (`get_user_name() is None`) after the 2026-08-24 wizard rework (gh47) dropped
+    the separate name-asking step -- profiles already carry identity (ClockHeader's
+    greeting already prefers the active profile's name over get_user_name(), so nothing
+    else needed that question either). Same semantics as before: marked as soon as a
+    choice is made, not only once guided setup is fully completed -- gates whether
+    _begin_setup_flow() auto-launches on startup, not whether 'g' can re-run it."""
+    return os.path.exists(PLAN_CONFIGURED_PATH)
+
+
+def mark_plan_configured():
+    os.makedirs(APP_DIR, exist_ok=True)
+    with open(PLAN_CONFIGURED_PATH, "w") as f:
+        f.write("")
+
+
 PRACTICE_TERMINAL_FLAG_PATH = os.path.join(APP_DIR, "practice_terminal_enabled")
 
 
