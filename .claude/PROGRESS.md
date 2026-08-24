@@ -9,6 +9,128 @@ Add each session's PROGRESS.md entry to the same branch as the code it describes
 
 ---
 
+## 2026-08-24 -- dashboard: sortable Priority/Age columns (click to sort, click again to reverse)
+
+**Caught a real, pre-existing correctness issue while implementing this, not by
+inspection:** sorting means reordering `<tr>` elements in the DOM via a click -- and per
+the artifact live-doc rules, "whatever a writer's own click... does to the DOM... is
+appended to the document... and reaches every other view." That means the EXISTING
+found-by/assigned-to/priority filter (`row.style.display = 'none'`, triggered by a
+`<select>` change event) was almost certainly already being captured and synced to every
+other viewer -- one person filtering their own view would have silently changed what
+everyone else saw too. Never caught because nobody had two browser tabs open comparing
+views while testing it.
+
+**Fix, covering both:** added `artifact-local` to `#bug-table`'s `<tbody>`. Per the
+capability docs this only suppresses IMPLICIT gesture-capture for that region -- it does
+NOT affect the explicit `artifact.edit()` calls the assign-to reassignment already uses
+(those are id-addressed and independent of local/sync marking), so reassignment inside
+the table keeps syncing correctly; only row order and visibility (filter + the new sort)
+become genuinely per-viewer, which is what they should have been all along.
+
+**Did:**
+- `dashboard.py`: `_age_days(iso_ts)` alongside the existing `_age()` (refactored to share
+  the same day-count) -- age needs a raw sortable number, not just the display string.
+  Each `<tr>` gets `data-age-days`. `<th>` for Priority/Age are now `class="sortable"
+  data-sort="..."` with a small arrow indicator.
+- JS: `applySort(column)` re-sorts the row array (priority via a rank map high<medium<
+  low<untriaged, age via the raw day count) and re-appends in order; click same column
+  again to reverse. Verified the comparator logic offline (Node, synthetic rows, both
+  columns, both directions) before wiring it into the DOM version.
+
+Regenerated, checked the live artifact for uncommitted comments/reassignments first (none
+-- safe to republish directly), republished. Real `~/.mtdo/goals.json`/`state.json`
+confirmed untouched throughout, as always.
+
+---
+
+## 2026-08-24 -- Shift+B now fires sync/triage/dashboard entirely in the background
+
+Follow-up to the auto-triage work below: user wanted the whole 3-command flow (`bugs
+sync` / `gh issue list` / `dashboard`) to happen automatically the moment a dev presses
+Shift+B and saves a bug, not run by hand afterward.
+
+**Did:**
+- `bug_sync.sync_and_triage(instance=None)`: `sync_pending()` + `auto_triage_pending()` in
+  one call -- the shared entry point both the CLI and the in-app trigger use now.
+- `dashboard.generate()` now returns `(path, triaged)` instead of just `path` -- its
+  internal safety-net triage pass turned out to matter in practice, not just in theory
+  (see below), so callers that want an accurate "N triaged" count need that second
+  value. Updated its two callers (`sandbox_entry._dashboard_command`, app.py's new
+  background worker) for the new signature.
+- `app.py`: `action_report_bug`'s save callback now calls a new
+  `TodoApp._sync_bug_in_background()` right after `bug_log.add_bug()` -- spawns a daemon
+  thread (same pattern already used by `action_toggle_claude`'s backend loading) that
+  runs `sync_and_triage()` then `dashboard.generate()`, then reports the result via a
+  toast using `self.call_from_thread` (required for any Textual UI call made from a
+  background thread). Never blocks the UI (these are all network/`gh` calls) and never
+  risks the bug report itself -- `bug_log.add_bug()` already wrote it durably to disk
+  before this thread is even started, so a failure here just means the tracker/dashboard
+  are stale until the next successful run, not that anything is lost. Gated behind
+  `SANDBOX_INSTANCE_MODE` same as the rest of bug reporting (the 'B' binding only exists
+  there), so this can't touch the real `mtdo` app.
+
+**Verified live (tmux, real tracker, cleaned up after):** launched `mtdo-sandbox`, pressed
+Shift+B, saved a test bug -- confirmed via a companion script that the bug was filed to
+GitHub, triaged (priority + assignee), and the dashboard file regenerated, ALL within
+seconds and with zero manual commands. Closed the 2 test GitHub issues (#45, #46) and
+marked the matching local bug_log entries fixed afterward; real `~/.mtdo/goals.json`/
+`state.json` confirmed untouched throughout (this whole feature only ever touches
+`~/.mtdo-sandbox/*` and the private tracker repo).
+
+**Real bug caught by this live test, not by inspection:** the first live run showed the
+toast "Synced 1 bug(s), triaged 0" even though the bug WAS correctly triaged moments
+later -- `sync_and_triage()`'s own `auto_triage_pending()` call sometimes runs before
+GitHub's issue-list endpoint has caught up with an issue `gh issue create` JUST returned
+(a real, observed propagation lag, not theoretical), so it can legitimately see zero
+work to do on the very newest issue. `dashboard.generate()`'s existing safety-net triage
+pass (running slightly later, after more `gh` calls have elapsed) is what actually caught
+it. Fixed by having `generate()` surface what it triaged and merging both results before
+building the toast message -- verified with a second live test that the toast now
+correctly reads "Synced 1 bug(s), triaged 1."
+
+---
+
+## 2026-08-24 -- bug_sync: fully automatic triage, no Claude Code session needed
+
+User's explicit ask: pressing Shift+B to log a bug, then running the existing 3-command
+flow (`mtdo-sandbox bugs sync`, `gh issue list ...`, `mtdo-sandbox dashboard`) should
+result in every bug getting a priority and an assignee on its own -- "i dont need claude
+code to do it for me." Every triage pass up to now (the full 25-bug pass, then #43/#44)
+was me reading each bug's text and making a judgment call -- not something the CLI could
+do by itself. This converts that into a deterministic heuristic baked into bug_sync.py.
+
+**Did:**
+- `bug_sync._guess_priority(title, body)`: keyword match against the bug's title --
+  crash/security/data-loss/broken-feature language (`crash`, `password`, `plaintext`,
+  `sandbox`, `traceback`, `broken`, ...) -> high; README/positioning/docs/idea language
+  (`readme`, `contributing.md`, `not a bug`, `cosmetic`, ...) -> low; else medium. Unit
+  tested against 9 real bug titles from this tracker (crash/security/auth/no-tests all
+  correctly high, README/CONTRIBUTING/feature-idea all correctly low, ordinary bugs
+  medium) -- all 9 matched expectation.
+- `bug_sync.auto_triage_pending()`: the unattended version of `apply_triage()` -- guesses
+  a priority for anything missing one, then assigns anything unassigned to whoever
+  currently has FEWER bugs at that same priority level (not just fewer total), so both
+  devs keep getting a mix of urgent/non-urgent work rather than one person accumulating
+  every high-priority bug. Verified the balancing logic in isolation (offline simulation,
+  no real API calls) before wiring it in. Leaves anything already carrying both a
+  priority and an assignee completely alone -- safe to call on every run.
+- Wired into `sandbox_entry.py`: `mtdo-sandbox bugs sync` calls it right after filing new
+  issues (prints which bugs got auto-triaged and how); `mtdo-sandbox dashboard` also
+  calls it first as a safety net (covers a bug created some other way, or `dashboard` run
+  without `sync` first) -- both no-op instantly once nothing's left untriaged, confirmed
+  live (ran `bugs sync` and `dashboard` for real; both correctly did nothing since the
+  25+2 already-triaged bugs from the manual passes were still fully triaged).
+
+**Explicitly NOT automated:** matching a bug to whoever's code it actually touches (what
+made #43's assignment-to-Janhwi a good call, tying it to her just-merged PR #11) needs
+real reading comprehension of both the bug and the codebase -- a keyword heuristic can't
+do that. `auto_triage_pending()` only automates the *balancing* half of the original
+manual process, not the *subsystem-matching* half. Mis-triaged bugs are still fixable by
+hand any time via `bug_sync.apply_triage({number: {...}})`.
+
+---
+
 ## 2026-08-24 -- triage bugs #43/#44 (2 new bugs found after the dashboard branch merged)
 
 Two new bugs came in after PR #9 (dashboard) and PR #11 (Janhwi's profile-menu-crash fix,
