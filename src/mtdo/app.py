@@ -240,11 +240,19 @@ class ProfileMenuScreen(ModalScreen):
             return
         for profile in profiles:
             marker = "✓ " if profile["slug"] == active else "  "
-            btn = Button(f"{marker}{profile['name']}", id=f"profile-select:{profile['slug']}")
+            # No id= here: a slug is only guaranteed to match [a-z0-9_], but Textual
+            # widget ids must match [A-Za-z0-9_-] and never start with a digit -- a
+            # slug starting with a digit, or embedded in an id via a separator like
+            # ":", can produce an invalid id and crash on mount (BadIdentifier). The
+            # slug is carried as a plain attribute instead, read back in
+            # on_button_pressed, sidestepping the whole id-charset question.
+            btn = Button(f"{marker}{profile['name']}")
+            btn.profile_slug = profile["slug"]
             self.profile_list.mount(btn)
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         bid = event.button.id
+        slug = getattr(event.button, "profile_slug", None)
         if bid == "profile-close":
             self.dismiss(None)
         elif bid == "profile-add":
@@ -253,8 +261,7 @@ class ProfileMenuScreen(ModalScreen):
         elif bid == "profile-manage":
             self.dismiss(None)
             self.app.action_manage_profiles()
-        elif bid and bid.startswith("profile-select:"):
-            slug = bid.split(":", 1)[1]
+        elif slug is not None:
             self.dismiss(None)
             self.app._switch_profile(slug)
 
@@ -326,11 +333,21 @@ class ProfileManageScreen(ModalScreen):
         if not pf.list_profiles():
             self.rows.mount(Static("No profiles yet"))
             return
+        # profile_slug/row_action are plain attributes, not ids: a slug is only
+        # guaranteed to match [a-z0-9_], but Textual widget ids must match
+        # [A-Za-z0-9_-] and never start with a digit, so baking a slug into an id
+        # (e.g. via a ":" separator) can produce an invalid id and crash on mount.
         for profile in pf.list_profiles():
-            row = Horizontal()
-            row.mount(Button(f"{'✓ ' if profile['slug'] == active else ''}{profile['name']}", id=f"manage-select:{profile['slug']}", classes="profile-row-primary"))
-            row.mount(Button("Rename", id=f"rename-profile:{profile['slug']}", classes="profile-row-action"))
-            row.mount(Button("Delete", id=f"delete-profile:{profile['slug']}", classes="profile-row-action"))
+            select_btn = Button(f"{'✓ ' if profile['slug'] == active else ''}{profile['name']}", classes="profile-row-primary")
+            select_btn.profile_slug, select_btn.row_action = profile["slug"], "select"
+            rename_btn = Button("Rename", classes="profile-row-action")
+            rename_btn.profile_slug, rename_btn.row_action = profile["slug"], "rename"
+            delete_btn = Button("Delete", classes="profile-row-action")
+            delete_btn.profile_slug, delete_btn.row_action = profile["slug"], "delete"
+            # children must be passed to the constructor -- mounting onto `row`
+            # before `row` itself is attached (via self.rows.mount(row) below)
+            # raises MountError ("Can't mount widget(s) before ... is mounted").
+            row = Horizontal(select_btn, rename_btn, delete_btn)
             self.rows.mount(row)
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
@@ -342,12 +359,15 @@ class ProfileManageScreen(ModalScreen):
             self.dismiss(None)
             self.app.action_create_profile()
             return
-        if bid and bid.startswith("manage-select:"):
-            self.dismiss(None)
-            self.app._switch_profile(bid.split(":", 1)[1])
+        slug = getattr(event.button, "profile_slug", None)
+        action = getattr(event.button, "row_action", None)
+        if slug is None or action is None:
             return
-        if bid and bid.startswith("rename-profile:"):
-            slug = bid.split(":", 1)[1]
+        if action == "select":
+            self.dismiss(None)
+            self.app._switch_profile(slug)
+            return
+        if action == "rename":
             profile = pf.get_profile(slug)
             if not profile:
                 return
@@ -357,8 +377,7 @@ class ProfileManageScreen(ModalScreen):
                 lambda value: self.app._rename_profile(slug, value),
             )
             return
-        if bid and bid.startswith("delete-profile:"):
-            slug = bid.split(":", 1)[1]
+        if action == "delete":
             profile = pf.get_profile(slug)
             if not profile:
                 return
