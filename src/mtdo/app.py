@@ -2347,7 +2347,7 @@ class TodoApp(App):
                 if on_created:
                     on_created(slug)
 
-            self.push_screen(TextPromptScreen("Display label for this field", name), on_label)
+            self.push_screen(TextPromptScreen(f"Display label (Enter to keep '{name}')", name), on_label)
 
         self.push_screen(TextPromptScreen("New field name (short id, e.g. 'networking')", ""), on_name)
 
