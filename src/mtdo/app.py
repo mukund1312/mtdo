@@ -2348,11 +2348,17 @@ class TodoApp(App):
         self.reload_from_goals(toast_on_change=True)
 
     def reload_from_goals(self, toast_on_change=False):
+        # No goals.json (a brand new/empty profile just switched to, or the last
+        # profile just deleted -- see _delete_profile) means a genuinely empty board,
+        # not "leave whatever was loaded before showing" -- this used to just return
+        # here doing nothing, so switching to an empty profile silently kept showing
+        # the previous profile's categories (caught live 2026-08-25, gh19/gh48).
         try:
             goals = appconfig.load_goals()
         except FileNotFoundError:
-            return
-        cfg, _, _ = appconfig.goals_to_config(goals)
+            cfg = appconfig.empty_config()
+        else:
+            cfg, _, _ = appconfig.goals_to_config(goals)
         tc.configure(cfg)
         CATEGORY_COLORS.update(_build_category_colors())
         self.state = tc.ensure_day_registered(self.state, self.today)
@@ -2970,19 +2976,38 @@ class TodoApp(App):
         self._begin_setup_flow()
 
     def _begin_setup_flow(self):
-        """Entry point for the whole setup wizard: straight to "how do you want to build
-        your plan" (Manual vs Guided setup) -- Triggered automatically right after the
-        feature walkthrough on a genuine first run (see on_mount), or any time via 'g'
-        (action_plan_wizard) to re-run it.
+        """Entry point for the whole setup wizard: Profiles Section -> "how do you want
+        to build your plan" (Manual vs Guided setup). Triggered automatically right
+        after the feature walkthrough on a genuine first run (see on_mount), or any time
+        via 'g' (action_plan_wizard) to re-run it.
 
         Reworked 2026-08-24 (gh47): previously asked for a name, then a persona, then
         (for guided setup) walked a persona-specific Q&A before building an AI prompt.
         All of that's gone -- profiles already carry identity (ClockHeader's greeting
         already prefers the active profile's name), and Guided setup no longer asks
-        anything in-app either; see GuidedSetupScreen and plan_wizard.py for why. The
-        board starts (and, if you cancel out, stays) genuinely empty either way.
-        """
-        self._pick_populate_method()
+        anything in-app either; see GuidedSetupScreen and plan_wizard.py for why.
+
+        Reworked again 2026-08-25 (gh48): the intended flow was always
+        "walkthrough -> Profiles Section -> How do you want to build your plan" --
+        confirmed live that no profile step was actually happening automatically here,
+        only reachable manually via the footer badge. No profiles yet -> straight to
+        creating the first one (a picker with nothing in it would be a dead end).
+        Profiles already exist -> the picker, so you can switch to one or add another.
+        Either way, proceeds to the populate-method step next regardless of what
+        happened there (closed without picking, cancelled creation, ...) -- consistent
+        with the rest of this wizard: skippable at every step, the board starts (and
+        stays, if you cancel out) genuinely empty either way."""
+        if not pf.list_profiles():
+            def on_created(result):
+                self._on_profile_created(result)
+                self._pick_populate_method()
+            self._push_modal(ProfileCreateScreen(), on_created)
+        else:
+            # _push_modal, not push_screen -- _begin_setup_flow is itself reached from
+            # inside another screen's dismiss-then-push chain (OnboardingScreen's
+            # callback, see on_mount), the exact case _push_modal's docstring warns a
+            # plain push_screen(..., callback) callback would silently never fire for.
+            self._push_modal(ProfileMenuScreen(), lambda _result: self._pick_populate_method())
 
     def _pick_populate_method(self):
         options = [

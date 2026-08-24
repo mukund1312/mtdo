@@ -9,6 +9,74 @@ Add each session's PROGRESS.md entry to the same branch as the code it describes
 
 ---
 
+## 2026-08-25 (bugs gh19 + gh48, GH mukund1312/mtdo-bugs#19/#48) -- profile switching didn't actually isolate data; no automatic profile step
+
+User asked to combine #19 ("implement profiles and profile switching") and #48 ("the
+profile thing should happen as soon as the walkthrough is done") into one piece of work,
+and explicitly asked me to test profile isolation myself rather than trust the existing
+code: "when i am in a profile and my application is populated with one goals.jason the
+another profile should be populated with another goals.jsaon."
+
+**Found a real, serious bug by testing it, not by inspection.** Wrote a headless
+`App.run_test()` test (create Profile A with field_a_only, switch to it, create empty
+Profile B, switch to it, populate B with field_b_only, switch back and forth) --
+confirmed live: switching to a brand-new empty profile did NOT clear the board (kept
+showing the previous profile's fields), and after populating and switching to that
+profile a second time, it showed **both** profiles' fields merged together, not just its
+own. Reduced this to a minimal 6-line repro with zero Textual/App involvement, proving
+it wasn't specific to profile-switching at all.
+
+**Root cause:** `config.py`'s `goals_to_config(goals, existing_cfg=None)` built its
+starting config via `cfg = dict(_EMPTY_CONFIG)` -- a *shallow* copy. `_EMPTY_CONFIG`'s
+own `"categories"`/`"category_order"`/`"streak_categories"` values are a dict and two
+lists; `dict(...)` only copies the top-level mapping, so `cfg["categories"]` etc. were
+literally the SAME objects as `_EMPTY_CONFIG`'s. Every subsequent line that mutated them
+in place (`cfg["categories"][name] = ...`, `.append(name)`) was permanently polluting
+the module-level "constant" itself -- every later call with `existing_cfg=None`
+(*every* fresh reload: profile switches, `check_goals_file`'s live-reload polling,
+anything) inherited every category any earlier call in the process's lifetime had ever
+added. This bug predates profiles entirely; profile-switching was just the first thing
+to exercise "load an entirely different goals.json" enough times in one session to make
+it obvious.
+
+**Second, related bug:** `app.py`'s `reload_from_goals()` just `return`ed early on
+`FileNotFoundError` (no goals.json for the newly active profile) -- doing nothing at
+all, so the board kept showing whatever was loaded before instead of going empty. Also
+affected the already-existing "delete your last profile" path, which explicitly deletes
+goals.json/state.json expecting this function to clear the board.
+
+**Did:**
+- `config.py`: added `empty_config()` (a proper `copy.deepcopy(_EMPTY_CONFIG)`, always a
+  fresh independent object), used it both in `goals_to_config` and the fix below.
+- `app.py`: `reload_from_goals()` now calls `tc.configure(appconfig.empty_config())` on
+  `FileNotFoundError` instead of silently returning, so the board actually goes empty.
+- `app.py`: `_begin_setup_flow()` (gh48) now shows an actual Profiles step right after
+  the walkthrough -- confirmed live that this had never actually been automatic, only
+  reachable manually via the footer badge, despite gh47's own flow description assuming
+  it already happened here. No profiles yet -> straight to `ProfileCreateScreen`
+  (a picker with nothing in it would be a dead end); profiles exist -> `ProfileMenuScreen`
+  to pick/switch/add. Either way chains into `_pick_populate_method()` next. Used
+  `_push_modal` (not `push_screen`) for both, since `_begin_setup_flow` is itself reached
+  from inside `OnboardingScreen`'s own dismiss-then-push chain -- the exact case
+  `_push_modal`'s docstring says a plain callback would silently never fire for.
+
+**Verified live (tmux + headless, both):** re-ran the headless isolation test after each
+fix -- confirmed empty-profile switch now correctly shows zero categories, and the
+merge-across-profiles case is fully gone (A shows only A, B shows only B, switching back
+and forth repeatedly stays correct). Separately confirmed `state.json` (streaks) was
+never affected by this bug -- checked directly, plain per-profile serialization, no
+shared-default-object pattern there. Live tmux test of the gh48 fix: fresh instance,
+skipped walkthrough, confirmed "Create Profile" now appears automatically (previously
+went straight to "How do you want to build your plan?" with no profile step at all),
+created a profile, confirmed it chained correctly into the populate-method screen, and
+confirmed the footer showed "👤 Good morning, Test Profile 1" afterward. Real
+`~/.mtdo/goals.json`/`state.json` confirmed untouched throughout.
+
+Marked local bugs #15/#40 (GH issues #19/#48) fixed and closed both via
+`bug_sync.mark_fixed_and_close`.
+
+---
+
 ## 2026-08-24 (bug gh47, GH mukund1312/mtdo-bugs#47) -- guided setup reworked: no in-app questions, no AI called by mtdo
 
 User's bug: "major rework the Final Flow" -- drop the name+persona questions after
