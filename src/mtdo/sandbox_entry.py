@@ -21,7 +21,11 @@ durable, since the old design only persisted bugs when the *instance* got saved)
 `mtdo-sandbox bugs sync [instance-name]` files any not-yet-synced bugs to the private
 mukund1312/mtdo-bugs repo (see bug_sync.py) so they're visible/trackable from any machine
 with `gh auth login` done; `mtdo-sandbox bugs board` prints the found/fixed scoreboard
-across everything synced there.
+across everything synced there. `mtdo-sandbox bugs distribute` assigns every unassigned
+open bug to whoever currently has fewer (a `assigned:<login>` label, separate from who
+actually fixes it); `mtdo-sandbox bugs assignments` prints the current split. Finishing
+your assigned queue first automatically pulls a few of the other person's over
+(bug_sync.rebalance, called from mark_fixed_and_close) so nobody runs dry.
 
 `mtdo-sandbox working-on "..."` posts a one-line status for whoever's `gh` identity is
 running it (see status_sync.py) -- named "working-on", not "status", because `mtdo status`
@@ -166,6 +170,28 @@ def _bugs_command(args):
         instance = args[1] if len(args) > 1 else None
         filed = bug_sync.sync_pending(instance=instance)
         print(f"Filed {filed} new issue(s) to {bug_sync.TRACKER_REPO}." if filed else "Nothing new to sync.")
+        return
+
+    if args and args[0] == "distribute":
+        from . import bug_sync
+        result = bug_sync.distribute_pending()
+        total = sum(result.values())
+        if not total:
+            print("Nothing unassigned to distribute.")
+            return
+        print(f"Distributed {total} bug(s):")
+        for person, count in result.items():
+            if count:
+                print(f"  {bug_sync.DISPLAY_NAMES.get(person, person)}: +{count}")
+        return
+
+    if args and args[0] == "assignments":
+        from . import bug_sync
+        summary = bug_sync.assignment_summary()
+        for person in bug_sync.PEOPLE:
+            s = summary[person]
+            name = bug_sync.DISPLAY_NAMES.get(person, person)
+            print(f"{name}: {s['assigned_open']} open, {s['assigned_fixed']} fixed")
         return
 
     # bugs.json is one durable, sandbox-wide file now -- not tied to any instance's
