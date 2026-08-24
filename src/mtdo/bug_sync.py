@@ -68,6 +68,17 @@ def sync_pending(instance=None):
     return filed
 
 
+def sync_and_triage(instance=None):
+    """`sync_pending()` + `auto_triage_pending()` in one call -- the single entry point for
+    anything that wants the full "file it, then triage it" step without going through the
+    CLI. Used by `mtdo-sandbox bugs sync` and by the in-app background sync fired right
+    after pressing 'B' to log a bug (see app.py's action_report_bug, 2026-08-24) -- neither
+    needs to know the two steps are separate calls. Returns (filed_count, triage_changes)."""
+    filed = sync_pending(instance=instance)
+    triaged = auto_triage_pending()
+    return filed, triaged
+
+
 def whoami():
     return _run(["gh", "api", "user", "--jq", ".login"])
 

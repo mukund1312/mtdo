@@ -178,11 +178,10 @@ def _bugs_command(args):
     if args and args[0] == "sync":
         from . import bug_sync
         instance = args[1] if len(args) > 1 else None
-        filed = bug_sync.sync_pending(instance=instance)
-        print(f"Filed {filed} new issue(s) to {bug_sync.TRACKER_REPO}." if filed else "Nothing new to sync.")
         # Every freshly-filed (or previously untriaged) bug gets a priority + an assignee
-        # automatically -- no separate ask needed, see bug_sync.auto_triage_pending().
-        triaged = bug_sync.auto_triage_pending()
+        # automatically -- no separate ask needed, see bug_sync.sync_and_triage().
+        filed, triaged = bug_sync.sync_and_triage(instance=instance)
+        print(f"Filed {filed} new issue(s) to {bug_sync.TRACKER_REPO}." if filed else "Nothing new to sync.")
         if triaged:
             print(f"Auto-triaged {len(triaged)} bug(s):")
             for number, changed in sorted(triaged.items()):
@@ -241,13 +240,16 @@ def _working_on_command(args):
 
 
 def _dashboard_command():
-    from . import bug_sync, dashboard
-    # Safety net: covers a bug that got created some other way, or `dashboard` run without
-    # `bugs sync` first. No-ops instantly if everything's already triaged (see
-    # bug_sync.auto_triage_pending()'s own docstring on why re-running is always safe).
-    bug_sync.auto_triage_pending()
-    path = dashboard.generate()
+    from . import dashboard
+    # dashboard.generate() runs the auto-triage safety net itself now, so every caller
+    # (this CLI command, and the in-app background job) gets it for free.
+    path, triaged = dashboard.generate()
     print(f"Dashboard written to {path}")
+    if triaged:
+        print(f"Auto-triaged {len(triaged)} bug(s) as a safety net:")
+        for number, changed in sorted(triaged.items()):
+            bits = [k for k in ("priority", "assigned_to") if changed.get(k)]
+            print(f"  #{number}: {' + '.join(bits)}")
     print("Ask this Claude Code session to publish/update it as a shared Artifact.")
 
 

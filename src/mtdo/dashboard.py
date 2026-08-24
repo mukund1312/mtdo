@@ -977,11 +977,21 @@ def render_html(issues, statuses, overrides=None):
 
 
 def generate(overrides=None):
+    """Writes the dashboard HTML and returns (path, triaged) -- `triaged` is whatever
+    bug_sync.auto_triage_pending() did as this function's own safety net (covers a bug
+    filed some other way, or generate() called without a sync step first). Genuinely not
+    always empty even right after a sync_and_triage() call: GitHub's issue-list endpoint
+    has occasionally shown a beat of lag behind a just-created issue in practice, so this
+    second attempt (by which point more time and GitHub calls have elapsed) is often what
+    actually catches a brand-new bug -- confirmed live, not just theoretical (2026-08-24).
+    Callers that want an accurate "N bugs triaged" message should use this return value,
+    not just whatever sync_and_triage() reported on its own."""
     _fetch_remotes_quiet()
+    triaged = bug_sync.auto_triage_pending()
     issues = bug_sync.list_all()
     statuses = status_sync.get_all_status()
     content = render_html(issues, statuses, overrides=overrides)
     os.makedirs(os.path.dirname(DASHBOARD_PATH), exist_ok=True)
     with open(DASHBOARD_PATH, "w") as f:
         f.write(content)
-    return DASHBOARD_PATH
+    return DASHBOARD_PATH, triaged

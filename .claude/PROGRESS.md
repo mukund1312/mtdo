@@ -9,6 +9,53 @@ Add each session's PROGRESS.md entry to the same branch as the code it describes
 
 ---
 
+## 2026-08-24 -- Shift+B now fires sync/triage/dashboard entirely in the background
+
+Follow-up to the auto-triage work below: user wanted the whole 3-command flow (`bugs
+sync` / `gh issue list` / `dashboard`) to happen automatically the moment a dev presses
+Shift+B and saves a bug, not run by hand afterward.
+
+**Did:**
+- `bug_sync.sync_and_triage(instance=None)`: `sync_pending()` + `auto_triage_pending()` in
+  one call -- the shared entry point both the CLI and the in-app trigger use now.
+- `dashboard.generate()` now returns `(path, triaged)` instead of just `path` -- its
+  internal safety-net triage pass turned out to matter in practice, not just in theory
+  (see below), so callers that want an accurate "N triaged" count need that second
+  value. Updated its two callers (`sandbox_entry._dashboard_command`, app.py's new
+  background worker) for the new signature.
+- `app.py`: `action_report_bug`'s save callback now calls a new
+  `TodoApp._sync_bug_in_background()` right after `bug_log.add_bug()` -- spawns a daemon
+  thread (same pattern already used by `action_toggle_claude`'s backend loading) that
+  runs `sync_and_triage()` then `dashboard.generate()`, then reports the result via a
+  toast using `self.call_from_thread` (required for any Textual UI call made from a
+  background thread). Never blocks the UI (these are all network/`gh` calls) and never
+  risks the bug report itself -- `bug_log.add_bug()` already wrote it durably to disk
+  before this thread is even started, so a failure here just means the tracker/dashboard
+  are stale until the next successful run, not that anything is lost. Gated behind
+  `SANDBOX_INSTANCE_MODE` same as the rest of bug reporting (the 'B' binding only exists
+  there), so this can't touch the real `mtdo` app.
+
+**Verified live (tmux, real tracker, cleaned up after):** launched `mtdo-sandbox`, pressed
+Shift+B, saved a test bug -- confirmed via a companion script that the bug was filed to
+GitHub, triaged (priority + assignee), and the dashboard file regenerated, ALL within
+seconds and with zero manual commands. Closed the 2 test GitHub issues (#45, #46) and
+marked the matching local bug_log entries fixed afterward; real `~/.mtdo/goals.json`/
+`state.json` confirmed untouched throughout (this whole feature only ever touches
+`~/.mtdo-sandbox/*` and the private tracker repo).
+
+**Real bug caught by this live test, not by inspection:** the first live run showed the
+toast "Synced 1 bug(s), triaged 0" even though the bug WAS correctly triaged moments
+later -- `sync_and_triage()`'s own `auto_triage_pending()` call sometimes runs before
+GitHub's issue-list endpoint has caught up with an issue `gh issue create` JUST returned
+(a real, observed propagation lag, not theoretical), so it can legitimately see zero
+work to do on the very newest issue. `dashboard.generate()`'s existing safety-net triage
+pass (running slightly later, after more `gh` calls have elapsed) is what actually caught
+it. Fixed by having `generate()` surface what it triaged and merging both results before
+building the toast message -- verified with a second live test that the toast now
+correctly reads "Synced 1 bug(s), triaged 1."
+
+---
+
 ## 2026-08-24 -- bug_sync: fully automatic triage, no Claude Code session needed
 
 User's explicit ask: pressing Shift+B to log a bug, then running the existing 3-command

@@ -2609,7 +2609,44 @@ class TodoApp(App):
             if text and text.strip():
                 bug_id = bug_log.add_bug(text.strip())
                 self.toast(f"Bug #{bug_id} logged -- keep testing", style="bold yellow")
+                self._sync_bug_in_background()
         self.push_screen(BugReportScreen(), on_result)
+
+    def _sync_bug_in_background(self):
+        """Fires GitHub sync -> auto-triage -> dashboard regeneration on a background
+        thread right after a bug is logged, so neither dev has to run the 3-command flow
+        (`bugs sync` / `gh issue list` / `dashboard`) by hand (2026-08-24, explicit
+        request). Never blocks the UI -- `gh` calls are network I/O -- and never puts the
+        bug itself at risk: bug_log.add_bug() above already wrote it to disk durably
+        before this is even called, so a failure here (offline, `gh` not authenticated)
+        just means sync/triage/the dashboard file are stale until the next successful
+        run, not that the bug report is lost.
+
+        Does NOT publish the dashboard as a shared Artifact -- nothing running locally
+        can do that; only a Claude Code session under the account that owns the artifact
+        link can (see dashboard.py's module docstring). That step still needs asking."""
+        def worker():
+            try:
+                from . import bug_sync, dashboard
+                filed, triaged = bug_sync.sync_and_triage()
+                # dashboard.generate()'s own safety-net triage pass often catches a
+                # just-filed bug the line above missed (GitHub's issue-list endpoint has
+                # shown a beat of lag right after a create, in practice) -- merge both so
+                # the toast below reports what actually ended up triaged, not just the
+                # first attempt's count.
+                _, triaged_after = dashboard.generate()
+                triaged = {**triaged, **triaged_after}
+                if filed or triaged:
+                    msg = f"Synced {filed} bug(s), triaged {len(triaged)} -- dashboard updated"
+                else:
+                    msg = "Dashboard refreshed"
+                self.call_from_thread(self.toast, msg, style="dim")
+            except Exception:
+                app_log.exception("background bug sync/triage/dashboard failed")
+                self.call_from_thread(
+                    self.toast, "Background bug sync failed -- see log", style="bold red"
+                )
+        threading.Thread(target=worker, daemon=True).start()
 
     def action_quit(self):
         if SANDBOX_INSTANCE_MODE:
