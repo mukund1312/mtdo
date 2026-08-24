@@ -23,8 +23,11 @@ Also NOT synced back to GitHub: reassigning on the dashboard does not change the
 until someone reconciles them by hand (edit the GitHub label to match, or vice versa).
 
 Related git activity per bug is read straight from this checkout's git history (branch names
-and commit messages containing "#<issue-number>" as a whole token) -- a naming convention,
-not an enforced link: name a branch or commit that way and it shows up automatically.
+and commit messages containing "gh<issue-number>" as a whole token, e.g. "gh42") -- a naming
+convention, not an enforced link: name a branch or commit that way and it shows up
+automatically. NOT a bare "#<number>" -- that collided in practice with GitHub's own PR
+numbers and an old pre-tracker "(bug #N)" convention in this repo's history (see
+_bug_git_activity's docstring, caught 2026-08-24).
 
 Deliberately does NOT attempt Linear's Cycles/Sprints, Projects, Roadmap, or Inbox concepts
 (2026-08-24 request) -- none of those map onto anything that actually exists in this tracker
@@ -125,19 +128,30 @@ def _fetch_remotes_quiet():
 
 def _bug_git_activity(issue_number):
     """Branches and commits that reference this bug, by convention: a branch name or
-    commit message containing "#<issue_number>" (or the bare number as a standalone
-    token in a branch name, since `/` in branch names already delimits it) -- e.g. branch
-    `fix/42-flicker`, commit `Fixes #42`. Nothing here is an enforced link, just a naming
-    convention devs opt into; best-effort and never fatal if git isn't available."""
-    number_pat = re.compile(rf"(?<!\d){re.escape(str(issue_number))}(?!\d)")
+    commit message containing "gh<issue_number>" as a whole token (case-insensitive) --
+    e.g. branch `fix/gh42-flicker`, commit `Fixes gh42`.
+
+    Deliberately NOT a bare "#<number>" (the original 2026-08-24 design) -- that produced
+    real, actively wrong matches once the tracker grew past 10: GitHub's own
+    auto-generated "Merge pull request #N" messages (this repo's own PR numbers, a
+    completely different numbering space from the mtdo-bugs tracker's issue numbers) and
+    an old pre-tracker "(bug #N)" convention used in this repo's commit history before
+    mtdo-bugs existed both collided with real tracker issue numbers -- e.g. issue #10
+    ("AI-config walkthrough steps") was showing "Merge pull request #10" and an unrelated
+    "(bug #10)" commit about fresh_config.yaml on its dashboard page. `gh<number>` doesn't
+    collide with either. Merge commits are excluded outright (`--no-merges`) as a second
+    line of defense. Nothing here is an enforced link, just a naming convention devs opt
+    into; best-effort and never fatal if git isn't available."""
+    token = f"gh{issue_number}"
+    number_pat = re.compile(rf"(?<![a-zA-Z0-9]){re.escape(token)}(?![a-zA-Z0-9])", re.IGNORECASE)
     try:
         branch_out = subprocess.run(
             ["git", "-C", _REPO_ROOT, "branch", "-a", "--format=%(refname:short)"],
             capture_output=True, text=True, timeout=10,
         )
         commit_out = subprocess.run(
-            ["git", "-C", _REPO_ROOT, "log", "--all",
-             "--pretty=%h|%an|%ad|%s", "--date=short", "--grep", f"#{issue_number}"],
+            ["git", "-C", _REPO_ROOT, "log", "--all", "--no-merges",
+             "--pretty=%h|%an|%ad|%s", "--date=short"],
             capture_output=True, text=True, timeout=10,
         )
     except (OSError, subprocess.SubprocessError):
@@ -159,7 +173,8 @@ def _bug_git_activity(issue_number):
             parts = line.split("|", 3)
             if len(parts) == 4:
                 sha, author, date, subject = parts
-                commits.append({"sha": sha, "author": author, "date": date, "subject": subject})
+                if number_pat.search(subject):
+                    commits.append({"sha": sha, "author": author, "date": date, "subject": subject})
     return {"branches": branches, "commits": commits}
 
 
@@ -209,7 +224,7 @@ def _render_issue_detail(issue, assigned_to, description, notes, priority=None):
     else:
         git_section = (
             f'<p class="dim">None yet -- name a branch or commit message with '
-            f'"#{number}" to link it here.</p>'
+            f'"gh{number}" to link it here.</p>'
         )
 
     comment_items = "".join(
