@@ -9,6 +9,76 @@ Add each session's PROGRESS.md entry to the same branch as the code it describes
 
 ---
 
+## 2026-08-24 (bug gh47, GH mukund1312/mtdo-bugs#47) -- guided setup reworked: no in-app questions, no AI called by mtdo
+
+User's bug: "major rework the Final Flow" -- drop the name+persona questions after
+Profiles Section entirely, and replace Guided Setup's persona-driven in-app AI Q&A
+("mtdo's built-in AI" vs "an AI I already use", then a bespoke question list) with:
+export the template, hand it to any AI the user already uses, import the goals.json it
+gives back. No questions asked anywhere in this flow.
+
+This directly supersedes bugs #6/#13 (see [[bugs_6_13_ai_automation_on_hold]], on hold
+since 2026-08-23) rather than resuming them -- and turns out to sidestep their two
+hardest open questions entirely: #6/#13 wanted mtdo to call an AI itself automatically
+(untested non-interactive long-form AI call; no API access at all for "an AI I already
+use" backends), which is why they were paused. This design needs neither -- it's a
+manual copy-out/copy-in flow, and goals_template.json already turned out to be fully
+self-documenting (its own `_instructions`/`_read_this_first` keys are written to be
+pasted straight into an AI), so mtdo's job shrank to export/prompt/import, not "act as
+an AI orchestrator."
+
+**Checked before making irreversible-feeling calls:** whether persona was used anywhere
+outside the wizard (grepped -- no, config.py/plan_wizard.py/app.py only, safe to drop
+entirely) and whether removing the name-prompt would break the new time-of-day greeting
+Janhwi just added in PR #14 (checked ClockHeader.update_clock -- it already prefers the
+active profile's name over get_user_name(), only falling back to the latter, so nothing
+broke; removing the name question is actually a net improvement, not a regression).
+
+**Did:**
+- `config.py`: `has_configured_plan()`/`mark_plan_configured()` -- new gate for
+  auto-launching the wizard on startup, replacing `get_user_name() is None` (which no
+  longer applies now that nothing asks for a name).
+- `plan_wizard.py`: rewritten. Dropped `PERSONAS`/`QUESTIONS`/`questions_for`/
+  `build_prompt` (all now-dead persona/Q&A machinery). Added `GUIDED_SETUP_PROMPT` (one
+  fixed, generic prompt -- no persona, no per-user Q&A baked in; any personalization
+  happens in the user's own conversation with their AI, which the template's rule_8
+  already anticipates) and `export_template()` (copies goals_template.json to
+  ~/Downloads, never overwrites an existing copy there). Kept `save_and_copy()` as-is,
+  it was already generic.
+- `app.py`: `_begin_setup_flow()` collapsed from a 5-step chain (name -> persona ->
+  populate-method -> AI-choice -> persona Q&A -> finish) down to one step
+  (`_pick_populate_method`, no persona param). Deleted `PersonaPickScreen`,
+  `_wizard_ask_name`, `_pick_persona_for_setup`, `_pick_ai_choice`,
+  `_ask_plan_wizard_questions`, `_finish_plan_wizard`, and the now-unused
+  `_wizard_stack`/`_wizard_go_back` back-navigation machinery (kept `WIZARD_BACK` and
+  `show_back` on the reusable `TextPromptScreen`/`ChoicePickScreen` themselves -- generic,
+  not dead). Added `GuidedSetupScreen` (three actions -- export, copy prompt, import --
+  stays open across all three instead of dismissing after one) and
+  `GoalsFilePickScreen` (a `DirectoryTree`-based file browser, arrow keys + Enter, no
+  path to type -- a terminal app has no native OS file-picker, this is the closest real
+  equivalent; starts in ~/Downloads). Import calls the existing
+  `appconfig.import_goals()`, unchanged -- the same function the CLI's `mtdo import`
+  already used.
+
+**Verified live, not just written (tmux, real ~/Downloads):** fresh instance, skipped
+walkthrough, confirmed the populate-method screen shows with NO name/persona prompt
+first. Picked Guided setup -- confirmed the intro text and three actions render.
+Ran "Export the template" -- confirmed `goals_template.json` genuinely landed in
+`~/Downloads` (`ls` after, not just the toast). Ran "Copy the AI prompt" -- confirmed
+via `pbpaste` that the real prompt text was on the clipboard. Opened "Import" -- confirmed
+the file browser lists real `~/Downloads` contents and navigates with arrow keys.
+Directly tested `appconfig.import_goals()` against the running session's actual scratch
+`MTDO_HOME` with a hand-built test goals.json -- confirmed the category was added, then
+confirmed the RUNNING app live-reloaded it within ~2 seconds ("goals.json changed --
+reloaded" toast, new field visible in the This Week panel at 0/1) -- the full pipeline,
+not just its pieces. Cleaned up test files from `~/Downloads` afterward. Real
+`~/.mtdo/goals.json`/`state.json` confirmed untouched throughout (this only ever ran
+against the sandbox's own scratch dir).
+
+Marked local bug #39 fixed and closed GH issue #47 via `bug_sync.mark_fixed_and_close`.
+
+---
+
 ## 2026-08-24 -- dashboard: fixed "Related git activity" showing actively wrong commits
 
 User spotted it live: bug #10's ("AI-config walkthrough steps") detail page showed
