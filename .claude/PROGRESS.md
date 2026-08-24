@@ -9,6 +9,42 @@ Add each session's PROGRESS.md entry to the same branch as the code it describes
 
 ---
 
+## 2026-08-24 -- dashboard: fixed "Related git activity" showing actively wrong commits
+
+User spotted it live: bug #10's ("AI-config walkthrough steps") detail page showed
+"Related git activity" with 3 commits that had nothing to do with that bug --
+`e54ca2b Merge pull request #10 from ...` and `08ee560 Merge pull request #8 from ...`
+(this repo's own PR merge numbers) and `c800e53 Make fresh_config.yaml genuinely empty
+(bug #10)` (an OLD, informal "(bug #N)" numbering convention used in commit messages
+before the mtdo-bugs GitHub tracker existed -- an entirely different, unrelated bug that
+happened to also be called "#10" back then).
+
+**Root cause:** `_bug_git_activity()`'s original match was a bare `#<issue_number>` --
+which was never going to stay unique. Two independent numbering spaces both produce
+`#<small-number>` constantly: GitHub's own auto-generated "Merge pull request #N"
+messages (PR numbers in THIS repo, unrelated to issue numbers in the separate mtdo-bugs
+repo), and this project's own pre-tracker commit-message convention. Once the tracker's
+issue numbers grew past ~10, collisions with both became inevitable and, worse, silent --
+nothing would have caught this without someone actually reading the section and
+recognizing the commits didn't match.
+
+**Fix:** convention changed to `gh<issue_number>` (e.g. `gh42`) instead of a bare `#N` --
+verified via unit test that this does NOT match either false-positive pattern
+(`Merge pull request #10 from ...`, `(bug #10)`) while correctly matching the intended
+new form (`Fixes gh10`, `gh10: ...`). Also added `--no-merges` to the git log call as a
+second line of defense, and switched from `git log --grep` (git's own regex engine) to
+fetching all non-merge commits and filtering with the same Python regex used for
+branches, so there's exactly one source of truth for the match logic instead of two
+regex flavors that could drift apart. Updated the "no activity yet" fallback text and
+both docstrings to describe the new convention.
+
+Confirmed live: `_bug_git_activity()` now returns empty for every real issue number
+(correct -- nothing has used the new convention yet, and empty is the honest answer,
+not a guess). Regenerated, checked the live artifact for uncommitted comments first
+(none), republished. Real `~/.mtdo/goals.json`/`state.json` untouched throughout.
+
+---
+
 ## 2026-08-24 -- dashboard: sortable Priority/Age columns (click to sort, click again to reverse)
 
 **Caught a real, pre-existing correctness issue while implementing this, not by
