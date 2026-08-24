@@ -1,4 +1,5 @@
 """Per-user config: where it lives, how it's loaded, and the first-run setup flow."""
+import copy
 import json
 import os
 import shutil
@@ -113,6 +114,14 @@ _EMPTY_CONFIG = {
 }
 
 
+def empty_config():
+    """A genuinely empty config dict -- always a fresh deepcopy, never a shared
+    reference to _EMPTY_CONFIG's own nested list/dict objects (see goals_to_config's
+    comment on why that distinction matters). Used both there and by app.py's
+    reload_from_goals() when there's no goals.json at all for the active profile."""
+    return copy.deepcopy(_EMPTY_CONFIG)
+
+
 def config_exists():
     return os.path.exists(CONFIG_PATH)
 
@@ -215,7 +224,16 @@ def goals_to_config(goals, existing_cfg=None):
     When existing_cfg is None, builds from scratch.
     """
     if existing_cfg is None:
-        cfg = dict(_EMPTY_CONFIG)
+        # empty_config() deepcopies -- a bare dict(_EMPTY_CONFIG) shares _EMPTY_CONFIG's
+        # own "categories"/"category_order"/"streak_categories" list/dict objects by
+        # reference (a shallow copy only protects the top-level dict), so the in-place
+        # mutations a few lines below (cfg["categories"][name] = ..., .append()) used to
+        # permanently pollute the module-level "constant" itself. Every later call with
+        # existing_cfg=None inherited every category any earlier call had ever added, for
+        # the lifetime of the process -- e.g. switching to profile B never actually
+        # cleared out profile A's categories, they just kept accumulating (caught live
+        # 2026-08-25 testing profile isolation, gh19/gh48).
+        cfg = empty_config()
     else:
         cfg = dict(existing_cfg)
 
