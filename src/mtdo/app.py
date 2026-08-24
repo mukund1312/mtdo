@@ -79,27 +79,42 @@ class VimListView(ListView):
     BINDINGS = [("j", "cursor_down", "Down"), ("k", "cursor_up", "Up")]
 
 
+def _greeting_for_hour(hour):
+    if hour < 12:
+        return "Good morning"
+    elif hour < 18:
+        return "Good afternoon"
+    return "Good evening"
+
+
 class ProfileFooter(Static):
-    CSS = """
+    # NB: must be DEFAULT_CSS, not CSS -- Textual only recognizes CSS = "..." on
+    # Screen/App subclasses; on a plain Widget it's silently ignored (Textual logs
+    # "'ProfileFooter.CSS' will be ignored" via preflight_checks(), easy to miss).
+    # This entire block -- dock, layer, border, background -- was a no-op before.
+    # No border: a bordered box needs 3 rows (top/content/bottom) to render, but
+    # this shares a single row with Footer -- height:1 with a border clips the
+    # widget's own content and paints only a border sliver over Footer's text.
+    DEFAULT_CSS = """
     ProfileFooter {
         dock: bottom;
         width: auto;
         height: 1;
         min-width: 12;
-        max-width: 30;
-        margin: 0 1 0 auto;
+        max-width: 40;
+        margin: 0 1;
         padding: 0 1;
         content-align: left middle;
         background: $panel;
         color: $text-muted;
-        border: round $border;
     }
     ProfileFooter:hover {
         background: $boost;
         color: $text;
     }
     ProfileFooter:focus {
-        border: round $primary;
+        background: $primary;
+        color: $text;
     }
     """
 
@@ -107,11 +122,35 @@ class ProfileFooter(Static):
         super().__init__("")
         self.refresh_label()
 
+    def on_mount(self):
+        self._reposition()
+
+    def on_resize(self, event):
+        self._reposition()
+
+    def _reposition(self):
+        # dock:bottom always anchors a width:auto widget at x=0 (Textual's
+        # _arrange_dock_widgets has no "dock to a corner" concept) -- wrapping it
+        # in a container with align:right instead broke Footer's own rendering
+        # entirely (its child FooterKey widgets stopped composing), so this
+        # shifts it right via a plain visual offset, which doesn't touch layout
+        # or dock-space reservation for any sibling.
+        if not self.is_mounted or self.app is None:
+            return
+        self.styles.offset = (self.app.size.width - self.outer_size.width, 0)
+
     def refresh_label(self):
         active = pf.get_active_slug()
         profile = pf.get_profile(active) if active else None
-        name = profile["name"] if profile else "No profile"
-        self.update(f"👤 {name} ▾")
+        if profile:
+            greeting = _greeting_for_hour(datetime.datetime.now().hour)
+            self.update(f"👤 {greeting}, {profile['name']} ▾")
+        else:
+            self.update("👤 No profile ▾")
+        # own width can change with the name/greeting length -- reposition once
+        # the new content has actually been measured, not against the stale size.
+        if self.is_mounted:
+            self.call_after_refresh(self._reposition)
 
     def on_click(self):
         self.app.action_open_profile_menu()
@@ -2015,13 +2054,7 @@ class ClockHeader(Static):
         if not name:
             name = appconfig.get_user_name()
         if name:
-            if now.hour < 12:
-                greeting = "Good morning"
-            elif now.hour < 18:
-                greeting = "Good afternoon"
-            else:
-                greeting = "Good evening"
-            title = f"Hello, {name} · {greeting}"
+            title = f"Hello, {name} · {_greeting_for_hour(now.hour)}"
         else:
             title = tc.APP_NAME
         display_time = now.strftime("%I:%M:%S %p")
@@ -2320,6 +2353,7 @@ class TodoApp(App):
 
     def on_second_tick(self):
         self.query_one(ClockHeader).update_clock()
+        self.profile_footer.refresh_label()
         self.music_panel.refresh_music_info()
         self.active_task_panel.update_content(self.state, self.today)
         self.coach_panel.update_content(self.state, self.today, self.focus_mode)
