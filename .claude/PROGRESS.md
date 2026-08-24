@@ -9,6 +9,28 @@ Add each session's PROGRESS.md entry to the same branch as the code it describes
 
 ---
 
+## 2026-08-24 -- triage bugs #43/#44 (2 new bugs found after the dashboard branch merged)
+
+Two new bugs came in after PR #9 (dashboard) and PR #11 (Janhwi's profile-menu-crash fix,
+`feature/jr_uat_test`) both merged to `main`: #43 "adding a field to a to-do errors, no
+../goals.json" and #44 "switching profiles doesn't ask for a password." Both High priority
+-- #43 breaks a core feature outright, #44 is a real auth/access gap on profile switching.
+
+Checked what PR #11 actually touched before assigning (`git show --stat`): 413 lines in
+app.py + 20 in profiles.py, authored by Janhwi. That's an actual ownership signal, unlike
+the earlier full-board triage where no such signal existed yet.
+- **#43 -> Janhwi:** the `../goals.json` path error is plausibly a regression from her
+  just-merged app.py changes -- she has the freshest context to debug it.
+- **#44 -> Mukund:** password/auth logic is his (profiles.py's encryption model,
+  same reasoning as bug #40's assignment) even though PR #11 touched profiles.py too --
+  the auth *model* itself predates that PR.
+
+Applied via `bug_sync.apply_triage()`, regenerated, republished (no live edits existed on
+the page since the last publish to lose -- checked via WebFetch first, same as every
+republish now). Split stayed close to even: Mukund 13, Janhwi 14 of 27 open.
+
+---
+
 ## 2026-08-24 (PR https://github.com/mukund1312/mtdo/pull/9) -- bug_sync: priority labels + full triage pass on all 25 open bugs
 
 User asked to (1) give Janhwi read/write access to the dashboard, (2) add priority to
