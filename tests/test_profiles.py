@@ -47,7 +47,7 @@ async def test_profile_menu_opens_without_crashing_when_profile_exists(unique_sl
     a ':' separator (e.g. "profile-select:janhvi"), which isn't a legal Textual
     widget id -- ProfileMenuScreen crashed on_mount as soon as any profile
     existed, before a click was even possible."""
-    slug = pf.create_profile(unique_slug)
+    slug, _ = pf.create_profile(unique_slug)
     pf.set_active(slug)
 
     app = TodoApp()
@@ -102,7 +102,7 @@ async def test_creating_profile_updates_header_immediately(unique_slug):
 async def test_manage_profiles_rename_flow_works(unique_slug):
     """Same modal-chaining bug as above, reached via a different screen
     (ProfileManageScreen's Rename button)."""
-    slug = pf.create_profile(unique_slug)
+    slug, _ = pf.create_profile(unique_slug)
     pf.set_active(slug)
     new_name = f"{unique_slug}_renamed"
 
@@ -145,7 +145,7 @@ async def test_add_field_bootstraps_missing_goals_json(unique_slug):
     one, so that was a dead end every time."""
     from mtdo import config as appconfig
 
-    slug = pf.create_profile(unique_slug)
+    slug, _ = pf.create_profile(unique_slug)
     pf.set_active(slug)
     assert not os.path.exists(appconfig.GOALS_PATH)
 

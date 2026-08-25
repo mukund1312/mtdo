@@ -7,18 +7,24 @@ profile, not config.yaml -- cli.cmd_run already prefers goals.json when present
 (Option A) and derives everything else from it in memory via
 config.goals_to_config(), so config.yaml would just be a redundant, driftable copy.
 
-Optional real encryption per profile: if a profile is created with a password, its
-goals.json and state.json are encrypted at rest (Fernet, keyed by a PBKDF2-HMAC-SHA256
-key derived from the password + a per-profile random salt) -- someone with direct
-file access still can't read it without the password. The password itself is never
-stored; only the salt (not secret) and a small "verifier" token (an encrypted known
-constant, used to confirm a password is right without needing to decrypt the real
-data first) live in the index.
+Optional real encryption per profile, via envelope encryption: creating a
+password-protected profile generates a random per-profile data key (the thing
+goals.json/state.json are actually Fernet-encrypted with), then wraps -- encrypts --
+that data key twice: once under a key derived (PBKDF2-HMAC-SHA256, per-profile salt)
+from the password, and once under a key derived the same way from a randomly
+generated recovery code, shown to the user exactly once at creation time and never
+stored anywhere. Either the password or the recovery code independently unwraps the
+same data key, so forgetting the password doesn't have to mean losing the data (gh40)
+-- as long as the recovery code was saved somewhere -- while mtdo itself still never
+stores anything that alone can decrypt a profile without one of those two secrets
+(no server-side escrow, same as before). Losing *both* the password and the recovery
+code is still unrecoverable by design -- that's the honest remaining tradeoff of real
+local encryption. A profile created without a password has no such risk (and no such
+protection): its files are plain JSON.
 
-There is deliberately no recovery mechanism. Forgetting the password means that
-profile's data is permanently unreadable -- this is the honest tradeoff of real local
-encryption with no server-side escrow, not an oversight. A profile created without a
-password has no such risk (and no such protection): its files are plain JSON.
+The data key never changes for a profile's lifetime, so recover_profile() (reset
+password via recovery code) and a hypothetical future change-password just rewrap it
+under a new password-derived key -- goals.json/state.json are never re-encrypted.
 
 This module is the data/crypto layer only -- it doesn't know about the running app's
 in-memory state or which files it currently has open. See app.py's profile-switch
@@ -30,6 +36,7 @@ import base64
 import json
 import os
 import re
+import secrets
 import shutil
 
 from . import config as appconfig
@@ -39,7 +46,6 @@ PROFILES_DIR = os.path.join(APP_DIR, "profiles")
 INDEX_PATH = os.path.join(PROFILES_DIR, "index.json")
 
 _KDF_ITERATIONS = 480_000  # OWASP's 2023 minimum recommendation for PBKDF2-HMAC-SHA256
-_VERIFIER_PLAINTEXT = b"mtdo-profile-ok"
 
 
 class ProfileError(Exception):
@@ -57,6 +63,25 @@ class ProfileNotFound(ProfileError):
 
 class WrongPassword(ProfileError):
     pass
+
+
+class InvalidRecoveryCode(ProfileError):
+    pass
+
+
+def _generate_recovery_code():
+    """~120 bits of entropy, base32 (no 0/1/8/9 ambiguity), grouped for readability.
+    Shown to the caller exactly once at creation time -- mtdo never stores the code
+    itself, only a wrapped data key that it can unwrap (see module docstring)."""
+    raw = secrets.token_bytes(15)
+    b32 = base64.b32encode(raw).decode("ascii").rstrip("=")
+    return "-".join(b32[i:i + 4] for i in range(0, len(b32), 4))
+
+
+def _normalize_recovery_code(code):
+    """Tolerate however the user reproduces it -- copy-pasted with dashes, retyped
+    lowercase, with stray whitespace, etc."""
+    return re.sub(r"[^A-Z0-9]", "", code.strip().upper())
 
 
 def _require_cryptography():
@@ -146,10 +171,13 @@ def _derive_key(password, salt):
 def create_profile(name, password=None):
     """Registers a new, empty profile (no goals.json yet -- see write_goals/
     import_goals_file/generate below for how it actually gets filled in). Returns
-    the profile's slug. Raises ProfileExists if the derived slug collides -- doesn't
-    happen in practice since the slug auto-disambiguates, but two names that slugify
-    identically (e.g. "DSA Track" and "dsa track") would still collide on purpose,
-    since they'd be indistinguishable in the picker otherwise."""
+    (slug, recovery_code) -- recovery_code is None unless a password was given, in
+    which case it's shown to the caller exactly once here and never stored; the
+    caller is responsible for actually displaying it. Raises ProfileExists if the
+    derived slug collides -- doesn't happen in practice since the slug
+    auto-disambiguates, but two names that slugify identically (e.g. "DSA Track" and
+    "dsa track") would still collide on purpose, since they'd be indistinguishable in
+    the picker otherwise."""
     name = name.strip()
     if not name:
         raise ProfileError("a profile needs a name.")
@@ -160,18 +188,26 @@ def create_profile(name, password=None):
     os.makedirs(d, exist_ok=True)
     os.makedirs(os.path.join(d, "reports"), exist_ok=True)
     entry = {"slug": slug, "name": name, "protected": bool(password), "created_at": _now_iso()}
+    recovery_code = None
     if password:
         Fernet, _InvalidToken, _hashes, _PBKDF2HMAC = _require_cryptography()
-        salt = os.urandom(16)
-        entry["salt"] = base64.b64encode(salt).decode("ascii")
-        key = _derive_key(password, salt)
-        entry["verifier"] = Fernet(key).encrypt(_VERIFIER_PLAINTEXT).decode("ascii")
+        data_key = Fernet.generate_key()
+
+        pw_salt = os.urandom(16)
+        entry["salt"] = base64.b64encode(pw_salt).decode("ascii")
+        entry["wrapped_key"] = Fernet(_derive_key(password, pw_salt)).encrypt(data_key).decode("ascii")
+
+        recovery_code = _generate_recovery_code()
+        rec_salt = os.urandom(16)
+        entry["recovery_salt"] = base64.b64encode(rec_salt).decode("ascii")
+        rec_key = _derive_key(_normalize_recovery_code(recovery_code), rec_salt)
+        entry["wrapped_key_recovery"] = Fernet(rec_key).encrypt(data_key).decode("ascii")
     index = _load_index()
     index["profiles"].append(entry)
     if index.get("active") is None:
         index["active"] = slug
     _save_index(index)
-    return slug
+    return slug, recovery_code
 
 
 def rename_profile(slug, new_name):
@@ -205,40 +241,86 @@ def delete_profile(slug):
     shutil.rmtree(profile_dir(slug), ignore_errors=True)
 
 
+def _unwrap_data_key(profile, password):
+    """The Fernet key goals.json/state.json are actually encrypted with, recovered
+    by decrypting the password-wrapped copy stored in the index. Also serves as the
+    password check: unwrapping IS confirming the password, no separate verifier
+    token needed (unlike before gh40's envelope-encryption rework)."""
+    Fernet, InvalidToken, _hashes, _PBKDF2HMAC = _require_cryptography()
+    salt = base64.b64decode(profile["salt"])
+    key = _derive_key(password, salt)
+    try:
+        return Fernet(key).decrypt(profile["wrapped_key"].encode("ascii"))
+    except InvalidToken:
+        raise WrongPassword(f'wrong password for profile "{profile["name"]}".')
+
+
 def check_password(slug, password):
     """True if `password` is right for `slug` (or the profile isn't protected at
-    all). Uses the stored verifier token, not the real data -- confirming a password
-    never requires decrypting goals.json/state.json first."""
+    all). Doesn't touch goals.json/state.json -- confirming a password only ever
+    unwraps the (much smaller) stored data key."""
     profile = get_profile(slug)
     if profile is None:
         raise ProfileNotFound(f"no such profile: {slug}")
     if not profile.get("protected"):
         return True
-    Fernet, InvalidToken, _hashes, _PBKDF2HMAC = _require_cryptography()
-    salt = base64.b64decode(profile["salt"])
-    key = _derive_key(password, salt)
     try:
-        Fernet(key).decrypt(profile["verifier"].encode("ascii"))
+        _unwrap_data_key(profile, password)
         return True
-    except InvalidToken:
+    except WrongPassword:
         return False
+
+
+def recover_profile(slug, recovery_code, new_password):
+    """Resets a protected profile's password using its recovery code, without
+    needing (or changing) the old password -- the gh40 fix. Unwraps the data key via
+    the recovery-code-derived key, then rewraps it under a fresh password-derived key
+    (new random salt); goals.json/state.json are untouched, since they're encrypted
+    with the data key itself, not directly with either wrapped copy. The recovery
+    code keeps working afterward -- it's not single-use -- since losing a password a
+    second time is just as forgivable as the first."""
+    profile = get_profile(slug)
+    if profile is None:
+        raise ProfileNotFound(f"no such profile: {slug}")
+    if not profile.get("protected"):
+        raise ProfileError(f'profile "{profile["name"]}" has no password to reset.')
+    new_password = (new_password or "").strip()
+    if not new_password:
+        raise ProfileError("a new password is required.")
+
+    Fernet, InvalidToken, _hashes, _PBKDF2HMAC = _require_cryptography()
+    rec_salt = base64.b64decode(profile["recovery_salt"])
+    rec_key = _derive_key(_normalize_recovery_code(recovery_code), rec_salt)
+    try:
+        data_key = Fernet(rec_key).decrypt(profile["wrapped_key_recovery"].encode("ascii"))
+    except InvalidToken:
+        raise InvalidRecoveryCode(f'wrong recovery code for profile "{profile["name"]}".')
+
+    pw_salt = os.urandom(16)
+    wrapped_key = Fernet(_derive_key(new_password, pw_salt)).encrypt(data_key).decode("ascii")
+
+    index = _load_index()
+    for entry in index["profiles"]:
+        if entry["slug"] == slug:
+            entry["salt"] = base64.b64encode(pw_salt).decode("ascii")
+            entry["wrapped_key"] = wrapped_key
+            break
+    _save_index(index)
 
 
 def _encrypt_for(slug, password, raw_bytes):
     profile = get_profile(slug)
     Fernet, _InvalidToken, _hashes, _PBKDF2HMAC = _require_cryptography()
-    salt = base64.b64decode(profile["salt"])
-    key = _derive_key(password, salt)
-    return Fernet(key).encrypt(raw_bytes)
+    data_key = _unwrap_data_key(profile, password)
+    return Fernet(data_key).encrypt(raw_bytes)
 
 
 def _decrypt_for(slug, password, raw_bytes):
     profile = get_profile(slug)
     Fernet, InvalidToken, _hashes, _PBKDF2HMAC = _require_cryptography()
-    salt = base64.b64decode(profile["salt"])
-    key = _derive_key(password, salt)
+    data_key = _unwrap_data_key(profile, password)
     try:
-        return Fernet(key).decrypt(raw_bytes)
+        return Fernet(data_key).decrypt(raw_bytes)
     except InvalidToken:
         raise WrongPassword(f'wrong password for profile "{profile["name"]}".')
 
