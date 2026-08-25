@@ -9,6 +9,70 @@ Add each session's PROGRESS.md entry to the same branch as the code it describes
 
 ---
 
+## 2026-08-25 -- fixed a real regression my own PR #20 caused in Janhwi's newly-merged CI tests
+
+Ran the test suite (just added in PR #19, merged just before my PR #20) as due
+diligence while working on something unrelated -- 3 of 6 tests in
+`tests/test_profiles.py` were failing on `main` as of `9415761`. Confirmed with
+`git stash` that this wasn't caused by my current uncommitted work; traced it to
+gh48's automatic Profiles step (my own PR #20, merged right after PR #19) breaking
+the tests' shared `_dismiss_first_run_prompts` helper, which only knew about the
+older name-prompt/persona-picker flow gh47 had already removed before PR #19 was
+even written.
+
+**Real underlying bug, not just a test problem:** `ProfileMenuScreen`,
+`ProfileCreateScreen`, and `ProfileManageScreen` never supported Escape-to-cancel at
+all -- every other modal in the app does (`TextPromptScreen`, `ChoicePickScreen`,
+`PersonaPickScreen`'s old form, ...). Nobody had noticed because until gh48 these
+screens were only ever reached by deliberate mouse/keyboard navigation, never
+auto-shown in a chain a test (or a user hitting Escape repeatedly) would walk
+through.
+
+**Did:** added `on_key` (Escape -> `self.dismiss(None)`) to all three, matching the
+established convention. Rewrote `_dismiss_first_run_prompts` to loop
+`while isinstance(app.screen, ModalScreen): press escape` instead of hard-coding a
+specific chain shape -- more robust to the fact this chain has already changed shape
+twice (gh47 removed two steps, gh48 added one back). Re-ran the full suite: 6/6 pass.
+
+(Installed pytest/pytest-asyncio into a throwaway venv at `/tmp/mtdo_test_venv` to
+actually run these -- they're declared as `dev` extras in `pyproject.toml` but not
+present in the normal editable install; removed the venv afterward.)
+
+---
+
+## 2026-08-25 -- dashboard: bug descriptions were silently truncated at 200 characters, unrecoverable from GitHub
+
+User: "the whole bugs should be visible now its truncated for some reason."
+
+**Root cause:** `bug_sync.sync_pending()` filed every bug's GitHub issue with
+`title = f"[{label}] {text}"[:200]` and a generic, fixed `body` ("Found while testing
+instance X...") that never included the actual bug text at all. Anything past 200
+characters was silently dropped -- not stored anywhere on GitHub, only ever
+recoverable by reading the local, untruncated `bug_log.json` by hand (which is
+exactly what I'd been doing all session whenever a bug's title looked cut off, e.g.
+gh47/gh48 earlier today -- never flagged it as the actual bug it was until now).
+
+**Did:**
+- `bug_sync.py`: extracted `_issue_body(bug)` -- puts the full bug text first, then
+  the found-at metadata, as the issue body (GitHub issue bodies have no comparable
+  length cap). Title stays short/truncated (conventional for issue titles, and still
+  usable for scanning the Issues table), but now nothing is actually *lost* -- the
+  full text lives in the body, which `dashboard.py`'s Description section already
+  reads (`issue.get("body")`), so no dashboard.py change was needed at all.
+- `backfill_full_text_bodies()`: one-time repair for every issue filed before this
+  fix -- rewrites each one's body from the matching local `bug_log.json` entry's
+  (never-truncated) `text`. Idempotent (skips already-correct bodies), so safe to
+  re-run. Ran it live against the real tracker: 42 issues backfilled on the first
+  run, 0 on a second run confirming idempotency. Verified issue #47's body directly
+  via `gh issue view` -- full text now present, previously cut off mid-sentence.
+
+Synced (1 new bug already triaged), regenerated, and republished the dashboard --
+confirmed the Description section on the generated HTML shows the full text for a
+previously-truncated bug. Real `~/.mtdo/goals.json`/`state.json` untouched
+throughout.
+
+---
+
 ## 2026-08-25 (bugs gh19 + gh48, GH mukund1312/mtdo-bugs#19/#48) -- profile switching didn't actually isolate data; no automatic profile step
 
 User asked to combine #19 ("implement profiles and profile switching") and #48 ("the

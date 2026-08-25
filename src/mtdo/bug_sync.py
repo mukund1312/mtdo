@@ -43,6 +43,24 @@ def _run(args):
     return result.stdout.strip()
 
 
+def _issue_body(bug):
+    """The full body text for a bug's GitHub issue -- the actual bug text first (GitHub
+    issue bodies support far more than the 200-char title cap, unlike the title itself),
+    then the found-at metadata. Fixed 2026-08-25: this used to be a generic "Found while
+    testing instance X" template with no bug text at all -- since the title is
+    `[:200]`-truncated (titles are conventionally short/scannable), anything past 200
+    characters was silently unrecoverable from GitHub entirely, only ever visible by
+    reading the local bug_log.json (not truncated there) by hand. See
+    backfill_full_text_bodies() for repairing already-synced issues filed before this fix."""
+    label = bug.get("instance", "unsaved session")
+    return (
+        f"{bug['text']}\n\n"
+        f"---\n"
+        f"Found while testing instance **{label}**. Logged at {bug['found_at']} "
+        f"(local bug #{bug['id']})."
+    )
+
+
 def sync_pending(instance=None):
     """Files every not-yet-synced bug (no github_issue on it) -- every bug on the machine
     by default, or just one instance's if `instance` is given (matches bug_log's own
@@ -54,18 +72,36 @@ def sync_pending(instance=None):
             continue
         label = b.get("instance", "unsaved session")
         title = f"[{label}] {b['text']}"[:200]
-        body = (
-            f"Found while testing instance **{label}**.\n\n"
-            f"Logged at {b['found_at']} (local bug #{b['id']})."
-        )
         url = _run([
             "gh", "issue", "create", "--repo", TRACKER_REPO,
-            "--title", title, "--body", body, "--label", LABEL,
+            "--title", title, "--body", _issue_body(b), "--label", LABEL,
         ])
         issue_number = int(url.rsplit("/", 1)[-1])
         bug_log.set_github_issue(b["id"], issue_number)
         filed += 1
     return filed
+
+
+def backfill_full_text_bodies():
+    """One-time repair for issues filed before the 2026-08-25 fix above: rewrites every
+    already-synced issue's body to include the full bug text (previously just a generic
+    "Found while testing instance X" template, so anything past the title's 200-char cap
+    was invisible on GitHub/the dashboard entirely). Safe to re-run -- idempotent, just
+    overwrites with the same content if a body's already correct. Returns how many issues
+    were updated (skips any local bug whose text already matches what's on GitHub, so a
+    second run does nothing)."""
+    issues_by_number = {i["number"]: i for i in list_all()}
+    updated = 0
+    for b in bug_log.list_bugs():
+        number = b.get("github_issue")
+        if not number or number not in issues_by_number:
+            continue
+        new_body = _issue_body(b)
+        if issues_by_number[number].get("body") == new_body:
+            continue
+        _run(["gh", "issue", "edit", str(number), "--repo", TRACKER_REPO, "--body", new_body])
+        updated += 1
+    return updated
 
 
 def sync_and_triage(instance=None):

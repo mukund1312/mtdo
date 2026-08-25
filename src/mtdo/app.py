@@ -323,6 +323,16 @@ class ProfileMenuScreen(ModalScreen):
             self.dismiss(None)
             self.app._switch_profile(slug)
 
+    def on_key(self, event):
+        # Missing until 2026-08-25: every other modal in the app (TextPromptScreen,
+        # ChoicePickScreen, PersonaPickScreen, ...) supports Escape-to-cancel; these
+        # three profile screens never did, only a button click -- caught because it
+        # also broke tests/test_profiles.py's shared dismiss-first-run-prompts helper
+        # once _begin_setup_flow started auto-showing one of these three right after
+        # the walkthrough (gh48).
+        if event.key == "escape":
+            self.dismiss(None)
+
 
 class ProfileCreateScreen(ModalScreen):
     CSS = """
@@ -356,6 +366,10 @@ class ProfileCreateScreen(ModalScreen):
             self.query_one("#profile-name", Input).focus()
             return
         self.dismiss((name, password or None))
+
+    def on_key(self, event):
+        if event.key == "escape":
+            self.dismiss(None)
 
 
 class ProfileManageScreen(ModalScreen):
@@ -441,6 +455,10 @@ class ProfileManageScreen(ModalScreen):
                 return
             self.dismiss(None)
             self.app._delete_profile(slug, profile["name"])
+
+    def on_key(self, event):
+        if event.key == "escape":
+            self.dismiss(None)
 
 
 class SaveInstanceScreen(ModalScreen):
