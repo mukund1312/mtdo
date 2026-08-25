@@ -9,6 +9,80 @@ Add each session's PROGRESS.md entry to the same branch as the code it describes
 
 ---
 
+## 2026-08-25 (gh49 follow-up) -- password protection now gates app launch, every switch, and rename/delete/authenticated Manage Profiles actions
+
+Re-raised after gh44/gh49 shipped: the user asked for three more specific
+gates, in their own words -- (1) switching between profiles inside a running
+app should ask for the password every time, not just once; (2) rename/delete/
+reset in Manage Profiles should require the password first, "if not anyone
+can delete my profile"; (3) launching the app should show a login-style gate
+for the active profile if it's protected, not boot straight into its data.
+Explicitly invited scoping questions ("if any doubts ask me"), so before
+writing anything: laid out the two real tradeoffs and asked.
+
+Tradeoff 1 -- how far the launch gate goes. A "lock screen" only closes "the
+app itself opens with no password"; a true fix (nothing plaintext persists
+between runs) needs wiping/re-encrypting the working copy on quit, and mtdo
+has no crash hook, so a crash would still leave plaintext behind regardless.
+User picked the lock-screen-only option, with that limitation understood.
+
+Tradeoff 2 -- whether a password is remembered for the rest of a running
+session after the first entry, or asked on literally every switch. User
+picked "always re-ask," the stronger/more literal reading of "each time."
+
+**What shipped:**
+- `ProfileUnlockScreen` (new): blocks `on_mount` before any of the rest of
+  startup runs (moved into a new `_finish_startup()`) if the active profile is
+  protected. No Escape-to-bypass, unlike every other modal in the app --
+  quitting (Ctrl+C) is the only way out besides the right password.
+- Removed `self._profile_passwords` entirely (was a `{slug: password}` cache
+  reused across separate switch/save calls within one running session).
+  `_switch_profile` and `_save_current_profile` now always prompt fresh for a
+  protected profile's password, every time -- including switching back to a
+  profile that was already unlocked once earlier in the same session. Also
+  fixed a latent bug while in there: canceling the switch-password prompt
+  (Escape) used to recurse back into asking again forever instead of actually
+  canceling the switch.
+- `_with_profile_auth()` (new): gates Manage Profiles' Rename and Delete
+  behind the profile's own password when it's protected -- before this,
+  either worked with zero authentication, so anyone at the app could rename,
+  or permanently delete (encrypted files, recovery-code envelope, all of it,
+  via `delete_profile`'s `shutil.rmtree`), a protected profile without ever
+  knowing its password. Unprotected profiles are untouched by this --
+  Deliberately did NOT gate Reset the same way: it's already gated by the
+  recovery code, which is the whole point of a flow that exists precisely for
+  when you've lost the password -- requiring the old password there would
+  defeat it.
+
+**Two real bugs found while building this, both fixed before shipping:**
+1. `ProfileUnlockScreen.__init__` did `self.name = name` -- collides with
+   Widget/Screen's own read-only `name` property, crashing on mount
+   (`AttributeError: property 'name' ... has no setter`). Renamed to
+   `self.profile_name`.
+2. The launch-gate feature exposed a real test-isolation gap: `conftest.py`'s
+   shared-MTDO_HOME-across-tests design only ever guaranteed profile *names*
+   stayed unique per test, not which profile was *active* -- that never
+   mattered until a protected active profile could now block the very next
+   test's `TodoApp()` construction on launch. Fixed with a new
+   `profiles.clear_active()` plus an autouse `_clear_active_profile` pytest
+   fixture that resets it after every test.
+
+**Verified for real:** a from-scratch headless `App.run_test()` Pilot script
+(not the pytest suite yet at that point) walking through all five scenarios
+with real key dispatch and two real profiles (one protected, one not): launch
+blocked and rejects a wrong password, unlocks on the right one; switching to
+an unprotected profile is silent, switching back to the one already unlocked
+at launch still re-prompts; Delete on a protected profile is blocked on a
+wrong password and the profile survives, then actually deletes with the right
+password + existing name-confirmation step; Rename is gated the same way and
+succeeds with the right password. Then formalized as three permanent pytest
+regression tests. 11/11 tests pass (8 previous + 3 new). Real
+`~/.mtdo/goals.json`/`state.json` mtimes unchanged throughout (still 17 Aug /
+20 Aug) -- and confirmed the real machine has no profiles at all yet, so none
+of this could have touched real data even accidentally.
+
+---
+
 ## 2026-08-25 (bugs gh44 + gh49, GH mukund1312/mtdo-bugs#44 #49) -- profile password protection is now an explicit choice, not a skippable field
 
 Two independent testers, same underlying confusion: switching profiles never

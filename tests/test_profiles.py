@@ -18,6 +18,7 @@ from mtdo.app import (
     ProfileCreateScreen,
     ProfileManageScreen,
     ProfileMenuScreen,
+    ProfileUnlockScreen,
     RecoveryCodeScreen,
     TextPromptScreen,
     ToastLine,
@@ -248,3 +249,113 @@ async def test_add_field_bootstraps_missing_goals_json(unique_slug):
         with open(appconfig.GOALS_PATH) as f:
             goals = json.load(f)
         assert any(c["name"] == "networking" for c in goals["categories"])
+
+
+async def test_launch_blocks_on_protected_active_profile_until_correct_password(unique_slug):
+    """gh49 (further ask, after gh44/49's fix made password protection an
+    explicit choice at creation): mtdo used to boot straight into whatever
+    profile was last active with zero password check, even if it was
+    protected -- the launch-time counterpart to the switch-time gap gh40/44/49
+    already closed elsewhere. A wrong password must not unlock it; the right
+    one must."""
+    slug = pf.create_profile(unique_slug, password="hunter2")[0]
+    pf.set_active(slug)
+
+    app = TodoApp()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        assert isinstance(app.screen, ProfileUnlockScreen)
+
+        for ch in "wrongpassword":
+            await pilot.press(ch)
+        await pilot.press("enter")
+        await pilot.pause()
+        assert isinstance(app.screen, ProfileUnlockScreen), "wrong password must not unlock"
+
+        for ch in "hunter2":
+            await pilot.press(ch)
+        await pilot.press("enter")
+        await pilot.pause()
+        assert not isinstance(app.screen, ProfileUnlockScreen), "right password must unlock"
+
+
+async def test_switching_to_protected_profile_always_reprompts_even_if_unlocked_earlier(unique_slug):
+    """gh49: a tester explicitly asked for a password "each time," not just the
+    first -- there used to be a cross-switch cache so unlocking a profile once
+    per app run was enough for every later switch back to it. Confirms the
+    cache is really gone: unlock at launch, switch away, switch back -- must
+    prompt again, not silently reuse the launch password."""
+    slug_a = pf.create_profile(f"{unique_slug}_a", password="hunter2")[0]
+    slug_b = pf.create_profile(f"{unique_slug}_b")[0]
+    pf.set_active(slug_a)
+
+    app = TodoApp()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        for ch in "hunter2":
+            await pilot.press(ch)
+        await pilot.press("enter")
+        await pilot.pause()
+
+        app.action_open_profile_menu()
+        await pilot.pause()
+        btn_b = next(c for c in app.screen.profile_list.children if getattr(c, "profile_slug", None) == slug_b)
+        btn_b.press()
+        await pilot.pause()
+        assert pf.get_active_slug() == slug_b
+
+        app.action_open_profile_menu()
+        await pilot.pause()
+        btn_a = next(c for c in app.screen.profile_list.children if getattr(c, "profile_slug", None) == slug_a)
+        btn_a.press()
+        await pilot.pause()
+        assert isinstance(app.screen, TextPromptScreen), "must re-prompt even though A was already unlocked this session"
+
+
+async def test_deleting_protected_profile_requires_its_password(unique_slug):
+    """gh49: rename/delete used to need no authentication at all -- anyone at
+    the app could permanently delete a protected profile (its encrypted files
+    included) without ever knowing the password. Wrong password must block
+    the delete entirely; right password must let it proceed."""
+    slug_active = pf.create_profile(f"{unique_slug}_active")[0]
+    slug_target = pf.create_profile(f"{unique_slug}_target", password="hunter2")[0]
+    pf.set_active(slug_active)
+
+    app = TodoApp()
+    async with app.run_test() as pilot:
+        await _dismiss_first_run_prompts(pilot, app)
+
+        app.action_manage_profiles()
+        await pilot.pause()
+        del_btn = next(
+            c for row in app.screen.rows.children for c in row.children
+            if getattr(c, "profile_slug", None) == slug_target and getattr(c, "row_action", None) == "delete"
+        )
+        del_btn.press()
+        await pilot.pause()
+        assert isinstance(app.screen, TextPromptScreen), "delete on a protected profile must ask for its password first"
+
+        for ch in "wrongpassword":
+            await pilot.press(ch)
+        await pilot.press("enter")
+        await pilot.pause()
+        assert pf.get_profile(slug_target) is not None, "must not delete on a wrong password"
+
+        app.action_manage_profiles()
+        await pilot.pause()
+        del_btn2 = next(
+            c for row in app.screen.rows.children for c in row.children
+            if getattr(c, "profile_slug", None) == slug_target and getattr(c, "row_action", None) == "delete"
+        )
+        del_btn2.press()
+        await pilot.pause()
+        for ch in "hunter2":
+            await pilot.press(ch)
+        await pilot.press("enter")
+        await pilot.pause()
+        assert isinstance(app.screen, TextPromptScreen), "now the existing type-the-name delete confirmation"
+        for ch in f"{unique_slug}_target":
+            await pilot.press(ch)
+        await pilot.press("enter")
+        await pilot.pause()
+        assert pf.get_profile(slug_target) is None, "must delete once the right password and name are given"

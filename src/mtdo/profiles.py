@@ -162,6 +162,18 @@ def set_active(slug):
     _save_index(index)
 
 
+def clear_active():
+    """Unsets the active profile without touching any profile's own data. Used by
+    the test suite so a protected profile a test leaves active doesn't leak into
+    the next test's app launch (see conftest.py) -- ProfileUnlockScreen (gh49)
+    made active-profile state observable at TodoApp construction time in a way it
+    never was before, which the shared-MTDO_HOME test session wasn't isolating
+    against since only profile *names* needed to be unique before now."""
+    index = _load_index()
+    index["active"] = None
+    _save_index(index)
+
+
 def _derive_key(password, salt):
     _Fernet, _InvalidToken, hashes, PBKDF2HMAC = _require_cryptography()
     kdf = PBKDF2HMAC(algorithm=hashes.SHA256(), length=32, salt=salt, iterations=_KDF_ITERATIONS)

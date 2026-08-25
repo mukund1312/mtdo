@@ -493,6 +493,56 @@ class RecoveryCodeScreen(ModalScreen):
             self.dismiss(True)
 
 
+class ProfileUnlockScreen(ModalScreen):
+    """Blocks the app at launch until the active profile's password is entered --
+    the launch-time counterpart to the switch-time gate gh40/44/49 already
+    closed. Before this, mtdo booted straight into whatever was last active with
+    no password check at all, even for a protected profile -- since the last
+    session's decrypted goals.json/state.json just sit in ~/.mtdo between runs
+    (there's no reliable crash hook to guarantee wiping them on exit, so a full
+    re-lock-on-quit wasn't in scope -- see PROGRESS.md), a new launch could read
+    them freely with zero authentication. This closes "the app itself opens
+    with no password"; it does not make the plaintext working copy disappear
+    between runs. Deliberately no Escape-to-bypass, unlike every other modal
+    here -- quitting the app (Ctrl+C) is the only way out besides the right
+    password."""
+
+    CSS = """
+    ProfileUnlockScreen { align: center middle; }
+    #unlock-box { width: 60; height: auto; border: round yellow; padding: 1 2; background: $panel; }
+    #unlock-box Input { margin: 1 0; }
+    #unlock-error { color: $error; height: 1; margin: 0 0 1 0; }
+    """
+
+    def __init__(self, slug, name):
+        super().__init__()
+        self.slug = slug
+        # Not self.name -- Widget/Screen already defines a read-only `name`
+        # property of its own (from the constructor's optional name= kwarg),
+        # and assigning over it raises AttributeError at mount time.
+        self.profile_name = name
+
+    def compose(self) -> ComposeResult:
+        with Center():
+            with Middle():
+                with Vertical(id="unlock-box"):
+                    yield Static(f'Profile "{self.profile_name}" is password-protected.')
+                    yield Input(placeholder="Password", id="unlock-password", password=True)
+                    yield Static("", id="unlock-error")
+                    yield Static("Enter to unlock. To quit instead, press Ctrl+C.", classes="dim")
+
+    def on_mount(self):
+        self.query_one("#unlock-password", Input).focus()
+
+    def on_input_submitted(self, event: Input.Submitted):
+        if pf.check_password(self.slug, event.value):
+            self.dismiss(event.value)
+            return
+        self.query_one("#unlock-error", Static).update("Wrong password.")
+        inp = self.query_one("#unlock-password", Input)
+        inp.value = ""
+
+
 class ProfileManageScreen(ModalScreen):
     CSS = """
     ProfileManageScreen { align: center middle; }
@@ -568,21 +618,12 @@ class ProfileManageScreen(ModalScreen):
             self.app._switch_profile(slug)
             return
         if action == "rename":
-            profile = pf.get_profile(slug)
-            if not profile:
-                return
             self.dismiss(None)
-            self.app._push_modal(
-                TextPromptScreen("Rename profile", profile["name"]),
-                lambda value: self.app._rename_profile(slug, value),
-            )
+            self.app._start_rename_profile(slug)
             return
         if action == "delete":
-            profile = pf.get_profile(slug)
-            if not profile:
-                return
             self.dismiss(None)
-            self.app._delete_profile(slug, profile["name"])
+            self.app._start_delete_profile(slug)
             return
         if action == "reset":
             profile = pf.get_profile(slug)
@@ -2358,7 +2399,6 @@ class TodoApp(App):
         self.today = tc.get_today()
         self.state = tc.load_state()
         self.state = tc.ensure_day_registered(self.state, self.today)
-        self._profile_passwords = {}
         self.focus_mode = False
         self.practice_terminal_enabled = appconfig.practice_terminal_enabled()
         # DSA problem-generation bookkeeping (see LearningCoachPanel/_check_dsa_hint_timer):
@@ -2420,6 +2460,17 @@ class TodoApp(App):
 
     def on_mount(self):
         self._refresh_profile_footer()
+        active = pf.get_active_slug()
+        profile = pf.get_profile(active) if active else None
+        if profile and profile.get("protected"):
+            # gh49: gate the app itself on launch, not just switches -- see
+            # ProfileUnlockScreen's docstring. Everything else in this method is
+            # deferred until unlocked.
+            self._push_modal(ProfileUnlockScreen(active, profile["name"]), lambda _pw: self._finish_startup())
+            return
+        self._finish_startup()
+
+    def _finish_startup(self):
         saved = tc.maybe_autosave_daily_report(self.state, self.today)
         self.refresh_side_panels()
         messages, style = [], "bold cyan"
@@ -2993,50 +3044,54 @@ class TodoApp(App):
             active_message_pump.reset(token)
 
     def _save_current_profile(self):
+        """gh49: always re-prompts for a protected profile's password when saving
+        it on the way out of a switch -- no cross-call cache (see _switch_profile's
+        docstring note for why)."""
         active = pf.get_active_slug()
         if active is None:
             return
         profile = pf.get_profile(active)
         if profile is None:
             return
-        password = self._profile_passwords.get(active)
-        if profile.get("protected") and password is None:
+        if profile.get("protected"):
             self._push_modal(
                 TextPromptScreen(f"Password for profile '{profile['name']}' (saving)", "", secret=True),
                 lambda value: self._save_current_profile_after_password(value, active),
             )
             return
-        if os.path.exists(appconfig.GOALS_PATH):
-            try:
-                goals = appconfig.load_goals()
-                pf.write_goals(active, goals, password)
-            except FileNotFoundError:
-                pass
-        pf.write_state(active, self.state, password)
+        self._write_current_profile(active, None)
 
     def _save_current_profile_after_password(self, value, slug):
         if value is None:
             return
-        self._profile_passwords[slug] = value
-        self._save_current_profile()
+        self._write_current_profile(slug, value)
+
+    def _write_current_profile(self, slug, password):
+        if os.path.exists(appconfig.GOALS_PATH):
+            try:
+                goals = appconfig.load_goals()
+                pf.write_goals(slug, goals, password)
+            except FileNotFoundError:
+                pass
+        pf.write_state(slug, self.state, password)
 
     def _switch_profile(self, slug, password=None):
+        """gh49: every switch to a protected profile re-prompts for its password,
+        every time -- no session-lifetime cache (there used to be one; a tester
+        explicitly asked for a password to be required "each time," not just the
+        first). If canceled (Escape -> None from the prompt), the lambda below
+        just doesn't recurse, so the switch quietly doesn't happen instead of
+        looping back into asking again forever."""
         target = pf.get_profile(slug)
         if target is None:
             self.toast("No profile selected.", style="bold red")
             return
         if target.get("protected") and password is None:
-            cached = self._profile_passwords.get(slug)
-            if cached is not None:
-                password = cached
-            else:
-                self._push_modal(
-                    TextPromptScreen(f"Password for profile '{target['name']}' (switching)", "", secret=True),
-                    lambda value: self._switch_profile(slug, password=value),
-                )
-                return
-        if password is not None:
-            self._profile_passwords[slug] = password
+            self._push_modal(
+                TextPromptScreen(f"Password for profile '{target['name']}' (switching)", "", secret=True),
+                lambda value: self._switch_profile(slug, password=value) if value is not None else None,
+            )
+            return
         current = pf.get_active_slug()
         if current is not None and current != slug:
             self._save_current_profile()
@@ -3077,8 +3132,6 @@ class TodoApp(App):
         except pf.ProfileError as exc:
             self.toast(str(exc), style="bold red")
             return
-        if password:
-            self._profile_passwords[slug] = password
         appconfig.set_user_name(name)
         if recovery_code:
             self._push_modal(
@@ -3090,6 +3143,49 @@ class TodoApp(App):
 
     def action_manage_profiles(self):
         self.push_screen(ProfileManageScreen())
+
+    def _with_profile_auth(self, slug, on_authorized):
+        """Gate a Manage Profiles action behind the profile's own password if it's
+        protected -- gh49: rename and delete used to need no authentication at
+        all, so anyone at the app could rename, or permanently delete (including
+        its encrypted files -- delete_profile removes the directory outright,
+        recovery code included), a protected profile without ever knowing its
+        password. Unprotected profiles stay exactly as frictionless as before --
+        this only gates profiles that opted into protection."""
+        profile = pf.get_profile(slug)
+        if profile is None:
+            return
+        if not profile.get("protected"):
+            on_authorized()
+            return
+        def got_password(password):
+            if password is None:
+                return
+            if not pf.check_password(slug, password):
+                self.toast("Wrong password.", style="bold red")
+                return
+            on_authorized()
+        self._push_modal(
+            TextPromptScreen(f"Password for '{profile['name']}' (required to continue)", "", secret=True),
+            got_password,
+        )
+
+    def _start_rename_profile(self, slug):
+        profile = pf.get_profile(slug)
+        if profile is None:
+            return
+        def do_rename():
+            self._push_modal(
+                TextPromptScreen("Rename profile", profile["name"]),
+                lambda value: self._rename_profile(slug, value),
+            )
+        self._with_profile_auth(slug, do_rename)
+
+    def _start_delete_profile(self, slug):
+        profile = pf.get_profile(slug)
+        if profile is None:
+            return
+        self._with_profile_auth(slug, lambda: self._delete_profile(slug, profile["name"]))
 
     def _rename_profile(self, slug, value):
         if value is None or not value.strip():
@@ -3149,8 +3245,6 @@ class TodoApp(App):
                     except pf.ProfileError as exc:
                         self.toast(str(exc), style="bold red")
                         return
-                    # Replaces any stale cached password from before the reset.
-                    self._profile_passwords[slug] = new_password
                     self.toast(f"Password reset for '{name}'.", style="bold green")
                 self._push_modal(
                     TextPromptScreen("Confirm new password", "", secret=True), got_confirm,
