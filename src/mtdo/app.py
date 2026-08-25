@@ -2562,6 +2562,8 @@ class TodoApp(App):
         or written by another mtdo process/action_add_field below), reload it into the running
         app -- no restart needed. goals.json is the single source of truth; this makes the
         live app always match whatever's currently on disk."""
+        if not self.is_running:
+            return  # see on_second_tick's comment on why this guard exists
         try:
             mtime = os.path.getmtime(appconfig.GOALS_PATH)
         except OSError:
@@ -2685,6 +2687,14 @@ class TodoApp(App):
         self.push_screen(TextPromptScreen("New field name (short id, e.g. 'networking')", ""), on_name)
 
     def on_second_tick(self):
+        if not self.is_running:
+            # Textual cancels an app's own set_interval timers on exit, but a
+            # tick already scheduled at the moment of exit can still land just
+            # after teardown -- confirmed live via CI (not locally, timing-
+            # dependent): a previous test's leftover tick fired into a torn-down
+            # screen stack with no ClockHeader left, crashing query_one with
+            # NoMatches. This guard makes a late tick a no-op instead.
+            return
         self.query_one(ClockHeader).update_clock()
         self.profile_footer.refresh_label()
         self.music_panel.refresh_music_info()

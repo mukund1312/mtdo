@@ -88,6 +88,41 @@ macOS-only; language tests skip individually if a toolchain isn't installed
 on whatever machine runs them. 29/29 tests pass (20 previous + 9 new). Real
 `~/.mtdo/goals.json`/`state.json` mtimes unchanged throughout.
 
+**CI-only follow-up, same day, before merge:** PR's actual CI run (ubuntu-
+latest) failed on two things neither Mac testing above could have caught:
+
+1. `test_java_runs_correctly_under_the_sandbox` -- the JVM itself failed to
+   start ("Could not create G1ServiceThread", pthread_create EAGAIN).
+   RLIMIT_NPROC=1000 (raised from 100 earlier the same day specifically to fix
+   a *different* per-real-UID collision on a Mac -- see above) turned out to
+   have a second, unrelated failure mode on Linux: RLIMIT_NPROC there also
+   counts threads (NPTL implements each as its own kernel task), and a JVM's
+   own GC/service/JIT threads at startup can eat a meaningful chunk of
+   whatever number gets picked, stacked on top of a CI container's own
+   different baseline. No single absolute value is confirmed safe against both
+   failure modes (a real dev machine's per-UID process count, and a
+   container's per-process thread count) -- dropped RLIMIT_NPROC entirely
+   rather than ship a third guess. Fork-bomb impact is still bounded by
+   RLIMIT_CPU (shared across every descendant) and the wall-clock timeout,
+   just not as immediately as a hard process cap would have been.
+2. `test_manage_profiles_reset_button_says_reset_password` (from an earlier,
+   already-merged PR) failed with `NoMatches: ClockHeader` inside
+   `on_second_tick`. Confirmed this wasn't pre-existing -- `main`'s own CI runs
+   were green through every merge up to and including this PR's base commit --
+   so today's new, genuinely slow subprocess-heavy tests (java/gcc/g++
+   compiles, a real ~15s CPU-limit test) shifted CI's timing enough to expose
+   a latent race for the first time: a previous test's `set_interval` timer,
+   still scheduled at the moment its app exited, firing once more into an
+   already-torn-down screen stack. Fixed defensively rather than chasing the
+   exact scheduling race: both `on_second_tick` and `check_goals_file` (the
+   app's only two ambient interval callbacks) now check `self.is_running`
+   first and no-op if the app has already exited.
+
+Re-ran the full suite locally after both fixes (29/29 still pass) before
+pushing; true confirmation for both -- the Linux JVM-under-constrained-
+threads behavior and the CI-timing-dependent race -- can only come from an
+actual CI run, not local Mac testing, so this is now pending that.
+
 ---
 
 ## 2026-08-25 (bug gh39, GH mukund1312/mtdo-bugs#39) -- a bad goals.json/config.yaml now fails with a clear message instead of a raw traceback

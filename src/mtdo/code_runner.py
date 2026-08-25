@@ -17,9 +17,10 @@ wouldn't otherwise just run" and leave it at that):
     including confirming a write outside the allowed dirs and a real network connection
     attempt both actually get denied, not just that the happy path still runs.
   - On every platform (including when sandbox-exec isn't available, e.g. Linux): POSIX
-    resource limits cap CPU time, max file size, and process count (see
-    _apply_resource_limits) -- a second, independent backstop against a fork bomb or a
-    runaway write filling the disk, on top of the wall-clock timeout below.
+    resource limits cap CPU time and max file size (see _apply_resource_limits -- a
+    process-count cap was tried and dropped, see that function's docstring for why) --
+    a second, independent backstop against a runaway process or a write filling the
+    disk, on top of the wall-clock timeout below.
 
 What this deliberately does NOT claim: file READS aren't restricted (python3/javac/gcc
 need broad read access to run at all), so code here could still read something like an
@@ -233,15 +234,23 @@ def _apply_resource_limits():
     Darwin/XNU quirk, not a bug in this code, so that one failing is expected
     there and deliberately not treated as fatal.
 
-    RLIMIT_NPROC needed a real fix, not just a guess: it's a per-REAL-UID limit,
-    not scoped to this subprocess's own tree, so a naive small cap (100, tried
-    first) broke gcc/g++/javac outright on an ordinary dev machine that already
-    had ~400 processes running for that user across everything else open --
-    clang's own posix_spawn calls immediately failed with "Resource temporarily
-    unavailable" the moment the account-wide count was already past the cap.
-    1000 leaves comfortable headroom above realistic real-world usage while
-    still capping a genuine fork bomb fast (exponential growth hits four
-    figures within a handful of generations, typically well under a second).
+    RLIMIT_NPROC was tried twice and dropped: first at 100, which broke gcc/g++/
+    javac outright on an ordinary dev Mac already running ~400 processes for
+    that user across everything else open (it's a per-real-UID limit, not
+    scoped to this subprocess's own tree, so a naive small cap collides with
+    unrelated background load). Raised to 1000 to fix that -- which then broke
+    javac/java a second time, differently, in CI: on Linux, RLIMIT_NPROC also
+    counts THREADS (NPTL implements each thread as its own kernel task), and a
+    JVM's own internal startup -- GC refinement threads, service threads, JIT
+    compiler threads -- can consume a meaningful chunk of whatever number is
+    picked, on top of however many "processes" the count already carries from
+    outside factors this code has no way to see (a CI container's baseline
+    differs from a laptop's). There's no single absolute number confirmed safe
+    across both failure modes, so this limit is dropped rather than shipped
+    with a third guess. Fork-bomb impact is still bounded by RLIMIT_CPU (every
+    descendant process shares the same real CPU budget) and the wall-clock
+    subprocess timeout above it, just not as immediately as a hard process cap
+    would have been.
 
     RLIMIT_CPU/FSIZE both set successfully and confirmed to actually do
     something (a CPU-bound busy loop was reliably SIGXCPU-killed around the
@@ -257,7 +266,6 @@ def _apply_resource_limits():
         for rl, value in (
             (_resource.RLIMIT_CPU, _CPU_TIME_LIMIT_SECONDS),
             (_resource.RLIMIT_FSIZE, 50_000_000),
-            (_resource.RLIMIT_NPROC, 1000),
             (_resource.RLIMIT_AS, 1_500_000_000),
         ):
             try:
@@ -280,7 +288,7 @@ def sandbox_status():
     if _sandbox_available():
         return "sandboxed: no network, writes confined to practice/"
     if _resource is not None:
-        return "resource limits only (CPU/file-size/process-count) -- no filesystem/network isolation on this platform"
+        return "resource limits only (CPU/file-size) -- no filesystem/network isolation on this platform"
     return "unsandboxed -- no isolation available on this platform"
 
 
