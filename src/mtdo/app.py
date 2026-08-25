@@ -273,10 +273,19 @@ class ProfileMenuScreen(ModalScreen):
     #profile-actions Button { margin: 0 1; }
     """
 
+    def __init__(self, step_label=None):
+        """step_label: see OnboardingScreen's docstring -- gh28's shared setup-
+        sequence indicator. None (default) for every normal use of this screen
+        (the footer profile badge, action_open_profile_menu)."""
+        super().__init__()
+        self.step_label = step_label
+
     def compose(self) -> ComposeResult:
         with Center():
             with Middle():
                 with Vertical(id="profile-menu-box"):
+                    if self.step_label:
+                        yield Static(self.step_label, classes="dim")
                     yield Static("Profile")
                     self.profile_list = Vertical(id="profile-list")
                     yield self.profile_list
@@ -355,10 +364,19 @@ class ProfileCreateScreen(ModalScreen):
     #protect-explain { color: $text-muted; margin: 0 0 1 0; }
     """
 
+    def __init__(self, step_label=None):
+        """step_label: see OnboardingScreen's docstring -- gh28's shared setup-
+        sequence indicator. None (default) for every normal use of this screen
+        (the footer profile badge, action_create_profile)."""
+        super().__init__()
+        self.step_label = step_label
+
     def compose(self) -> ComposeResult:
         with Center():
             with Middle():
                 with Vertical(id="profile-create-box"):
+                    if self.step_label:
+                        yield Static(self.step_label, classes="dim")
                     yield Static("Create Profile")
                     yield Input(placeholder="Display name", id="profile-name")
                     yield Vertical(id="protect-area")
@@ -1019,17 +1037,23 @@ class ChoicePickScreen(ModalScreen):
     #choice-pick-box { width: 74; height: auto; max-height: 22; border: round magenta; padding: 1 2; background: $panel; }
     """
 
-    def __init__(self, prompt_text, options, show_back=False):
+    def __init__(self, prompt_text, options, show_back=False, step_label=None):
+        """step_label: see OnboardingScreen's docstring -- gh28's shared setup-
+        sequence indicator. None (default) for every other use of this generic
+        picker."""
         super().__init__()
         self.prompt_text = prompt_text
         self.options = options
         self.show_back = show_back
+        self.step_label = step_label
 
     def compose(self) -> ComposeResult:
         back_hint = ", Ctrl+B back" if self.show_back else ""
         with Center():
             with Middle():
                 with Vertical(id="choice-pick-box"):
+                    if self.step_label:
+                        yield Static(self.step_label, classes="dim")
                     yield Static(self.prompt_text)
                     items = [ListItem(Label(opt), name=opt) for opt in self.options]
                     yield VimListView(*items)
@@ -1587,6 +1611,24 @@ ONBOARDING_STEPS = [
         "solution with questions and hints rather than handing it over outright.",
         ("esc esc", "double-tap Escape to release keyboard focus without ending the session"),
     ]),
+    # gh28: reordered 2026-08-25 so the steps most people act on right away (the
+    # board, adding cards, Focus Mode, the always-on Coach/AI panel) come before
+    # the more specialized/optional ones (Practice Lab -- specifically DSA/SQL
+    # practice; Career CRM -- specifically job-hunting) -- those two now sit right
+    # before the closing step instead of interrupting the core flow.
+    ("Pomodoro & Music", [
+        ("p / x / t", "start-pause / reset / edit the pomodoro's work-break length"),
+        ("m", "play/pause -- whatever's in macOS's Now Playing, or Spotify"),
+        ("[ / ]", "previous / next track"),
+        ("+ / -", "volume up/down"),
+    ]),
+    ("Stats, Streaks & Weekly Reports", [
+        "The right side of the board tracks your daily score, current/longest "
+        "streak, and a month calendar heatmap.",
+        "Every Saturday: a week summary toast, plus a detailed report saved to "
+        "~/.mtdo/reports/ -- hand it to an AI assistant for real coaching on "
+        "consistency, not just a percentage.",
+    ]),
     ("Practice Lab", [
         ("Shift+T", "toggle the optional Practice Lab column, alongside the Coach and AI panel"),
         "A real language picker (Python / Java / C / C++ / SQL), a code editor, "
@@ -1597,22 +1639,9 @@ ONBOARDING_STEPS = [
         ("ctrl+a", "send your code to the AI panel next to it for a review -- hints toward the issue, not the fix"),
         ("ctrl+n", "reset the current language's buffer to its starter template"),
     ]),
-    ("Pomodoro & Music", [
-        ("p / x / t", "start-pause / reset / edit the pomodoro's work-break length"),
-        ("m", "play/pause -- whatever's in macOS's Now Playing, or Spotify"),
-        ("[ / ]", "previous / next track"),
-        ("+ / -", "volume up/down"),
-    ]),
     ("Career CRM & Knowledge Vault", [
         ("c", "Career CRM -- track companies Applied -> OA -> Interview -> Offer"),
         ("v", "Knowledge Vault -- a searchable notes vault, separate from card notes"),
-    ]),
-    ("Stats, Streaks & Weekly Reports", [
-        "The right side of the board tracks your daily score, current/longest "
-        "streak, and a month calendar heatmap.",
-        "Every Saturday: a week summary toast, plus a detailed report saved to "
-        "~/.mtdo/reports/ -- hand it to an AI assistant for real coaching on "
-        "consistency, not just a percentage.",
     ]),
     ("You're Set", [
         ("?", "the full keybinding cheat sheet, any time"),
@@ -1642,9 +1671,18 @@ class OnboardingScreen(ModalScreen):
     }
     """
 
-    def __init__(self):
+    def __init__(self, step_label=None):
+        """step_label (e.g. "Setup 1 of 3"), when given, renders as an overall-
+        sequence indicator above this screen's own internal "Walkthrough n/N" --
+        gh28: the walkthrough, the automatic profile step, and the populate-method
+        choice used to have no shared sense of being one continuous setup, each
+        landing as an unrelated interruption. Only set when this screen is the
+        first stage of that larger sequence (see TodoApp.on_mount) -- a standalone
+        replay via 'w' (action_replay_walkthrough) passes nothing, since it isn't
+        part of any larger sequence."""
         super().__init__()
         self.step = 0
+        self.step_label = step_label
 
     def compose(self) -> ComposeResult:
         with Center():
@@ -1662,7 +1700,10 @@ class OnboardingScreen(ModalScreen):
             if i < n - 1:
                 dots.append(" ")
 
-        rows = [dots, Text(""), Text(title, style="bold underline", justify="center"), Text("")]
+        rows = []
+        if self.step_label:
+            rows.append(Text(self.step_label, style="dim italic", justify="center"))
+        rows += [dots, Text(""), Text(title, style="bold underline", justify="center"), Text("")]
         for item in body:
             if isinstance(item, tuple):
                 key, desc = item
@@ -2510,8 +2551,8 @@ class TodoApp(App):
             def after_onboarding(_r=None):
                 appconfig.mark_onboarded()
                 if not appconfig.has_configured_plan():
-                    self._begin_setup_flow()
-            self.push_screen(OnboardingScreen(), callback=after_onboarding)
+                    self._begin_setup_flow(step_offset=1, total_steps=3)
+            self.push_screen(OnboardingScreen(step_label="Setup 1 of 3"), callback=after_onboarding)
         elif not appconfig.has_configured_plan():
             # Onboarded before, but never actually ran the setup flow (e.g. upgraded
             # from an older mtdo, or a saved instance from before this existed) --
@@ -3331,7 +3372,7 @@ class TodoApp(App):
     def action_plan_wizard(self):
         self._begin_setup_flow()
 
-    def _begin_setup_flow(self):
+    def _begin_setup_flow(self, step_offset=0, total_steps=2):
         """Entry point for the whole setup wizard: Profiles Section -> "how do you want
         to build your plan" (Manual vs Guided setup). Triggered automatically right
         after the feature walkthrough on a genuine first run (see on_mount), or any time
@@ -3352,20 +3393,34 @@ class TodoApp(App):
         Either way, proceeds to the populate-method step next regardless of what
         happened there (closed without picking, cancelled creation, ...) -- consistent
         with the rest of this wizard: skippable at every step, the board starts (and
-        stays, if you cancel out) genuinely empty either way."""
+        stays, if you cancel out) genuinely empty either way.
+
+        step_offset/total_steps (gh28): this method is always 2 of the sequence's
+        steps (profile, then populate-method) -- step_offset shifts the displayed
+        numbers when a walkthrough precedes it (on_mount passes offset=1, total=3),
+        and total_steps=2 (the default) covers every other entry point, where this
+        method's own 2 steps are the whole sequence: a manual re-run via 'g'
+        (action_plan_wizard), or "onboarded before, never configured" (on_mount's
+        other branch) which skips the walkthrough entirely."""
+        profile_step, populate_step = step_offset + 1, step_offset + 2
         if not pf.list_profiles():
             def on_created(result):
                 self._on_profile_created(result)
-                self._pick_populate_method()
-            self._push_modal(ProfileCreateScreen(), on_created)
+                self._pick_populate_method(populate_step, total_steps)
+            self._push_modal(
+                ProfileCreateScreen(step_label=f"Setup {profile_step} of {total_steps}"), on_created,
+            )
         else:
             # _push_modal, not push_screen -- _begin_setup_flow is itself reached from
             # inside another screen's dismiss-then-push chain (OnboardingScreen's
             # callback, see on_mount), the exact case _push_modal's docstring warns a
             # plain push_screen(..., callback) callback would silently never fire for.
-            self._push_modal(ProfileMenuScreen(), lambda _result: self._pick_populate_method())
+            self._push_modal(
+                ProfileMenuScreen(step_label=f"Setup {profile_step} of {total_steps}"),
+                lambda _result: self._pick_populate_method(populate_step, total_steps),
+            )
 
-    def _pick_populate_method(self):
+    def _pick_populate_method(self, step=2, total=2):
         options = [
             "Manual -- I'll build it myself in the app (press 'a' to add fields)",
             "Guided setup -- export a template, hand it to any AI, import the result",
@@ -3384,7 +3439,13 @@ class TodoApp(App):
                 return
             self.push_screen(GuidedSetupScreen())
 
-        self.push_screen(ChoicePickScreen("How do you want to build your plan?", options), on_choice)
+        self.push_screen(
+            ChoicePickScreen(
+                "How do you want to build your plan?", options,
+                step_label=f"Setup {step} of {total}",
+            ),
+            on_choice,
+        )
 
     def action_save_ai_transcript(self):
         if not self.claude_panel.is_running:

@@ -9,6 +9,68 @@ Add each session's PROGRESS.md entry to the same branch as the code it describes
 
 ---
 
+## 2026-08-25 (bug gh28, GH mukund1312/mtdo-bugs#28) -- walkthrough reordered, and a shared "Setup N of M" indicator across the whole first-run sequence
+
+Bug's literal mechanism no longer exists: it described a gap while waiting on
+an in-app AI call during onboarding, but gh47 (2026-08-24) already removed
+that AI call entirely -- setup is now export/paste-to-any-AI/import, nothing
+in-app blocks on a network call. Confirmed live before touching anything:
+dismissing the walkthrough transitions directly into the next modal
+(ProfileCreateScreen), never exposing the bare empty board for even a frame.
+Superseded, same situation as bugs #6/#13 earlier this session.
+
+The user's real ask in the same message: make the walkthrough more intuitive,
+gave ideas, asked for scoping questions first. Presented two concrete,
+grounded options (not generic advice) and let the user pick:
+
+1. **Reorder the walkthrough's 10 steps** so the ones most people act on right
+   away (Board, Adding Cards, Focus Mode, the always-on Learning Coach/AI
+   panel) come before the more specialized/optional ones -- Practice Lab
+   (DSA/SQL practice specifically) and Career CRM (job-hunting specifically)
+   now sit right before the closing step instead of interrupting the core
+   flow, with Pomodoro & Music and Stats moved earlier since they're more
+   universally relevant. User picked "reorder, keep all 10 steps" over
+   trimming the walkthrough's length.
+2. **A shared "Setup N of M" progress indicator across the whole first-run
+   sequence** -- previously the walkthrough (with its own internal "Walkthrough
+   n/11" numbering), the automatic profile step (gh48), and "how do you want to
+   build your plan" (gh47) had no sense of being one continuous setup; each
+   felt like an unrelated new screen. User picked adding it.
+
+**What shipped:** `OnboardingScreen`, `ProfileCreateScreen`, `ProfileMenuScreen`,
+and `ChoicePickScreen` (all four reused elsewhere in the app outside
+onboarding -- the footer profile badge, 'g'/`action_plan_wizard`, 'w'/
+`action_replay_walkthrough`) each gained an optional `step_label=None`
+constructor param, defaulting to no change anywhere else they're used.
+`_begin_setup_flow(step_offset=0, total_steps=2)` and `_pick_populate_method`
+now compute and pass the right label at each of their three real entry
+points: the genuine first-run trigger (`on_mount`, walkthrough included --
+offset=1, total=3, so the sequence reads 1/3 -> 2/3 -> 3/3), a manual re-run
+via 'g' (no walkthrough -- the defaults, 1/2 -> 2/2), and "onboarded before,
+never configured" (same 2-step case). A standalone walkthrough replay via 'w'
+passes no label at all, correctly, since it isn't part of a larger sequence.
+
+**Verified for real, at every entry point, not just the one that's exercised
+most often:** a live headless run confirmed the new step order
+(`ONBOARDING_STEPS` titles printed in sequence) and the full 1/3 -> 2/3 -> 3/3
+labeling through a real first-run walkthrough-skip -> profile-create ->
+populate-method-choice chain with real key dispatch. Separately confirmed the
+manual 'g' path reads 1/2 -> 2/2 (not 1/3 -> 2/3, which would have been wrong
+-- no walkthrough precedes it there) and that 'w' shows no label at all.
+Formalized all three as permanent regression tests in a new
+`tests/test_onboarding.py` -- the first-run test specifically has to remove
+and restore `conftest.py`'s session-wide "onboarded" marker (pre-set once so
+every *other* test in the shared session doesn't hit the walkthrough) to
+actually exercise a genuine first run; caught this the hard way when the test
+first failed by landing straight on `ProfileCreateScreen` instead of
+`OnboardingScreen`, confirming the marker really was shared across the whole
+suite as conftest.py's own docstring says. 36/36 tests pass (33 previous + 3
+new), including a repeat full-suite run to rule out state leakage from the
+marker-file manipulation. Real `~/.mtdo/goals.json`/`state.json` mtimes
+unchanged throughout.
+
+---
+
 ## 2026-08-25 (bug gh37, GH mukund1312/mtdo-bugs#37) -- added CONTRIBUTING.md
 
 Docs-only bug: no `CONTRIBUTING.md`, so an outside contributor had no doc
