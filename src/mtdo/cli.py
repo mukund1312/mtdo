@@ -67,10 +67,30 @@ def cmd_run(_args):
         # manual `import`) fills it in.
         if not appconfig.config_exists():
             appconfig.init_config(fresh=True)
-        cfg = appconfig.load_config()
+        try:
+            cfg = appconfig.load_config()
+        except appconfig.ConfigError as e:
+            print(f"Can't start mtdo: {e}")
+            sys.exit(1)
+    except appconfig.ConfigError as e:
+        # gh39: a hand-edited goals.json with bad JSON, or a category missing a
+        # required field, used to surface as a raw traceback right here -- this is
+        # the very first thing that runs on `mtdo`, before the TUI (and its own
+        # crash screen/error.log) even starts. Nothing has been touched by this
+        # failing -- it's a read of an already-broken file, not a write.
+        print(f"Can't start mtdo: {e}")
+        print(f"Nothing has been touched -- fix {appconfig.GOALS_PATH} and run `{_PROG}` again.")
+        sys.exit(1)
 
     from . import app as todo_app
-    todo_app.run_app(cfg)
+    try:
+        todo_app.run_app(cfg)
+    except appconfig.ConfigError as e:
+        # core.configure() (called by run_app) can still reject a goals.json-derived
+        # cfg that goals_to_config's own, narrower validation didn't catch (e.g. a
+        # category missing "label"/"days") -- same treatment.
+        print(f"Can't start mtdo: {e}")
+        sys.exit(1)
 
 
 def cmd_status(_args):

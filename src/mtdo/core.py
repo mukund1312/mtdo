@@ -52,36 +52,79 @@ STREAK_WARNING = 3
 
 
 def configure(cfg):
-    """Loads a config dict (as parsed from config.yaml) into this module's globals.
-    Must be called once before any other function in this module is used."""
+    """Loads a config dict (as parsed from config.yaml, or derived from goals.json via
+    config.goals_to_config) into this module's globals. Must be called once before any
+    other function in this module is used.
+
+    Raises config.ConfigError -- not a raw KeyError/TypeError/ValueError -- if cfg is
+    missing something this needs, or has a category/date field in the wrong shape
+    (gh39: a hand-edited goals.json/config.yaml with a typo used to surface as
+    whatever raw exception came out of this dict-walking code, at whatever field
+    happened to be accessed first, with no indication of what was actually wrong).
+
+    Builds everything into locals first and only assigns the globals at the very end,
+    all at once -- previously CATEGORY_META was reset to {} and populated one category
+    at a time in the loop below, so a validation failure partway through (or the old
+    unguarded KeyError) left it half-populated: some categories present, others
+    silently missing, for the rest of the running session. A bad edit failing to
+    reload should leave the app exactly as it was, not almost as it was."""
     global CATEGORY_ORDER, STREAK_CATEGORIES, CATEGORY_META, SCORE_WEIGHTS, GOAL_LINE
     global APP_NAME, PLAN_START, PLAN_END, BACKLOG_LOOKBACK_DAYS, STREAK_WARNING
 
-    CATEGORY_ORDER = list(cfg["category_order"])
-    STREAK_CATEGORIES = list(cfg.get("streak_categories", CATEGORY_ORDER))
-    GOAL_LINE = cfg.get("goal_line", "")
-    APP_NAME = cfg.get("app_name", "TASK OS")
-    BACKLOG_LOOKBACK_DAYS = cfg.get("backlog_lookback_days", 3)
-    STREAK_WARNING = cfg.get("streak_warning", 3)
-    PLAN_START = datetime.date.fromisoformat(cfg["plan_start"]) if cfg.get("plan_start") else None
-    PLAN_END = datetime.date.fromisoformat(cfg["plan_end"]) if cfg.get("plan_end") else None
+    try:
+        category_order = list(cfg["category_order"])
+        streak_categories = list(cfg.get("streak_categories", category_order))
+        goal_line = cfg.get("goal_line", "")
+        app_name = cfg.get("app_name", "TASK OS")
+        backlog_lookback_days = cfg.get("backlog_lookback_days", 3)
+        streak_warning = cfg.get("streak_warning", 3)
+        plan_start = datetime.date.fromisoformat(cfg["plan_start"]) if cfg.get("plan_start") else None
+        plan_end = datetime.date.fromisoformat(cfg["plan_end"]) if cfg.get("plan_end") else None
 
-    CATEGORY_META = {}
-    SCORE_WEIGHTS = {}
-    for name, meta in cfg["categories"].items():
-        CATEGORY_META[name] = {
-            "label": meta["label"],
-            "days": set(meta["days"]),
-            "min_blocks": meta.get("min_blocks", 0),
-            "addable": meta.get("addable", True),
-            "deletable": meta.get("deletable", True),
-            "notes": meta.get("notes", True),
-            "fixed_labels": meta.get("fixed_labels"),
-            "curriculum": meta.get("curriculum") or [],
-            "topic_type": meta.get("topic_type"),
-            "coaching_framework": meta.get("coaching_framework"),
-        }
-        SCORE_WEIGHTS[name] = meta.get("score_weight", 10)
+        categories = cfg["categories"]
+        if not isinstance(categories, dict):
+            raise appconfig.ConfigError(
+                f'"categories" should be a set of fields, got {type(categories).__name__} instead.'
+            )
+        category_meta = {}
+        score_weights = {}
+        for name, meta in categories.items():
+            if not isinstance(meta, dict):
+                raise appconfig.ConfigError(
+                    f'field "{name}" should be an object, got {type(meta).__name__} instead.'
+                )
+            if "label" not in meta:
+                raise appconfig.ConfigError(f'field "{name}" is missing its "label".')
+            if "days" not in meta:
+                raise appconfig.ConfigError(f'field "{name}" is missing its "days".')
+            category_meta[name] = {
+                "label": meta["label"],
+                "days": set(meta["days"]),
+                "min_blocks": meta.get("min_blocks", 0),
+                "addable": meta.get("addable", True),
+                "deletable": meta.get("deletable", True),
+                "notes": meta.get("notes", True),
+                "fixed_labels": meta.get("fixed_labels"),
+                "curriculum": meta.get("curriculum") or [],
+                "topic_type": meta.get("topic_type"),
+                "coaching_framework": meta.get("coaching_framework"),
+            }
+            score_weights[name] = meta.get("score_weight", 10)
+    except KeyError as e:
+        raise appconfig.ConfigError(f"config is missing {e}.") from e
+    except (TypeError, ValueError) as e:
+        raise appconfig.ConfigError(f"config has an invalid value: {e}") from e
+
+    CATEGORY_ORDER = category_order
+    STREAK_CATEGORIES = streak_categories
+    GOAL_LINE = goal_line
+    APP_NAME = app_name
+    BACKLOG_LOOKBACK_DAYS = backlog_lookback_days
+    STREAK_WARNING = streak_warning
+    PLAN_START = plan_start
+    PLAN_END = plan_end
+    CATEGORY_META = category_meta
+    SCORE_WEIGHTS = score_weights
 
 
 def categories_for_day(d):
