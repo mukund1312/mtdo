@@ -9,6 +9,139 @@ Add each session's PROGRESS.md entry to the same branch as the code it describes
 
 ---
 
+## 2026-08-25 (bug gh38, GH mukund1312/mtdo-bugs#38) -- Practice Lab code execution now has real, verified sandboxing
+
+Unlike the other bugs this session, this wasn't a UI/discoverability gap -- it
+was a genuine "how much security engineering is proportionate for a personal
+terminal app" question. `code_runner.run()` executed submitted code via plain
+`subprocess.run()` with mtdo's own full user permissions, no isolation
+whatsoever; the module's own docstring just said "don't paste code here you
+wouldn't otherwise just run" and left it there. Asked the user to pick a real
+scope before touching anything: OS-level sandbox + resource limits (macOS
+Seatbelt + POSIX rlimits, no new dependency), resource-limits-only with a
+louder warning, or full Docker-based isolation (real cost: a hard new
+dependency and a much slower run loop). They picked the first.
+
+**What shipped, in `code_runner.py`:**
+- On macOS: every run wrapped in `sandbox-exec` (Apple's built-in Seatbelt
+  profile mechanism) with a deny-by-default profile -- all network access
+  denied outright, writes confined to the practice directory plus this
+  process's own session temp dir (both resolved via `os.path.realpath`, since
+  Seatbelt matches post-symlink paths and /tmp and the macOS temp dir are both
+  symlinks into /private). File reads stay open -- interpreters/compilers need
+  broad read access to function at all -- documented as an explicit, honest
+  limit, not hidden.
+- On every platform (including when sandbox-exec isn't available, e.g. Linux):
+  POSIX resource limits via a `preexec_fn` -- CPU time, max file size, process
+  count -- as an independent backstop.
+- `sandbox_status()` reports exactly which of the above is actually active,
+  shown directly in the Practice Lab's output panel every run (not just
+  documented in source) -- the disclosure is in front of the user every time,
+  matching the actual macOS-mockup preview the user approved when scoping this.
+- `_java_home()`: resolves JAVA_HOME once, unsandboxed, and invokes javac/java
+  by their real binary path -- `/usr/libexec/java_home` itself doesn't function
+  correctly from inside the restrictive Seatbelt profile (confirmed by hand:
+  "Unable to locate a Java Runtime" even with every write path it could
+  plausibly need already granted), so this sidesteps its own lookup entirely
+  rather than chasing down exactly which grant it was missing.
+
+**Three real bugs found and fixed only because this was tested against the
+actual toolchains before shipping, not just written and assumed correct:**
+1. A first Seatbelt profile draft broke javac/gcc/g++ outright ("unable to
+   make temporary file" / "Unable to locate a Java Runtime") -- all three need
+   to write scratch files under $TMPDIR, which the first draft didn't grant.
+2. Generalizing from "this specific test subdirectory needs write access" (what
+   was actually verified) to "allow bare /tmp and /var/folders broadly" (what
+   got written into the real implementation) silently defeated the actual
+   write-confinement guarantee -- a test deliberately checking the DENY path
+   (not just that the happy path still ran) caught a file writing successfully
+   to /tmp when it should have been refused.
+3. RLIMIT_NPROC=100 broke gcc/g++/javac's own internal posix_spawn calls on
+   this ordinary dev machine, which already had ~400 processes running for the
+   user across everything else open -- RLIMIT_NPROC is a per-real-UID limit,
+   not scoped to the subprocess's own tree, so a small absolute cap collides
+   with normal background load. Raised to 1000 (comfortable headroom above
+   real usage, still fast against a genuine exponential fork bomb). Separately,
+   the CPU time limit was originally derived from each call's own wall-clock
+   timeout (`timeout + 2`), which by construction can never fire before that
+   timeout -- dead code for every call. Fixed to a fixed, timeout-independent
+   constant (`_CPU_TIME_LIMIT_SECONDS`), confirmed by deliberately loosening
+   the wall-clock timeout to 30s specifically to prove the CPU limit is the one
+   that actually kills it (it now does, at ~15s).
+
+**Verified for real, exhaustively, before and after each fix:** every claim
+above was checked against real subprocesses on this machine, not assumed from
+reading Seatbelt documentation -- python3/javac+java/gcc/g++/sqlite3 all run
+correctly under the final profile; a real network connection attempt is
+denied; a write to a path deliberately outside every allowed directory is
+denied AND confirmed the file was never created; a CPU-bound busy loop is
+killed independent of the wall-clock timeout; `explain_sql`'s two subprocess
+calls (also user-supplied SQL) got the same treatment. All of this then
+formalized as 9 permanent regression tests in a new
+`tests/test_code_runner_sandbox.py`, including regression tests for both of
+the real bugs found while building this (bug 2's write-confinement test
+deliberately avoids pytest's own `tmp_path` fixture, since that lives inside
+the same session temp dir the sandbox legitimately grants -- using it would
+have passed for the wrong reason). macOS-only assertions are skipped on CI
+(ubuntu-latest) by design, matching that this protection genuinely is
+macOS-only; language tests skip individually if a toolchain isn't installed
+on whatever machine runs them. 29/29 tests pass (20 previous + 9 new). Real
+`~/.mtdo/goals.json`/`state.json` mtimes unchanged throughout.
+
+**CI-only follow-up, same day, before merge:** PR's actual CI run (ubuntu-
+latest) failed on two things neither Mac testing above could have caught:
+
+1. `test_java_runs_correctly_under_the_sandbox` -- the JVM itself failed to
+   start ("Could not create G1ServiceThread", pthread_create EAGAIN).
+   RLIMIT_NPROC=1000 (raised from 100 earlier the same day specifically to fix
+   a *different* per-real-UID collision on a Mac -- see above) turned out to
+   have a second, unrelated failure mode on Linux: RLIMIT_NPROC there also
+   counts threads (NPTL implements each as its own kernel task), and a JVM's
+   own GC/service/JIT threads at startup can eat a meaningful chunk of
+   whatever number gets picked, stacked on top of a CI container's own
+   different baseline. No single absolute value is confirmed safe against both
+   failure modes (a real dev machine's per-UID process count, and a
+   container's per-process thread count) -- dropped RLIMIT_NPROC entirely
+   rather than ship a third guess. Fork-bomb impact is still bounded by
+   RLIMIT_CPU (shared across every descendant) and the wall-clock timeout,
+   just not as immediately as a hard process cap would have been.
+2. `test_manage_profiles_reset_button_says_reset_password` (from an earlier,
+   already-merged PR) failed with `NoMatches: ClockHeader` inside
+   `on_second_tick`. Confirmed this wasn't pre-existing -- `main`'s own CI runs
+   were green through every merge up to and including this PR's base commit --
+   so today's new, genuinely slow subprocess-heavy tests (java/gcc/g++
+   compiles, a real ~15s CPU-limit test) shifted CI's timing enough to expose
+   a latent race for the first time: a previous test's `set_interval` timer,
+   still scheduled at the moment its app exited, firing once more into an
+   already-torn-down screen stack. Fixed defensively rather than chasing the
+   exact scheduling race: both `on_second_tick` and `check_goals_file` (the
+   app's only two ambient interval callbacks) now check `self.is_running`
+   first and no-op if the app has already exited.
+
+Re-ran the full suite locally after both fixes (29/29 still pass) before
+pushing. Pushed, re-ran CI: the ClockHeader fix worked, but Java still
+failed with the exact same error -- RLIMIT_NPROC was never actually the
+cause. The real culprit was RLIMIT_AS (1.5GB), which had silently never
+applied on macOS the entire time it was "confirmed working" there (the same
+Darwin/XNU quirk noted when it was first added: setrlimit refuses to lower
+it from unlimited) -- every earlier Mac test run was unknowingly running
+with zero memory cap. On Linux it's fully enforced, and a JVM reserves
+several GB of virtual address space upfront even for a trivial program, so
+a cap that had never once actually been exercised against real Java startup
+broke it immediately in CI. No size is plausibly safe against both "small
+enough to matter as a real cap" and "large enough for whatever a JVM
+reserves on a bigger host" without testing combinations this can't cover --
+dropped RLIMIT_AS entirely too, for the same reason RLIMIT_NPROC was
+dropped. What's left (RLIMIT_CPU + RLIMIT_FSIZE) are the two limits
+actually confirmed to do something real, on both platforms, without
+breaking any of the five languages. Pushed again; CI passed clean on this
+second follow-up commit, full green including Java. Genuine lesson from
+this whole detour: a limit that silently never applies on your only test
+platform isn't verified, it's untested, and macOS's specific RLIMIT_AS
+quirk actively hid that distinction.
+
+---
+
 ## 2026-08-25 (bug gh39, GH mukund1312/mtdo-bugs#39) -- a bad goals.json/config.yaml now fails with a clear message instead of a raw traceback
 
 Bug's own framing: a malformed hand-edit doesn't corrupt history (state.json

@@ -259,6 +259,7 @@ class PracticeLabPanel(Vertical):
         return Group(
             Text("OUTPUT", style="bold #6a6a6a"),
             Text("$ " + _RUN_COMMAND_LABEL[self.language], style="bold #00ff66"),
+            Text(f"[{code_runner.sandbox_status()}]", style="dim"),
         )
 
     def action_run_code(self):
@@ -267,6 +268,7 @@ class PracticeLabPanel(Vertical):
         self.output_panel.update(Group(
             Text("OUTPUT", style="bold #6a6a6a"),
             Text(f"$ {_RUN_COMMAND_LABEL[language]}", style="bold #00ff66"),
+            Text(f"[{code_runner.sandbox_status()}]", style="dim"),
             Text("running...", style="dim italic"),
         ))
         threading.Thread(target=self._run_code_worker, args=(language, code), daemon=True).start()
@@ -285,6 +287,7 @@ class PracticeLabPanel(Vertical):
         self.output_panel.update(Group(
             Text("OUTPUT", style="bold #6a6a6a"),
             Text(f"$ {_RUN_COMMAND_LABEL[language]}", style="bold #00ff66"),
+            Text(f"[{code_runner.sandbox_status()}]", style="dim"),
             Text(result.output or "(no output)"),
             Text(f"[exit {'0' if result.ok else '1'} in {result.elapsed:.3f}s]", style=f"dim {status_color}"),
         ))
