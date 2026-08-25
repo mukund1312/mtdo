@@ -291,6 +291,11 @@ def cmd_profile_create(args):
             f"profile's data. mtdo does not store it and cannot recover it for you.\n"
             f"To reset a forgotten password: `{_PROG} profile recover {args.name}`\n"
         )
+    else:
+        print(
+            f"No password set -- '{args.name}'s goals/state files are stored as plain, "
+            f"readable JSON. Re-run with --password to encrypt them (gh44/gh49)."
+        )
 
     adopted = False
     if args.from_current:

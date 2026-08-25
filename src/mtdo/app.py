@@ -335,11 +335,24 @@ class ProfileMenuScreen(ModalScreen):
 
 
 class ProfileCreateScreen(ModalScreen):
+    """gh44/gh49: password protection used to be a single easy-to-skip "Password
+    (optional)" text field -- both bugs were two different testers independently
+    surprised, later, that an unprotected profile they'd created without noticing
+    never prompted for a password on switch and stored its data as plain JSON.
+    Now the decision is unavoidable: after the name, a Yes/No choice with the
+    actual consequence spelled out, not a field to tab past. "No" finishes
+    immediately (the explanation was already on screen at the moment of the
+    choice, which is the fix -- a second confirmation step would just be more
+    friction, not more informed consent). "Yes" reveals password + confirm
+    inputs; RecoveryCodeScreen (see below) is still shown once the profile is
+    actually created, same as before."""
+
     CSS = """
     ProfileCreateScreen { align: center middle; }
-    #profile-create-box { width: 50; height: auto; border: round grey; padding: 1 2; background: $panel; }
+    #profile-create-box { width: 56; height: auto; border: round grey; padding: 1 2; background: $panel; }
     #profile-create-box Input { margin: 0 0 1 0; }
     #profile-create-box Button { margin: 0 1; }
+    #protect-explain { color: $text-muted; margin: 0 0 1 0; }
     """
 
     def compose(self) -> ComposeResult:
@@ -348,24 +361,86 @@ class ProfileCreateScreen(ModalScreen):
                 with Vertical(id="profile-create-box"):
                     yield Static("Create Profile")
                     yield Input(placeholder="Display name", id="profile-name")
-                    yield Input(placeholder="Password (optional)", id="profile-password", password=True)
-                    with Horizontal(id="profile-create-actions"):
-                        yield Button("Save", id="profile-create-save", variant="primary")
-                        yield Button("Cancel", id="profile-create-cancel")
+                    yield Vertical(id="protect-area")
 
     def on_mount(self):
         self.query_one("#profile-name", Input).focus()
+        self._show_protect_choice()
 
-    def on_button_pressed(self, event: Button.Pressed) -> None:
-        if event.button.id == "profile-create-cancel":
-            self.dismiss(None)
-            return
+    def _protect_area(self):
+        return self.query_one("#protect-area", Vertical)
+
+    def _clear_protect_area(self):
+        for child in list(self._protect_area().children):
+            child.remove()
+
+    def _show_protect_choice(self):
+        self._clear_protect_area()
+        area = self._protect_area()
+        area.mount(Static(
+            "Protect this profile with a password? Without one, this profile's "
+            "goals/state files are stored as plain, readable JSON -- anyone with "
+            "access to this computer can open and read them directly.",
+            id="protect-explain",
+        ))
+        area.mount(Horizontal(
+            Button("Yes, set a password", id="protect-yes", variant="primary"),
+            Button("No, keep it unprotected", id="protect-no"),
+        ))
+
+    def _show_password_inputs(self):
+        self._clear_protect_area()
+        area = self._protect_area()
+        area.mount(Input(placeholder="Password", id="profile-password", password=True))
+        area.mount(Input(placeholder="Confirm password", id="profile-password-confirm", password=True))
+        area.mount(Horizontal(
+            Button("Save", id="profile-create-save", variant="primary"),
+            Button("Back", id="profile-create-back"),
+            Button("Cancel", id="profile-create-cancel"),
+        ))
+        self.query_one("#profile-password", Input).focus()
+
+    def _name_or_refocus(self):
         name = self.query_one("#profile-name", Input).value.strip()
-        password = self.query_one("#profile-password", Input).value.strip()
         if not name:
             self.query_one("#profile-name", Input).focus()
+        return name or None
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        bid = event.button.id
+        if bid == "profile-create-cancel":
+            self.dismiss(None)
             return
-        self.dismiss((name, password or None))
+        if bid == "profile-create-back":
+            self._show_protect_choice()
+            return
+        if bid == "protect-yes":
+            if self._name_or_refocus() is None:
+                return
+            self._show_password_inputs()
+            return
+        if bid == "protect-no":
+            name = self._name_or_refocus()
+            if name is None:
+                return
+            self.dismiss((name, None))
+            return
+        if bid == "profile-create-save":
+            name = self._name_or_refocus()
+            if name is None:
+                return
+            password = self.query_one("#profile-password", Input).value
+            confirm = self.query_one("#profile-password-confirm", Input).value
+            if not password:
+                self.query_one("#profile-password", Input).focus()
+                return
+            if password != confirm:
+                self.app.toast("Passwords didn't match.", style="bold red")
+                confirm_input = self.query_one("#profile-password-confirm", Input)
+                confirm_input.value = ""
+                confirm_input.focus()
+                return
+            self.dismiss((name, password))
 
     def on_key(self, event):
         if event.key == "escape":
