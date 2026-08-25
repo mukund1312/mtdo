@@ -18,6 +18,7 @@ from mtdo.app import (
     ProfileCreateScreen,
     ProfileManageScreen,
     ProfileMenuScreen,
+    RecoveryCodeScreen,
     TextPromptScreen,
     ToastLine,
     TodoApp,
@@ -97,6 +98,80 @@ async def test_creating_profile_updates_header_immediately(unique_slug):
 
         header = app.query_one(ClockHeader).content.plain
         assert f"Hello, {unique_slug}" in header
+
+
+async def test_creating_profile_with_password_shows_recovery_code(unique_slug):
+    """gh44/gh49: password protection used to be a single skippable text field --
+    both bugs were testers surprised, later, that an unprotected profile never
+    prompted for a password on switch. ProfileCreateScreen now makes it an
+    explicit Yes/No choice; this exercises the "Yes" path end to end through
+    real key dispatch, confirming the profile actually ends up protected and
+    RecoveryCodeScreen shows a real code before the app proceeds."""
+    app = TodoApp()
+    async with app.run_test() as pilot:
+        await _dismiss_first_run_prompts(pilot, app)
+
+        app.action_create_profile()
+        await pilot.pause()
+        assert isinstance(app.screen, ProfileCreateScreen)
+
+        for ch in unique_slug:
+            await pilot.press(ch)
+        await pilot.press("tab")  # -> "Yes, set a password"
+        await pilot.press("enter")
+        await pilot.pause()
+
+        for ch in "abc123":
+            await pilot.press(ch)
+        await pilot.press("tab")
+        for ch in "abc123":
+            await pilot.press(ch)
+        await pilot.press("tab")  # -> Save
+        await pilot.press("enter")
+        await pilot.pause()
+
+        assert isinstance(app.screen, RecoveryCodeScreen)
+        assert len(app.screen.recovery_code) > 0
+        await pilot.press("enter")  # acknowledge
+        await pilot.pause()
+
+        slug = pf.get_active_slug()
+        profile = pf.get_profile(slug)
+        assert profile["name"] == unique_slug
+        assert profile["protected"] is True
+
+
+async def test_creating_profile_mismatched_passwords_does_not_create_it(unique_slug):
+    """A real failure mode this UI can hit that the old single-field version
+    couldn't: a typo in the confirm field. Must toast and let the user retry,
+    not silently create the profile with one of the two typed values, and not
+    crash."""
+    app = TodoApp()
+    async with app.run_test() as pilot:
+        await _dismiss_first_run_prompts(pilot, app)
+
+        app.action_create_profile()
+        await pilot.pause()
+        for ch in unique_slug:
+            await pilot.press(ch)
+        await pilot.press("tab")
+        await pilot.press("enter")  # Yes
+        await pilot.pause()
+
+        for ch in "firstpass":
+            await pilot.press(ch)
+        await pilot.press("tab")
+        for ch in "secondpass":
+            await pilot.press(ch)
+        await pilot.press("tab")
+        await pilot.press("enter")  # Save, but mismatched
+        await pilot.pause()
+
+        assert isinstance(app.screen, ProfileCreateScreen)
+        toast_text = app.query_one(ToastLine).content.plain
+        assert "match" in toast_text.lower()
+        assert not any(p["name"] == unique_slug for p in pf.list_profiles())
+        await pilot.press("escape")
 
 
 async def test_manage_profiles_rename_flow_works(unique_slug):

@@ -9,6 +9,61 @@ Add each session's PROGRESS.md entry to the same branch as the code it describes
 
 ---
 
+## 2026-08-25 (bugs gh44 + gh49, GH mukund1312/mtdo-bugs#44 #49) -- profile password protection is now an explicit choice, not a skippable field
+
+Two independent testers, same underlying confusion: switching profiles never
+asked for a password, and (gh44) what happens if you forget it -- but the second
+half was already answered by gh40's recovery code, shipped just before gh49 was
+even filed. Investigated live before writing any code (per the user's standing
+instruction to actually test, not assume): created an unprotected profile and a
+protected one directly against `profiles.py`, read both goals.json files off
+disk. Protected one was real Fernet ciphertext, unreadable outside the app;
+unprotected one was plain JSON -- the encryption mechanism was already correct
+and already covered goals.json, exactly what gh49 was asking for. So the gap
+wasn't the crypto, it was `ProfileCreateScreen`: password protection was a
+"Password (optional)" text input with zero explanation, sitting right next to
+the Save button -- trivial to blow past without registering it as a decision,
+which is exactly what both testers apparently did.
+
+Asked the user how far to take the fix: make protection mandatory for every
+profile, or keep it optional but turn it into a real explained decision instead
+of a field. They picked the latter.
+
+**What shipped:** `ProfileCreateScreen` now shows the profile name field, then a
+mandatory Yes/No step with the actual consequence spelled out ("Without one,
+this profile's goals/state files are stored as plain, readable JSON -- anyone
+with access to this computer can open and read them directly"). "No" finishes
+immediately -- the explanation was already on screen at the moment of that
+choice, which is the actual fix; a second confirmation screen would just be
+friction, not more informed consent. "Yes" reveals password + confirm inputs
+(new: a confirm field didn't exist before at all -- a typo used to just become
+your new permanent password with no way to catch it), Save creates the profile
+and shows RecoveryCodeScreen (gh40) same as before. Mismatched passwords toast
+and let you retry rather than silently using one of the two typed values.
+
+The old 2-tab "skip the password field" muscle memory still works by design --
+name, tab, tab lands on "No, keep it unprotected", enter -- same keystrokes as
+before, now landing on an explicit decision instead of an empty field. Verified
+this deliberately, not by accident: it's what let the pre-existing
+`test_creating_profile_updates_header_immediately` keep passing unmodified.
+
+CLI parity: `mtdo profile create` without `--password` (already an explicit flag,
+not a skippable field, so no UI change needed there) now prints a one-line note
+that the profile's files will be plain JSON and how to fix it.
+
+**Verified for real:** the on-disk plaintext-vs-ciphertext check above before
+touching anything; then three full headless `App.run_test()` Pilot runs through
+real key dispatch: (1) the old 2-tab shortcut still produces an unprotected
+profile, (2) the new Yes path types a password+confirm, creates a protected
+profile, and shows a real recovery code, (3) mismatched passwords toast, refuse
+to create the profile, and let the screen stay open for a retry. All three
+added as permanent regression tests (`test_creating_profile_with_password_shows_
+recovery_code`, `test_creating_profile_mismatched_passwords_does_not_create_it`).
+8/8 tests pass. Real `~/.mtdo/goals.json`/`state.json` mtimes unchanged (17 Aug /
+20 Aug) throughout.
+
+---
+
 ## 2026-08-25 (bug gh40, GH mukund1312/mtdo-bugs#40) -- password-protected profiles can now be recovered via a one-time recovery code
 
 Bug: forgetting a protected profile's password destroyed the profile's data
