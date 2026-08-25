@@ -9,6 +9,62 @@ Add each session's PROGRESS.md entry to the same branch as the code it describes
 
 ---
 
+## 2026-08-25 (bug gh18, GH mukund1312/mtdo-bugs#18) -- now-playing position no longer freezes for YouTube Music (or anything else in a browser tab)
+
+Root cause found live, on real data, before writing any fix: polled the real
+MediaRemote session on this machine while a browser tab was actively playing
+at 2x rate. `kMRMediaRemoteNowPlayingInfoElapsedTime` sat at a literally
+identical value across 9+ seconds of continuous polling, and
+`kMRMediaRemoteNowPlayingInfoTimestamp` was never present in the dict at all.
+music.py's existing extrapolation logic (added for exactly this class of
+problem) only engages when both Timestamp and PlaybackRate are present -- a
+browser/WebKit source (YouTube Music, or anything else playing in a tab)
+never publishes Timestamp, so that logic never activated for it and the
+displayed position just sat frozen between MediaRemote's own infrequent,
+source-controlled snapshot pushes.
+
+**What shipped:** a fallback extrapolation path in `_nowplaying_cli_info()`
+for when the source doesn't supply its own Timestamp -- track our own
+wall-clock moment (`time.monotonic()`) we first observe each distinct
+`elapsed` value for a given track (`_fallback_snapshot`, module-level, keyed
+on UniqueIdentifier + elapsed), and extrapolate position forward from that
+using our own clock instead, scaled by whatever PlaybackRate the source
+reports (assume 1x if it reports none at all, matching the existing "assume
+playing" convention elsewhere in this function). A genuinely new snapshot
+from the source (a real position jump, a seek, or MediaRemote occasionally
+pushing an actual update) resets the baseline instead of compounding drift on
+top of a stale one. Paused (rate 0) correctly freezes exactly at the reported
+elapsed value, same as before -- only advances while actually playing. Also,
+as a side effect (not the reported bug, but the same underlying gap): this
+also smooths Spotify's own between-snapshot staleness, since Spotify's raw
+MediaRemote entries include neither Timestamp nor a useful Rate either --
+noted honestly in the docstring as a bonus, not claimed as something
+separately verified for Spotify specifically.
+
+**Verified for real, against actual live playback, not synthetic data
+first:** watched the real raw MediaRemote elapsed value stay frozen at 76.72
+for a genuinely-playing 2x-rate browser session across three real 3-second
+polls before touching any code, to confirm the root cause precisely. After
+the fix, polled the same live session six times over ~10 real seconds and
+watched position actually advance -- 76.72 -> 81.21 -> 85.69 -> 90.15 ->
+94.61 -> 99.10s -- while the underlying raw elapsed value it's built on
+stayed frozen at 76.720 the entire time, confirming the fix operates
+correctly on top of the real, still-broken MediaRemote data rather than
+depending on that data somehow being fixed. Separately confirmed live that
+pausing the real session correctly freezes position exactly where it was
+(no drift while paused). Then, since real playback state isn't reproducible
+in CI, formalized the exact scenarios as 4 deterministic regression tests in
+a new `tests/test_music.py` (mocked `subprocess.run` output + monkeypatched
+`time.monotonic` so the extrapolation math is checked exactly, not just "a
+plausible number came out"): frozen-elapsed-advances-in-real-time (the gh18
+case), paused-stays-frozen, a-genuinely-new-snapshot-resets-the-baseline, and
+source-provided-Timestamp-still-preferred-when-present (confirming the
+fallback is additive, doesn't change existing native-app behavior). 33/33
+tests pass (29 previous + 4 new). Real `~/.mtdo/goals.json`/`state.json`
+mtimes unchanged throughout.
+
+---
+
 ## 2026-08-25 (bug gh38, GH mukund1312/mtdo-bugs#38) -- Practice Lab code execution now has real, verified sandboxing
 
 Unlike the other bugs this session, this wasn't a UI/discoverability gap -- it

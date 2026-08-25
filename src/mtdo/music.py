@@ -180,6 +180,19 @@ def _parse_mediaremote_timestamp(value):
     raise ValueError(f"unrecognized MediaRemote timestamp: {value!r}")
 
 
+# gh18: our own fallback clock for extrapolating position when the source doesn't
+# publish a Timestamp at all (confirmed live: a real WebKit/browser session --
+# YouTube Music in a Safari tab -- never includes kMRMediaRemoteNowPlayingInfo
+# Timestamp, and its ElapsedTime sat at a literally frozen value across 9+ seconds
+# of continuous polling while actively playing at 2x rate). Keyed on the track's
+# UniqueIdentifier + the last elapsed value actually seen from the source, so a
+# genuinely new snapshot (a real position jump, a seek, MediaRemote finally
+# pushing an update) resets the extrapolation baseline instead of compounding
+# drift on top of it. Module-level, not per-call, since now_playing() is polled
+# repeatedly (every second, from TodoApp's own tick) by the one running process.
+_fallback_snapshot = {"identifier": None, "elapsed": None, "seen_at": None}
+
+
 def _nowplaying_cli_info():
     """Uses `get-raw` (the full MediaRemote dict), not `get --json <keys>` -- confirmed
     by hand that the shorthand key-selection path is broken for elapsedTime
@@ -190,10 +203,16 @@ def _nowplaying_cli_info():
     snapshot updated only on discrete events (play/pause/seek/track change), not a
     continuously ticking clock. Some sources also publish Timestamp + PlaybackRate
     specifically so a consumer can extrapolate "right now" from that snapshot --
-    used below when present. Spotify's own entries don't include either (confirmed
-    by hand), so for Spotify specifically this still only advances when Spotify
-    itself pushes a new snapshot, not every second -- there's no data to extrapolate
-    from, not a bug in this extrapolation."""
+    used below when present, preferred over our own fallback since it's the source's
+    own authoritative clock. When it's absent (gh18 -- confirmed live: WebKit/browser
+    sources, e.g. YouTube Music web, never publish one), fall back to extrapolating
+    from our own wall clock instead, using the moment we first observed the current
+    elapsed value as the substitute timestamp (see _fallback_snapshot above) --
+    same idea, just backed by our own clock rather than the source's. Spotify's own
+    entries include neither Timestamp nor a useful Rate for this (confirmed by hand),
+    but the fallback path still applies there via the identifier+elapsed tracking,
+    so this also fixes what used to be Spotify-specific staleness between its own
+    snapshot pushes, not just the WebKit case gh18 actually reported."""
     try:
         result = subprocess.run(
             ["nowplaying-cli", "get-raw"], capture_output=True, text=True, timeout=3,
@@ -209,15 +228,34 @@ def _nowplaying_cli_info():
     elapsed = float(data.get("kMRMediaRemoteNowPlayingInfoElapsedTime") or 0)
     rate = data.get("kMRMediaRemoteNowPlayingInfoPlaybackRate")
     timestamp = data.get("kMRMediaRemoteNowPlayingInfoTimestamp")
+    identifier = data.get("kMRMediaRemoteNowPlayingInfoUniqueIdentifier")
+    playing = rate is None or float(rate) > 0  # no rate published (e.g. Spotify) -- assume playing
+
     position = elapsed
+    used_source_timestamp = False
     if rate is not None and timestamp is not None:
         try:
             since_snapshot = time.time() - _parse_mediaremote_timestamp(timestamp)
             position = elapsed + since_snapshot * float(rate)
+            used_source_timestamp = True
         except (ValueError, TypeError):
             position = elapsed
 
-    playing = rate is None or float(rate) > 0  # no rate published (e.g. Spotify) -- assume playing
+    if not used_source_timestamp:
+        now = time.monotonic()
+        same_snapshot = (
+            _fallback_snapshot["identifier"] == identifier and _fallback_snapshot["elapsed"] == elapsed
+        )
+        if not same_snapshot:
+            _fallback_snapshot["identifier"] = identifier
+            _fallback_snapshot["elapsed"] = elapsed
+            _fallback_snapshot["seen_at"] = now
+        if playing:
+            effective_rate = float(rate) if rate is not None else 1.0
+            position = elapsed + (now - _fallback_snapshot["seen_at"]) * effective_rate
+        else:
+            position = elapsed
+
     return {
         "song": title,
         "artist": data.get("kMRMediaRemoteNowPlayingInfoArtist") or "",
