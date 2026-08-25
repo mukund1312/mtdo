@@ -17,10 +17,12 @@ wouldn't otherwise just run" and leave it at that):
     including confirming a write outside the allowed dirs and a real network connection
     attempt both actually get denied, not just that the happy path still runs.
   - On every platform (including when sandbox-exec isn't available, e.g. Linux): POSIX
-    resource limits cap CPU time and max file size (see _apply_resource_limits -- a
-    process-count cap was tried and dropped, see that function's docstring for why) --
-    a second, independent backstop against a runaway process or a write filling the
-    disk, on top of the wall-clock timeout below.
+    resource limits cap CPU time and max file size (see _apply_resource_limits --
+    memory and process-count caps were both tried and dropped after real CI
+    failures on Linux that Mac-only testing couldn't have caught; see that
+    function's docstring for the specifics) -- a second, independent backstop
+    against a runaway process or a write filling the disk, on top of the
+    wall-clock timeout below.
 
 What this deliberately does NOT claim: file READS aren't restricted (python3/javac/gcc
 need broad read access to run at all), so code here could still read something like an
@@ -228,45 +230,52 @@ def _apply_resource_limits():
     """Returns a preexec_fn for subprocess.run -- runs in the freshly-forked child,
     before exec, so these limits apply to the code being run, not to mtdo itself.
 
-    Best-effort on RLIMIT_AS specifically: confirmed by hand that macOS silently
-    refuses to lower it from its default of unlimited ("current limit exceeds
-    maximum limit", even setting soft and hard to the same value) -- a known
-    Darwin/XNU quirk, not a bug in this code, so that one failing is expected
-    there and deliberately not treated as fatal.
+    RLIMIT_AS and RLIMIT_NPROC were both tried and dropped -- not from caution,
+    from two real CI failures each caused, on a platform where Mac-only testing
+    couldn't have caught either:
 
-    RLIMIT_NPROC was tried twice and dropped: first at 100, which broke gcc/g++/
-    javac outright on an ordinary dev Mac already running ~400 processes for
-    that user across everything else open (it's a per-real-UID limit, not
-    scoped to this subprocess's own tree, so a naive small cap collides with
-    unrelated background load). Raised to 1000 to fix that -- which then broke
-    javac/java a second time, differently, in CI: on Linux, RLIMIT_NPROC also
-    counts THREADS (NPTL implements each thread as its own kernel task), and a
-    JVM's own internal startup -- GC refinement threads, service threads, JIT
-    compiler threads -- can consume a meaningful chunk of whatever number is
-    picked, on top of however many "processes" the count already carries from
-    outside factors this code has no way to see (a CI container's baseline
-    differs from a laptop's). There's no single absolute number confirmed safe
-    across both failure modes, so this limit is dropped rather than shipped
-    with a third guess. Fork-bomb impact is still bounded by RLIMIT_CPU (every
-    descendant process shares the same real CPU budget) and the wall-clock
-    subprocess timeout above it, just not as immediately as a hard process cap
-    would have been.
+    RLIMIT_AS silently never actually applied on macOS the whole time it was
+    being tested there ("current limit exceeds maximum limit" even setting
+    soft and hard to the same value -- a known Darwin/XNU quirk), so every
+    "confirmed working" run on this machine was, unknowingly, running with NO
+    memory cap at all. On Linux, RLIMIT_AS is fully enforced -- and a JVM
+    reserves several GB of virtual address space upfront (G1's default heap
+    sizing, metaspace, thread stacks) even for a trivial program, so a 1.5GB
+    cap that never once got exercised by real Java startup on macOS broke Java
+    startup immediately in CI (pthread_create failing partway through the
+    JVM's own initialization, once already pinned near the ceiling: "Could not
+    create G1ServiceThread"). There's no size that's plausibly safe against
+    both "small enough to matter as a real memory-bomb cap" and "large enough
+    for whatever a JVM decides to reserve on a host with more RAM than this
+    one" without testing against every JVM/heap-default combination this might
+    ever run on, which isn't achievable here -- dropped rather than guess a
+    bigger number and risk a third silent Mac-only "pass."
 
-    RLIMIT_CPU/FSIZE both set successfully and confirmed to actually do
-    something (a CPU-bound busy loop was reliably SIGXCPU-killed around the
-    configured limit in testing, independent of the wall-clock timeout -- see
-    _CPU_TIME_LIMIT_SECONDS above): CPU time as a second, harder backstop
-    alongside the wall-clock subprocess timeout, covering the case a hang isn't
-    CPU-bound at all (e.g. blocked on I/O, where only the wall-clock timeout
-    would ever catch it) as well as the reverse; a generous file-size cap
-    against filling the disk."""
+    RLIMIT_NPROC was tried at 100 (broke gcc/g++/javac on this Mac -- it's a
+    per-real-UID limit, not scoped to this subprocess's own tree, and this
+    account already had ~400 processes running across everything else open),
+    then 1000 (fixed that, but then broke javac/java again in CI: Linux also
+    counts threads against RLIMIT_NPROC, and a JVM's own GC/service/JIT
+    threads at startup can consume a meaningful share of whatever number gets
+    picked, on top of however many "processes" already count against it from
+    factors this code can't see on someone else's machine). Also dropped.
+
+    What's left -- RLIMIT_CPU and RLIMIT_FSIZE -- are the two limits actually
+    confirmed to do something real without breaking anything, on both
+    platforms, against all five languages: CPU time as a second backstop
+    alongside the wall-clock subprocess timeout (a CPU-bound busy loop was
+    reliably SIGXCPU-killed at the configured limit, independent of that
+    timeout -- see _CPU_TIME_LIMIT_SECONDS above), and a generous cap against
+    filling the disk. A memory bomb or a fork bomb's impact is still bounded
+    by RLIMIT_CPU and the wall-clock timeout eventually catching up to it,
+    just not as immediately as a dedicated cap would have been -- an honest
+    gap, not a hidden one; sandbox_status() never claims otherwise."""
     def limits():
         if _resource is None:
             return
         for rl, value in (
             (_resource.RLIMIT_CPU, _CPU_TIME_LIMIT_SECONDS),
             (_resource.RLIMIT_FSIZE, 50_000_000),
-            (_resource.RLIMIT_AS, 1_500_000_000),
         ):
             try:
                 _resource.setrlimit(rl, (value, value))
