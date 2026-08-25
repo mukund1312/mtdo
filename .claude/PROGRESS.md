@@ -9,6 +9,65 @@ Add each session's PROGRESS.md entry to the same branch as the code it describes
 
 ---
 
+## 2026-08-25 (bug gh39, GH mukund1312/mtdo-bugs#39) -- a bad goals.json/config.yaml now fails with a clear message instead of a raw traceback
+
+Bug's own framing: a malformed hand-edit doesn't corrupt history (state.json
+etc. stay untouched either way -- confirmed still true), but gives "just a
+Python exception" instead of a clear error. Traced the three real places this
+actually happens: `config.load_goals()`'s `json.load` (bad JSON syntax),
+`config.goals_to_config()`'s category loop (`cat_def["name"]` -- a category
+missing its name), and `core.configure()`'s per-category dict access
+(`meta["label"]`, `meta["days"]`) -- the last of which is the *exact* crash
+(`KeyError: 'label'`) hit live earlier this same session while testing an
+unrelated fix with an oversimplified test goals.json, which turned out to be
+a perfect live reproduction of this bug rather than just a test-script mistake.
+
+**What shipped:** a new `config.ConfigError` -- callers catch this specifically
+and show `str(e)` directly (already written for a person, not a traceback).
+Added validation + clear messages at all three real failure points, plus
+`config.load_config()`'s `yaml.safe_load` (bad YAML) for parity. Wired into
+both places that actually load config:
+- `cli.py cmd_run` (CLI startup, before the TUI or its own crash screen even
+  exists): catches `ConfigError`, prints a clean two-line message, exits
+  cleanly instead of a raw traceback dumped straight to the terminal.
+- `app.py TodoApp.reload_from_goals()` (live in-app reload -- `check_goals_
+  file` polls every 2s for external edits): this is the sharper failure mode --
+  a bad hand-edit made *while the app is already running* used to crash the
+  whole session almost immediately after the bad save. Now catches `ConfigError`
+  at every stage of the pipeline, keeps showing whatever config was last
+  successfully loaded, and toasts a clear red error (regardless of the
+  `toast_on_change` flag -- that only ever gated the cosmetic "reloaded"
+  message, a real problem needs to surface either way). Recovers automatically
+  once the file's fixed, same as any other external edit.
+
+Real bonus fix found while rewriting `core.configure()`: it used to reset
+`CATEGORY_META = {}` and populate it one category at a time in a loop, so a
+crash partway through (the old unguarded `KeyError`, or now a validation
+failure) left it *half*-populated -- some categories present, others silently
+gone, for the rest of the running session, on top of the raw-traceback problem.
+Rewrote it to build everything into locals first and only assign the module's
+globals at the very end, atomically -- a failed reload now leaves the app
+exactly as it was, not almost as it was.
+
+**Verified for real:** all three original crash points reproduced directly
+against real malformed input (bad JSON syntax, wrong top-level JSON shape,
+categories not a list, a category missing "name", a category missing "label")
+and confirmed each now raises `ConfigError` with a specific, readable message.
+Then the two integration points: `cli.main()` invoked with a broken goals.json
+on a bare `mtdo` startup -- clean two-line message, exit 1, no traceback. Then,
+more importantly, a full headless `App.run_test()` Pilot run: a real running
+app with valid state, hand-edit goals.json to garbage mid-session, trigger the
+same `check_goals_file` path the poll would, confirm the app is still running
+(not crashed), confirm the previous category state survived untouched, confirm
+a clear toast appeared, then fix the file and confirm the app picks the fix
+back up automatically -- repeated for both the JSON-syntax failure and the
+missing-required-field failure (the exact `KeyError: 'label'` scenario).
+Formalized as 7 permanent regression tests in a new `tests/test_config_
+validation.py`. 20/20 tests pass (13 previous + 7 new). Real `~/.mtdo/goals.
+json`/`state.json` mtimes unchanged throughout.
+
+---
+
 ## 2026-08-25 (gh49, second follow-up) -- fixed a real lockout bug in the launch lock screen, relabeled "Reset" to "Reset Password"
 
 The user pointed out `ProfileUnlockScreen` (shipped earlier the same day) had

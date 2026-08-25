@@ -2581,9 +2581,20 @@ class TodoApp(App):
             goals = appconfig.load_goals()
         except FileNotFoundError:
             cfg = appconfig.empty_config()
+        except appconfig.ConfigError as e:
+            self._reload_failed(e)
+            return
         else:
-            cfg, _, _ = appconfig.goals_to_config(goals)
-        tc.configure(cfg)
+            try:
+                cfg, _, _ = appconfig.goals_to_config(goals)
+            except appconfig.ConfigError as e:
+                self._reload_failed(e)
+                return
+        try:
+            tc.configure(cfg)
+        except appconfig.ConfigError as e:
+            self._reload_failed(e)
+            return
         CATEGORY_COLORS.update(_build_category_colors())
         self.state = tc.ensure_day_registered(self.state, self.today)
         tc.save_state(self.state)
@@ -2595,6 +2606,22 @@ class TodoApp(App):
             pass
         if toast_on_change:
             self.toast("goals.json changed -- reloaded", style="bold cyan")
+
+    def _reload_failed(self, error):
+        """gh39: a hand-edit that leaves goals.json invalid (bad JSON, a category
+        missing "label"/"days", ...) must not crash the running app -- the polling
+        check_goals_file (every 2s, see above) would otherwise take the whole app
+        down almost immediately after a bad save. Keeps showing whatever config was
+        last successfully loaded and always says what's wrong -- unlike the
+        "changed -- reloaded" message above, this ignores toast_on_change, since a
+        real problem should surface regardless of which caller triggered the
+        reload. Still updates _goals_mtime so the poll doesn't re-toast the exact
+        same error every 2 seconds until the file actually changes again."""
+        try:
+            self._goals_mtime = os.path.getmtime(appconfig.GOALS_PATH)
+        except OSError:
+            pass
+        self.toast(f"goals.json problem, not reloaded: {error}", style="bold red")
 
     def action_add_field(self):
         """Create a brand new top-level category (e.g. a new subject/track) from inside

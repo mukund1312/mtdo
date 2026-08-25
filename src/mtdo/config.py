@@ -102,6 +102,18 @@ def set_practice_terminal_enabled(enabled):
             pass
 
 
+class ConfigError(Exception):
+    """A goals.json/config.yaml problem that's the file's fault -- bad JSON/YAML
+    syntax, a category missing its name, a malformed date -- not a genuine mtdo bug.
+    gh39: before this, a bad hand-edit surfaced as whatever raw JSONDecodeError/
+    YAMLError/KeyError/TypeError happened to come out of json.load, yaml.safe_load,
+    or the dict-walking in goals_to_config/core.configure, at whatever the first
+    invalid access happened to be -- correct in that it did stop rather than
+    corrupting anything on disk, but gave no indication of what was actually wrong.
+    Callers should catch this specifically and show str(e) directly rather than a
+    traceback; it's already written to be read by a person, not a stack trace."""
+
+
 _PACKAGE_DIR = os.path.dirname(os.path.abspath(__file__))
 DEMO_CONFIG_PATH = os.path.join(_PACKAGE_DIR, "demo_config.yaml")
 FRESH_CONFIG_PATH = os.path.join(_PACKAGE_DIR, "fresh_config.yaml")
@@ -141,7 +153,10 @@ def load_config():
             f"No config at {CONFIG_PATH}. Run `mtdo init` first."
         )
     with open(CONFIG_PATH) as f:
-        return yaml.safe_load(f)
+        try:
+            return yaml.safe_load(f)
+        except yaml.YAMLError as e:
+            raise ConfigError(f"{CONFIG_PATH} isn't valid YAML: {e}") from e
 
 
 def _save_config(cfg):
@@ -164,14 +179,25 @@ def _strip_meta_keys(d):
 
 
 def load_goals():
-    """Load goals.json directly (the single source of truth in Option A mode)."""
+    """Load goals.json directly (the single source of truth in Option A mode). Raises
+    ConfigError (see its docstring), not a raw JSONDecodeError, if the file isn't valid
+    JSON or isn't a JSON object at the top level."""
     if not os.path.exists(GOALS_PATH):
         raise FileNotFoundError(
             f"No goals.json at {GOALS_PATH}. Run `mtdo template goals.json` to create one, "
             f"then `mtdo import goals.json` to set it up."
         )
     with open(GOALS_PATH) as f:
-        return _strip_meta_keys(json.load(f))
+        try:
+            raw = json.load(f)
+        except json.JSONDecodeError as e:
+            raise ConfigError(f"{GOALS_PATH} isn't valid JSON: {e}") from e
+    if not isinstance(raw, dict):
+        raise ConfigError(
+            f"{GOALS_PATH} should be a JSON object at the top level, got "
+            f"{type(raw).__name__} instead."
+        )
+    return _strip_meta_keys(raw)
 
 
 def create_snapshot():
@@ -250,8 +276,21 @@ def goals_to_config(goals, existing_cfg=None):
     if "plan_end" in goals:
         cfg["plan_end"] = goals.get("plan_end")
 
+    raw_categories = goals.get("categories", [])
+    if not isinstance(raw_categories, list):
+        raise ConfigError(
+            f'"categories" should be a list, got {type(raw_categories).__name__} instead.'
+        )
+
     added, updated = [], []
-    for cat_def in goals.get("categories", []):
+    for i, cat_def in enumerate(raw_categories):
+        if not isinstance(cat_def, dict):
+            raise ConfigError(
+                f"categories[{i}] should be an object with at least a \"name\" field, "
+                f"got {type(cat_def).__name__} instead."
+            )
+        if "name" not in cat_def:
+            raise ConfigError(f'categories[{i}] is missing its "name" field.')
         name = cat_def["name"]
         existing = cfg["categories"].get(name)
 
