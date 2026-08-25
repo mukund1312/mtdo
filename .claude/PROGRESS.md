@@ -9,6 +9,45 @@ Add each session's PROGRESS.md entry to the same branch as the code it describes
 
 ---
 
+## 2026-08-25 (gh49, second follow-up) -- fixed a real lockout bug in the launch lock screen, relabeled "Reset" to "Reset Password"
+
+The user pointed out `ProfileUnlockScreen` (shipped earlier the same day) had
+no "forgot password" path at all. Checked the code to confirm rather than take
+it on faith: correct -- that screen blocks on_mount *before* the rest of the
+app even constructs, and the only place the recovery-code reset flow lived was
+Manage Profiles, which is unreachable if you can't get past the lock screen in
+the first place. Someone who genuinely forgot their password, even holding
+their real recovery code, had no way back in through the app at all -- the
+lock screen I shipped earlier today had accidentally made the whole recovery-
+code system (gh40) unreachable for its actual intended use case. A second,
+smaller ask in the same message: rename Manage Profiles' "Reset" button to
+"Reset Password" -- a bare "Reset" reads as wiping the profile back to empty.
+
+**What shipped:**
+- Added a "Forgot password?" button to `ProfileUnlockScreen`, wired through
+  the same `TodoApp._reset_profile_password` Manage Profiles already used.
+  Added an `on_done(new_password)` callback param to that method (default
+  None, so Manage Profiles' existing call is unaffected and just toasts) --
+  the lock screen's button passes `self.dismiss` directly as `on_done`, so a
+  successful reset unlocks straight into the app with the new password
+  instead of making the user retype it.
+- Renamed the Manage Profiles row button from "Reset" to "Reset Password"
+  (new CSS class `.profile-row-action-wide`, width 18, since "Reset Password"
+  doesn't fit the other rows' width-10 buttons).
+
+**Verified for real:** a from-scratch headless Pilot script simulating the
+actual failure mode -- launch into the lock screen, deliberately never try the
+real password, Tab straight to "Forgot password?", walk the recovery-code ->
+new-password -> confirm chain with real key dispatch, confirm it lands
+unlocked in the running app (not back at the lock screen or stuck on a
+prompt), confirm the new password works and the old one doesn't. Then the
+label change, confirmed via `Button.label` on the actual mounted widget, not
+just reading the source. Both formalized as permanent pytest regression tests.
+13/13 tests pass (11 previous + 2 new). Real `~/.mtdo/goals.json`/`state.json`
+mtimes unchanged throughout.
+
+---
+
 ## 2026-08-25 (gh49 follow-up) -- password protection now gates app launch, every switch, and rename/delete/authenticated Manage Profiles actions
 
 Re-raised after gh44/gh49 shipped: the user asked for three more specific

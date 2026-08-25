@@ -359,3 +359,68 @@ async def test_deleting_protected_profile_requires_its_password(unique_slug):
         await pilot.press("enter")
         await pilot.pause()
         assert pf.get_profile(slug_target) is None, "must delete once the right password and name are given"
+
+
+async def test_forgot_password_from_lock_screen_unlocks_via_recovery_code(unique_slug):
+    """Real lockout bug, found and fixed the same day ProfileUnlockScreen
+    shipped: that screen blocks *before* the rest of the app mounts, so Manage
+    Profiles' Reset Password -- the only place the recovery-code flow lived --
+    was completely unreachable if you actually forgot the password. There was
+    no way back in at all short of editing profiles/index.json by hand. Fixed
+    by adding a "Forgot password?" button on the lock screen itself, wired
+    through the same recovery-code flow, that unlocks straight into the app on
+    a successful reset instead of making you retype the new password."""
+    slug, code = pf.create_profile(unique_slug, password="original-pw")
+    pf.set_active(slug)
+
+    app = TodoApp()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        assert isinstance(app.screen, ProfileUnlockScreen)
+
+        await pilot.press("tab")  # -> "Forgot password?" (the only other focusable widget)
+        await pilot.press("enter")
+        await pilot.pause()
+        assert isinstance(app.screen, TextPromptScreen)  # recovery code prompt
+
+        for ch in code:
+            await pilot.press(ch)
+        await pilot.press("enter")
+        await pilot.pause()
+        assert isinstance(app.screen, TextPromptScreen)  # new password prompt
+        for ch in "brand-new-pw":
+            await pilot.press(ch)
+        await pilot.press("enter")
+        await pilot.pause()
+        assert isinstance(app.screen, TextPromptScreen)  # confirm prompt
+        for ch in "brand-new-pw":
+            await pilot.press(ch)
+        await pilot.press("enter")
+        await pilot.pause()
+
+        assert not isinstance(app.screen, (ProfileUnlockScreen, TextPromptScreen)), \
+            "a successful reset should unlock straight into the app"
+        assert pf.check_password(slug, "brand-new-pw") is True
+        assert pf.check_password(slug, "original-pw") is False
+
+
+async def test_manage_profiles_reset_button_says_reset_password(unique_slug):
+    """The bare label "Reset" on a protected profile's row read as resetting
+    the whole profile back to empty, not resetting its password -- confirms
+    the disambiguated label actually ships, not just the docstring saying so."""
+    slug, _ = pf.create_profile(unique_slug, password="hunter2")
+
+    app = TodoApp()
+    async with app.run_test() as pilot:
+        for ch in "hunter2":
+            await pilot.press(ch)
+        await pilot.press("enter")
+        await pilot.pause()
+
+        app.action_manage_profiles()
+        await pilot.pause()
+        reset_btn = next(
+            c for row in app.screen.rows.children for c in row.children
+            if getattr(c, "profile_slug", None) == slug and getattr(c, "row_action", None) == "reset"
+        )
+        assert str(reset_btn.label) == "Reset Password"
