@@ -119,9 +119,26 @@ latest) failed on two things neither Mac testing above could have caught:
    first and no-op if the app has already exited.
 
 Re-ran the full suite locally after both fixes (29/29 still pass) before
-pushing; true confirmation for both -- the Linux JVM-under-constrained-
-threads behavior and the CI-timing-dependent race -- can only come from an
-actual CI run, not local Mac testing, so this is now pending that.
+pushing. Pushed, re-ran CI: the ClockHeader fix worked, but Java still
+failed with the exact same error -- RLIMIT_NPROC was never actually the
+cause. The real culprit was RLIMIT_AS (1.5GB), which had silently never
+applied on macOS the entire time it was "confirmed working" there (the same
+Darwin/XNU quirk noted when it was first added: setrlimit refuses to lower
+it from unlimited) -- every earlier Mac test run was unknowingly running
+with zero memory cap. On Linux it's fully enforced, and a JVM reserves
+several GB of virtual address space upfront even for a trivial program, so
+a cap that had never once actually been exercised against real Java startup
+broke it immediately in CI. No size is plausibly safe against both "small
+enough to matter as a real cap" and "large enough for whatever a JVM
+reserves on a bigger host" without testing combinations this can't cover --
+dropped RLIMIT_AS entirely too, for the same reason RLIMIT_NPROC was
+dropped. What's left (RLIMIT_CPU + RLIMIT_FSIZE) are the two limits
+actually confirmed to do something real, on both platforms, without
+breaking any of the five languages. Pushed again; CI passed clean on this
+second follow-up commit, full green including Java. Genuine lesson from
+this whole detour: a limit that silently never applies on your only test
+platform isn't verified, it's untested, and macOS's specific RLIMIT_AS
+quirk actively hid that distinction.
 
 ---
 
