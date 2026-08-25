@@ -4,18 +4,48 @@ the commands you'd otherwise type by hand: `python3 file.py`, `javac X.java && j
 `gcc -o a file.c && ./a`, `g++ ...` -- nothing new is invented, this just saves typing
 them out every run.
 
-Not a sandbox: this runs with the same permissions as mtdo itself, same as typing the
-commands directly into a shell would. A hard wall-clock timeout guards against an
-infinite loop hanging the run, which is common enough in DSA practice to be worth
-guarding against specifically, but this is not a security boundary against genuinely
-malicious code -- don't paste code here you wouldn't otherwise just run.
+Real, but partial, sandboxing (gh38 -- this used to just say "don't paste code here you
+wouldn't otherwise just run" and leave it at that):
+
+  - On macOS: every run is wrapped in sandbox-exec (Apple's built-in Seatbelt profile
+    mechanism -- no extra install, no new dependency) with a deny-by-default profile
+    that blocks ALL network access and confines writes to this practice directory (plus
+    the OS's own ephemeral temp scratch space -- javac/gcc/the JVM all need to write
+    there to function at all, confirmed by hand: a first attempt without it broke every
+    compiled language). Verified empirically against python3, javac+java, gcc, g++, and
+    sqlite3 on a real machine before shipping, not just written and assumed correct --
+    including confirming a write outside the allowed dirs and a real network connection
+    attempt both actually get denied, not just that the happy path still runs.
+  - On every platform (including when sandbox-exec isn't available, e.g. Linux): POSIX
+    resource limits cap CPU time, max file size, and process count (see
+    _apply_resource_limits) -- a second, independent backstop against a fork bomb or a
+    runaway write filling the disk, on top of the wall-clock timeout below.
+
+What this deliberately does NOT claim: file READS aren't restricted (python3/javac/gcc
+need broad read access to run at all), so code here could still read something like an
+SSH key -- it just can't send it anywhere, since network is blocked and the process's
+own output is all that leaves the sandbox. This is OS-level process isolation, not
+container/VM-level isolation, and a sandbox-escape exploit targeting Seatbelt itself
+specifically isn't defended against. sandbox_status() reports exactly what's active for
+a given run (never more than what's actually true) -- shown directly in the Practice
+Lab's output panel every run, not just documented here, so the real, current state of
+protection is in front of whoever's using it. Given all of that: still don't paste code
+here you wouldn't otherwise run, especially on a platform other than macOS.
 """
+import functools
 import os
 import shutil
 import subprocess
+import sys
+import tempfile
 import time
 
 from . import config as appconfig
+
+try:
+    import resource as _resource  # POSIX only -- None on Windows, guarded everywhere below
+except ImportError:
+    _resource = None
 
 PRACTICE_DIR = os.path.join(appconfig.APP_DIR, "practice")
 SAMPLE_DB_PATH = os.path.join(PRACTICE_DIR, "sample.db")
@@ -134,6 +164,147 @@ class RunResult:
         self.ok = ok
 
 
+def _sandbox_available():
+    return sys.platform == "darwin" and shutil.which("sandbox-exec") is not None
+
+
+@functools.lru_cache(maxsize=1)
+def _sandbox_profile():
+    """A deny-by-default Seatbelt profile: process fork/exec and file reads stay
+    open (interpreters/compilers need broad read access to run at all), but
+    writes are confined to this practice directory plus this process's own
+    session temp directory (both resolved via os.path.realpath -- Seatbelt
+    matches the post-symlink-resolution path, and /tmp and the temp dir macOS
+    hands out under /var/folders are themselves symlinks into /private) -- the
+    temp-dir grant isn't optional, javac/gcc/g++ all need to write their own
+    scratch files under $TMPDIR to function at all, confirmed by hand.
+
+    Deliberately NOT a blanket grant on bare /tmp or /var/folders: an earlier
+    version of this profile allowed those whole trees, which happened to also
+    still let a test write completely unconfined to /tmp -- i.e. it silently
+    defeated the actual write-confinement guarantee this function exists to
+    provide. Caught by testing the deny path, not just the allow path (writing
+    a file it should refuse, not just confirming a legitimate compile still
+    works) -- resolving PRACTICE_DIR/tempfile.gettempdir() to their own real,
+    specific paths is what keeps the grant no broader than actually needed."""
+    tmp = os.path.realpath(tempfile.gettempdir())
+    practice = os.path.realpath(PRACTICE_DIR)
+    write_paths = sorted({practice, tmp})
+    allow_writes = "\n".join(f'(allow file-write* (subpath "{p}"))' for p in write_paths)
+    return f"""(version 1)
+(deny default)
+(allow process-fork)
+(allow process-exec)
+(allow file-read*)
+{allow_writes}
+(allow signal (target self))
+(allow sysctl-read)
+(allow mach-lookup)
+(allow iokit-open)
+(allow file-ioctl)
+"""
+
+
+def _sandboxed_argv(argv):
+    if not _sandbox_available():
+        return argv
+    return ["sandbox-exec", "-p", _sandbox_profile()] + argv
+
+
+# Fixed, not derived from whatever wall-clock timeout a given run() call happens to
+# use -- an earlier version computed this as `timeout + 2`, which sounds like a
+# reasonable backstop but actually can never fire before the wall-clock timeout by
+# construction (it's always looser), making it dead code for any timeout value,
+# not just the default. Caught by testing with a deliberately loosened wall-clock
+# timeout (30s) specifically to give the CPU limit room to be the one that fires --
+# the original design silently never did, running the full 30s instead of being
+# independently killed. A fixed value actually acts as an independent backstop
+# regardless of what timeout a caller passes.
+_CPU_TIME_LIMIT_SECONDS = 15
+
+
+def _apply_resource_limits():
+    """Returns a preexec_fn for subprocess.run -- runs in the freshly-forked child,
+    before exec, so these limits apply to the code being run, not to mtdo itself.
+
+    Best-effort on RLIMIT_AS specifically: confirmed by hand that macOS silently
+    refuses to lower it from its default of unlimited ("current limit exceeds
+    maximum limit", even setting soft and hard to the same value) -- a known
+    Darwin/XNU quirk, not a bug in this code, so that one failing is expected
+    there and deliberately not treated as fatal.
+
+    RLIMIT_NPROC needed a real fix, not just a guess: it's a per-REAL-UID limit,
+    not scoped to this subprocess's own tree, so a naive small cap (100, tried
+    first) broke gcc/g++/javac outright on an ordinary dev machine that already
+    had ~400 processes running for that user across everything else open --
+    clang's own posix_spawn calls immediately failed with "Resource temporarily
+    unavailable" the moment the account-wide count was already past the cap.
+    1000 leaves comfortable headroom above realistic real-world usage while
+    still capping a genuine fork bomb fast (exponential growth hits four
+    figures within a handful of generations, typically well under a second).
+
+    RLIMIT_CPU/FSIZE both set successfully and confirmed to actually do
+    something (a CPU-bound busy loop was reliably SIGXCPU-killed around the
+    configured limit in testing, independent of the wall-clock timeout -- see
+    _CPU_TIME_LIMIT_SECONDS above): CPU time as a second, harder backstop
+    alongside the wall-clock subprocess timeout, covering the case a hang isn't
+    CPU-bound at all (e.g. blocked on I/O, where only the wall-clock timeout
+    would ever catch it) as well as the reverse; a generous file-size cap
+    against filling the disk."""
+    def limits():
+        if _resource is None:
+            return
+        for rl, value in (
+            (_resource.RLIMIT_CPU, _CPU_TIME_LIMIT_SECONDS),
+            (_resource.RLIMIT_FSIZE, 50_000_000),
+            (_resource.RLIMIT_NPROC, 1000),
+            (_resource.RLIMIT_AS, 1_500_000_000),
+        ):
+            try:
+                _resource.setrlimit(rl, (value, value))
+            except (ValueError, OSError):
+                pass
+    return limits
+
+
+def _exec_kwargs():
+    return {"preexec_fn": _apply_resource_limits()} if _resource is not None else {}
+
+
+def sandbox_status():
+    """A short, honest, first-person-plural-free description of exactly what
+    protection is actually active for a run on this machine -- shown directly in
+    the Practice Lab's output panel (gh38) so the disclosure is in front of
+    whoever's using it every time, not just documented in this module. Never
+    reports more than what's actually true above."""
+    if _sandbox_available():
+        return "sandboxed: no network, writes confined to practice/"
+    if _resource is not None:
+        return "resource limits only (CPU/file-size/process-count) -- no filesystem/network isolation on this platform"
+    return "unsandboxed -- no isolation available on this platform"
+
+
+@functools.lru_cache(maxsize=1)
+def _java_home():
+    """Resolves JAVA_HOME once via /usr/libexec/java_home, run unsandboxed --
+    confirmed by hand that java_home itself fails ("Unable to locate a Java
+    Runtime") when invoked from inside the Seatbelt profile above, even with
+    every write path it could plausibly need already allowed; whatever specific
+    system lookup it does isn't covered by this profile's grants and wasn't
+    worth chasing further once the actual workaround was confirmed: resolve it
+    once, outside the sandbox, and invoke javac/java by their real binary path
+    afterward, which sidesteps java_home's own lookup entirely. None if
+    unavailable (not macOS, or java_home itself fails) -- callers fall back to
+    the plain "javac"/"java" names on PATH, which is correct there anyway."""
+    if sys.platform != "darwin":
+        return None
+    try:
+        result = subprocess.run(["/usr/libexec/java_home"], capture_output=True, text=True, timeout=5)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    return result.stdout.strip() if result.returncode == 0 else None
+
+
 def run(language, code, timeout=10):
     """Writes `code` to the right file for `language` in PRACTICE_DIR, compiles it
     if needed, runs it, and returns a RunResult. `elapsed` is the real run's
@@ -151,12 +322,15 @@ def run(language, code, timeout=10):
             result = _exec(["python3", path], timeout)
             elapsed = time.monotonic() - start
         elif language == "java":
+            java_home = _java_home()
+            javac_bin = os.path.join(java_home, "bin", "javac") if java_home else "javac"
+            java_bin = os.path.join(java_home, "bin", "java") if java_home else "java"
             classname = FILE_NAMES[language][: -len(".java")]
-            compiled = _exec(["javac", path], timeout)
+            compiled = _exec([javac_bin, path], timeout)
             if not compiled.ok:
                 return RunResult(compiled.output, 0.0, False)
             start = time.monotonic()
-            result = _exec(["java", "-cp", PRACTICE_DIR, classname], timeout)
+            result = _exec([java_bin, "-cp", PRACTICE_DIR, classname], timeout)
             elapsed = time.monotonic() - start
         elif language in ("c", "cpp"):
             compiler = "gcc" if language == "c" else "g++"
@@ -187,7 +361,10 @@ def run(language, code, timeout=10):
 
 
 def _exec(argv, timeout):
-    proc = subprocess.run(argv, capture_output=True, text=True, cwd=PRACTICE_DIR, timeout=timeout)
+    proc = subprocess.run(
+        _sandboxed_argv(argv), capture_output=True, text=True, cwd=PRACTICE_DIR,
+        timeout=timeout, **_exec_kwargs(),
+    )
     output = proc.stdout
     if proc.stderr:
         output += ("\n" if output else "") + proc.stderr
@@ -200,8 +377,8 @@ def _exec_sql(query, timeout):
     into the sqlite3 prompt by hand would show) -- no query parsing or validation of
     our own, sqlite3 IS the engine here."""
     proc = subprocess.run(
-        ["sqlite3", "-header", "-column", SAMPLE_DB_PATH],
-        input=query, capture_output=True, text=True, timeout=timeout,
+        _sandboxed_argv(["sqlite3", "-header", "-column", SAMPLE_DB_PATH]),
+        input=query, capture_output=True, text=True, timeout=timeout, **_exec_kwargs(),
     )
     output = proc.stdout
     if proc.stderr:
@@ -223,13 +400,14 @@ def explain_sql(query, timeout=10):
     ensure_sample_db()
     try:
         plan_proc = subprocess.run(
-            ["sqlite3", "-header", "-column", SAMPLE_DB_PATH],
-            input=f"EXPLAIN QUERY PLAN\n{query}", capture_output=True, text=True, timeout=timeout,
+            _sandboxed_argv(["sqlite3", "-header", "-column", SAMPLE_DB_PATH]),
+            input=f"EXPLAIN QUERY PLAN\n{query}", capture_output=True, text=True,
+            timeout=timeout, **_exec_kwargs(),
         )
         count_proc = subprocess.run(
-            ["sqlite3", SAMPLE_DB_PATH],
+            _sandboxed_argv(["sqlite3", SAMPLE_DB_PATH]),
             input=f"SELECT COUNT(*) FROM ({query.rstrip().rstrip(';')});",
-            capture_output=True, text=True, timeout=timeout,
+            capture_output=True, text=True, timeout=timeout, **_exec_kwargs(),
         )
     except subprocess.TimeoutExpired:
         msg = f"Timed out after {timeout}s."

@@ -9,6 +9,87 @@ Add each session's PROGRESS.md entry to the same branch as the code it describes
 
 ---
 
+## 2026-08-25 (bug gh38, GH mukund1312/mtdo-bugs#38) -- Practice Lab code execution now has real, verified sandboxing
+
+Unlike the other bugs this session, this wasn't a UI/discoverability gap -- it
+was a genuine "how much security engineering is proportionate for a personal
+terminal app" question. `code_runner.run()` executed submitted code via plain
+`subprocess.run()` with mtdo's own full user permissions, no isolation
+whatsoever; the module's own docstring just said "don't paste code here you
+wouldn't otherwise just run" and left it there. Asked the user to pick a real
+scope before touching anything: OS-level sandbox + resource limits (macOS
+Seatbelt + POSIX rlimits, no new dependency), resource-limits-only with a
+louder warning, or full Docker-based isolation (real cost: a hard new
+dependency and a much slower run loop). They picked the first.
+
+**What shipped, in `code_runner.py`:**
+- On macOS: every run wrapped in `sandbox-exec` (Apple's built-in Seatbelt
+  profile mechanism) with a deny-by-default profile -- all network access
+  denied outright, writes confined to the practice directory plus this
+  process's own session temp dir (both resolved via `os.path.realpath`, since
+  Seatbelt matches post-symlink paths and /tmp and the macOS temp dir are both
+  symlinks into /private). File reads stay open -- interpreters/compilers need
+  broad read access to function at all -- documented as an explicit, honest
+  limit, not hidden.
+- On every platform (including when sandbox-exec isn't available, e.g. Linux):
+  POSIX resource limits via a `preexec_fn` -- CPU time, max file size, process
+  count -- as an independent backstop.
+- `sandbox_status()` reports exactly which of the above is actually active,
+  shown directly in the Practice Lab's output panel every run (not just
+  documented in source) -- the disclosure is in front of the user every time,
+  matching the actual macOS-mockup preview the user approved when scoping this.
+- `_java_home()`: resolves JAVA_HOME once, unsandboxed, and invokes javac/java
+  by their real binary path -- `/usr/libexec/java_home` itself doesn't function
+  correctly from inside the restrictive Seatbelt profile (confirmed by hand:
+  "Unable to locate a Java Runtime" even with every write path it could
+  plausibly need already granted), so this sidesteps its own lookup entirely
+  rather than chasing down exactly which grant it was missing.
+
+**Three real bugs found and fixed only because this was tested against the
+actual toolchains before shipping, not just written and assumed correct:**
+1. A first Seatbelt profile draft broke javac/gcc/g++ outright ("unable to
+   make temporary file" / "Unable to locate a Java Runtime") -- all three need
+   to write scratch files under $TMPDIR, which the first draft didn't grant.
+2. Generalizing from "this specific test subdirectory needs write access" (what
+   was actually verified) to "allow bare /tmp and /var/folders broadly" (what
+   got written into the real implementation) silently defeated the actual
+   write-confinement guarantee -- a test deliberately checking the DENY path
+   (not just that the happy path still ran) caught a file writing successfully
+   to /tmp when it should have been refused.
+3. RLIMIT_NPROC=100 broke gcc/g++/javac's own internal posix_spawn calls on
+   this ordinary dev machine, which already had ~400 processes running for the
+   user across everything else open -- RLIMIT_NPROC is a per-real-UID limit,
+   not scoped to the subprocess's own tree, so a small absolute cap collides
+   with normal background load. Raised to 1000 (comfortable headroom above
+   real usage, still fast against a genuine exponential fork bomb). Separately,
+   the CPU time limit was originally derived from each call's own wall-clock
+   timeout (`timeout + 2`), which by construction can never fire before that
+   timeout -- dead code for every call. Fixed to a fixed, timeout-independent
+   constant (`_CPU_TIME_LIMIT_SECONDS`), confirmed by deliberately loosening
+   the wall-clock timeout to 30s specifically to prove the CPU limit is the one
+   that actually kills it (it now does, at ~15s).
+
+**Verified for real, exhaustively, before and after each fix:** every claim
+above was checked against real subprocesses on this machine, not assumed from
+reading Seatbelt documentation -- python3/javac+java/gcc/g++/sqlite3 all run
+correctly under the final profile; a real network connection attempt is
+denied; a write to a path deliberately outside every allowed directory is
+denied AND confirmed the file was never created; a CPU-bound busy loop is
+killed independent of the wall-clock timeout; `explain_sql`'s two subprocess
+calls (also user-supplied SQL) got the same treatment. All of this then
+formalized as 9 permanent regression tests in a new
+`tests/test_code_runner_sandbox.py`, including regression tests for both of
+the real bugs found while building this (bug 2's write-confinement test
+deliberately avoids pytest's own `tmp_path` fixture, since that lives inside
+the same session temp dir the sandbox legitimately grants -- using it would
+have passed for the wrong reason). macOS-only assertions are skipped on CI
+(ubuntu-latest) by design, matching that this protection genuinely is
+macOS-only; language tests skip individually if a toolchain isn't installed
+on whatever machine runs them. 29/29 tests pass (20 previous + 9 new). Real
+`~/.mtdo/goals.json`/`state.json` mtimes unchanged throughout.
+
+---
+
 ## 2026-08-25 (bug gh39, GH mukund1312/mtdo-bugs#39) -- a bad goals.json/config.yaml now fails with a clear message instead of a raw traceback
 
 Bug's own framing: a malformed hand-edit doesn't corrupt history (state.json
