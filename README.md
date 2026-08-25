@@ -235,3 +235,8 @@ machine. The one exception is the AI Assistant panel: if you pick an API-based b
 (Claude/ChatGPT/Gemini) or Claude Code, whatever you send it -- including the task context
 mtdo primes it with -- goes to that provider, same as using their CLI/API directly. A local
 Ollama model keeps everything on-machine.
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for the architecture (in particular, the
+`core.py`/`app.py` split), local setup, and how to submit a change.

@@ -9,6 +9,52 @@ Add each session's PROGRESS.md entry to the same branch as the code it describes
 
 ---
 
+## 2026-08-25 (bug gh37, GH mukund1312/mtdo-bugs#37) -- added CONTRIBUTING.md
+
+Docs-only bug: no `CONTRIBUTING.md`, so an outside contributor had no doc
+explaining the `core.py`/`app.py` architecture split or how to actually submit
+a change.
+
+Wrote `CONTRIBUTING.md` for a human external contributor specifically --
+deliberately not a trim of `~/.claude/agents/mtdo-dev.md` (that file's
+audience is this AI agent across sessions: "read PROGRESS.md first," internal
+gotchas, the private bug-tracker workflow). Covers: the `core.py` (UI-agnostic
+model) vs `app.py` (Textual presentation) split and *why* it matters in
+practice (grounded in the real reason -- `cli.py`'s scriptable subcommands
+reuse `core.py` directly with zero Textual involved; logic that leaks into
+`app.py` silently breaks that second consumer and becomes untestable without a
+running app), a trimmed module map, local setup via `mtdo-sandbox` (never real
+`~/.mtdo`), how to run tests, this repo's actual code conventions, and a
+fork+branch+PR submission flow appropriate for an external contributor (not
+the internal `mu`/`UAT` branch-naming shorthand, which is Mukund/Janhwi-
+specific and meaningless to anyone else). Pointed bug reports at this public
+repo's own GitHub Issues -- **deliberately never named the private
+mukund1312/mtdo-bugs tracker anywhere in this doc**, checked explicitly before
+publishing, since that repo's entire reason for existing is that internal
+testing bugs stay private even though mtdo itself is public; naming it in a
+public-facing doc would defeat that. Added a one-line pointer from README.md
+so the doc is actually discoverable.
+
+Found, didn't touch: a pre-existing `GITHUB_SYNC_WORKFLOW.md` at the repo root
+describes the *old*, pre-2026-08-22 direct-push-to-main workflow, which
+directly contradicts the current feature-branch+PR convention this very
+CONTRIBUTING.md documents. Left it alone rather than unilaterally deleting or
+rewriting a file outside this bug's actual scope -- flagged to the user
+instead, since a contributor who finds that file instead of (or in addition
+to) CONTRIBUTING.md would get actively wrong instructions.
+
+**Verified for real:** confirmed every specific claim (`core.configure()`,
+`goals_to_config()`, `cli.py`'s subcommand list, `code_runner.py`'s
+sandboxing docstring, `config.ConfigError`, `tests/conftest.py`'s throwaway
+`MTDO_HOME`, `.github/workflows/ci.yml`'s `ubuntu-latest` runner, the public
+repo's Issues actually being enabled) against the real current code/repo
+state rather than writing from memory or convention. Ran the full test suite
+as a sanity check for a docs-only change (33/33 pass) and grepped the new
+file for any accidental reference to the private bug tracker before
+publishing. Real `~/.mtdo/goals.json`/`state.json` mtimes unchanged.
+
+---
+
 ## 2026-08-25 (bug gh18, GH mukund1312/mtdo-bugs#18) -- now-playing position no longer freezes for YouTube Music (or anything else in a browser tab)
 
 Root cause found live, on real data, before writing any fix: polled the real
