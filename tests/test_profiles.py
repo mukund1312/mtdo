@@ -22,19 +22,24 @@ from mtdo.app import (
     ToastLine,
     TodoApp,
 )
+from textual.screen import ModalScreen
 
 
 async def _dismiss_first_run_prompts(pilot, app):
-    """Every fresh MTDO_HOME hits the "what should we call you" prompt (and,
-    if answered, the setup-plan-wizard persona picker) on first mount."""
+    """Every fresh MTDO_HOME hits a chain of first-run modals on mount: the feature
+    walkthrough, then (2026-08-25, gh48) an automatic Profiles step
+    (ProfileCreateScreen if no profile exists yet, ProfileMenuScreen if one already
+    does -- see the `pf.create_profile`/`pf.set_active` calls some tests make before
+    constructing TodoApp), then "how do you want to build your plan"
+    (ChoicePickScreen). Escape cancels every one of these in turn (see the on_key
+    additions added alongside gh48 -- the profile screens didn't support Escape at
+    all before that), so just keep pressing it until nothing modal is left on top,
+    rather than hard-coding the exact chain (which has already changed shape once,
+    see the removed name-prompt/persona-picker steps from gh47)."""
     await pilot.pause()
-    if isinstance(app.screen, TextPromptScreen):
-        for ch in "TestUser":
-            await pilot.press(ch)
-        await pilot.press("enter")
+    while isinstance(app.screen, ModalScreen):
+        await pilot.press("escape")
         await pilot.pause()
-    await pilot.press("escape")
-    await pilot.pause()
 
 
 async def test_profile_menu_opens_without_crashing_when_profile_exists(unique_slug):
