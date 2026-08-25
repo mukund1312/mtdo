@@ -372,6 +372,52 @@ class ProfileCreateScreen(ModalScreen):
             self.dismiss(None)
 
 
+class RecoveryCodeScreen(ModalScreen):
+    """Shown exactly once, right after a password-protected profile is created (the
+    gh40 fix). This is the only time mtdo ever displays the recovery code -- it
+    isn't stored anywhere, so it can't be shown again later; losing both the
+    password and this code means the profile's data really is gone for good.
+    Nothing here is cancelable (the profile already exists by the time this shows),
+    so Escape acknowledges the same as the button."""
+
+    CSS = """
+    RecoveryCodeScreen { align: center middle; }
+    #recovery-box { width: 64; height: auto; border: round yellow; padding: 1 2; background: $panel; }
+    #recovery-code { text-align: center; text-style: bold; padding: 1 0; color: $warning; }
+    #recovery-warning { padding-bottom: 1; }
+    #recovery-actions { height: 3; align: center middle; }
+    """
+
+    def __init__(self, recovery_code):
+        super().__init__()
+        self.recovery_code = recovery_code
+
+    def compose(self) -> ComposeResult:
+        with Center():
+            with Middle():
+                with Vertical(id="recovery-box"):
+                    yield Static("Save your recovery code")
+                    yield Static(self.recovery_code, id="recovery-code")
+                    yield Static(
+                        "If you forget your password, this code is the ONLY way back "
+                        "into this profile's data. mtdo does not store it and cannot "
+                        "show it to you again.",
+                        id="recovery-warning",
+                    )
+                    with Horizontal(id="recovery-actions"):
+                        yield Button("I've saved it", id="recovery-ack", variant="primary")
+
+    def on_mount(self):
+        self.query_one("#recovery-ack", Button).focus()
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        self.dismiss(True)
+
+    def on_key(self, event):
+        if event.key == "escape":
+            self.dismiss(True)
+
+
 class ProfileManageScreen(ModalScreen):
     CSS = """
     ProfileManageScreen { align: center middle; }
@@ -419,7 +465,14 @@ class ProfileManageScreen(ModalScreen):
             # children must be passed to the constructor -- mounting onto `row`
             # before `row` itself is attached (via self.rows.mount(row) below)
             # raises MountError ("Can't mount widget(s) before ... is mounted").
-            row = Horizontal(select_btn, rename_btn, delete_btn)
+            row_children = [select_btn, rename_btn, delete_btn]
+            if profile.get("protected"):
+                # Only protected profiles have a password to reset (gh40) -- an
+                # unprotected one has nothing for a recovery code to unlock.
+                reset_btn = Button("Reset", classes="profile-row-action")
+                reset_btn.profile_slug, reset_btn.row_action = profile["slug"], "reset"
+                row_children.append(reset_btn)
+            row = Horizontal(*row_children)
             self.rows.mount(row)
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
@@ -455,6 +508,13 @@ class ProfileManageScreen(ModalScreen):
                 return
             self.dismiss(None)
             self.app._delete_profile(slug, profile["name"])
+            return
+        if action == "reset":
+            profile = pf.get_profile(slug)
+            if not profile:
+                return
+            self.dismiss(None)
+            self.app._reset_profile_password(slug, profile["name"])
 
     def on_key(self, event):
         if event.key == "escape":
@@ -2938,14 +2998,20 @@ class TodoApp(App):
             return
         name, password = result
         try:
-            slug = pf.create_profile(name, password=password)
+            slug, recovery_code = pf.create_profile(name, password=password)
         except pf.ProfileError as exc:
             self.toast(str(exc), style="bold red")
             return
         if password:
             self._profile_passwords[slug] = password
         appconfig.set_user_name(name)
-        self._switch_profile(slug, password=password)
+        if recovery_code:
+            self._push_modal(
+                RecoveryCodeScreen(recovery_code),
+                lambda _r=None: self._switch_profile(slug, password=password),
+            )
+        else:
+            self._switch_profile(slug, password=password)
 
     def action_manage_profiles(self):
         self.push_screen(ProfileManageScreen())
@@ -2983,6 +3049,43 @@ class TodoApp(App):
             self._refresh_profile_footer()
             self.toast(f"Deleted profile '{name}'", style="bold yellow")
         self._push_modal(TextPromptScreen(f"Type '{name}' to confirm delete", ""), on_confirm)
+
+    def _reset_profile_password(self, slug, name):
+        """Reset a forgotten password via recovery code (gh40) -- reached from
+        ProfileManageScreen's own dismiss-then-push chain, so every step uses
+        _push_modal, not push_screen (see its docstring)."""
+        def got_code(code):
+            if code is None or not code.strip():
+                return
+            def got_new_password(new_password):
+                if new_password is None or not new_password.strip():
+                    return
+                def got_confirm(confirm):
+                    if confirm is None:
+                        return
+                    if confirm != new_password:
+                        self.toast("Passwords didn't match -- not reset.", style="bold red")
+                        return
+                    try:
+                        pf.recover_profile(slug, code, new_password)
+                    except pf.InvalidRecoveryCode as exc:
+                        self.toast(str(exc), style="bold red")
+                        return
+                    except pf.ProfileError as exc:
+                        self.toast(str(exc), style="bold red")
+                        return
+                    # Replaces any stale cached password from before the reset.
+                    self._profile_passwords[slug] = new_password
+                    self.toast(f"Password reset for '{name}'.", style="bold green")
+                self._push_modal(
+                    TextPromptScreen("Confirm new password", "", secret=True), got_confirm,
+                )
+            self._push_modal(
+                TextPromptScreen(f"New password for '{name}'", "", secret=True), got_new_password,
+            )
+        self._push_modal(
+            TextPromptScreen(f"Recovery code for '{name}'", ""), got_code,
+        )
 
     def action_open_help(self):
         self.push_screen(HelpScreen())

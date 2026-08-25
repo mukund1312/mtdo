@@ -9,6 +9,71 @@ Add each session's PROGRESS.md entry to the same branch as the code it describes
 
 ---
 
+## 2026-08-25 (bug gh40, GH mukund1312/mtdo-bugs#40) -- password-protected profiles can now be recovered via a one-time recovery code
+
+Bug: forgetting a protected profile's password destroyed the profile's data
+permanently, by design -- the module docstring said as much explicitly. The
+tester's own logged note on the bug: "ok genuinely understandable i will take
+care of this" -- an acknowledged tradeoff, not dismissed as fine as-is. Asked the
+user how to handle it (real recovery path vs. just a stronger warning vs. a
+weaker security-question fallback); they picked the recovery-code option.
+
+**What shipped:** envelope encryption. `create_profile()` now generates a random
+per-profile data key (what goals.json/state.json are actually Fernet-encrypted
+with) and wraps it twice -- once under a key derived from the password, once
+under a key derived from a randomly generated recovery code shown to the user
+exactly once, right after creation (`RecoveryCodeScreen` in the TUI, printed
+directly in the CLI). Either secret independently unwraps the same data key, so
+forgetting the password no longer means losing the data, as long as the recovery
+code was saved -- while mtdo still never stores anything that alone decrypts a
+profile (no server-side escrow, same guarantee as before). Losing *both* secrets
+is still unrecoverable, which is the honest remaining tradeoff of real local
+encryption -- now documented in profiles.py's module docstring in place of the
+old "no recovery mechanism" language.
+
+Replaced the old separate "verifier" token (an encrypted known constant, only
+used to check a password) with the wrapped-key unwrap itself doing double duty --
+one less thing stored, one less thing that could drift from the real key.
+`check_password()`'s behavior/signature is unchanged.
+
+New: `profiles.recover_profile(slug, recovery_code, new_password)` -- rewraps the
+data key under a new password-derived key without touching goals.json/state.json
+(they're encrypted with the data key, never with either wrapped copy directly),
+and without needing the old password. The recovery code stays valid afterward
+(not single-use) -- losing a password a second time is exactly as forgivable as
+the first. Wired into the TUI as a "Reset" button on ProfileManageScreen's row for
+protected profiles (recovery code -> new password -> confirm, three chained
+`TextPromptScreen`s via `_push_modal`, same dismiss-then-push hazard as
+rename/delete), and into the CLI as `mtdo profile recover <name>`.
+
+`create_profile()`'s return value changed from `slug` to `(slug, recovery_code)`
+(`recovery_code` is `None` for unprotected profiles) -- updated all three call
+sites (`cli.py`, `app.py`, and the three `tests/test_profiles.py` calls that
+didn't care about the second value).
+
+**Verified for real, not assumed:** checked both `~/.mtdo/profiles/index.json`
+(doesn't exist -- no real profiles yet) and every sandbox instance's
+`profiles/index.json` for any pre-existing password-protected profile under the
+old schema before touching the format -- found none, so no migration path was
+needed (would have had to be written first if any existed, since the old
+schema's protected profiles would otherwise become permanently unreadable by the
+new code). Ran a full plain-Python reproduction against real `cryptography`
+primitives (create protected profile -> write real goals/state -> confirm wrong
+password is rejected and data is unreadable -> confirm a garbage recovery code
+is rejected without mutating anything -> recover for real -> confirm old
+password now fails, new password decrypts the *same* data -> confirm the
+recovery code still works a second time -> confirm code normalization handles
+lowercase/no-dashes/stray-spaces). Then a full headless `App.run_test()` Pilot
+run through the actual TUI: create a protected profile through
+`ProfileCreateScreen`, confirm `RecoveryCodeScreen` shows the real code and
+acknowledging it proceeds into the app, then open Manage Profiles, press Reset,
+type the code and a new password through real key dispatch, confirm the toast
+and that `check_password` flips old-password-false/new-password-true. All 6
+existing tests still pass. Confirmed real `~/.mtdo/goals.json`/`state.json`
+mtimes unchanged by any of this (17 Aug / 20 Aug, from before this session).
+
+---
+
 ## 2026-08-25 (bug gh41, GH mukund1312/mtdo-bugs#41) -- API keys now go into the OS keychain, not a plaintext file
 
 Bug's own framing: chmod 600 is a defensible model, "have your one-line answer

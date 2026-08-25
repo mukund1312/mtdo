@@ -279,11 +279,18 @@ def cmd_profile_create(args):
 
     was_first = not pf.list_profiles()
     try:
-        slug = pf.create_profile(args.name, password=password)
+        slug, recovery_code = pf.create_profile(args.name, password=password)
     except pf.ProfileError as e:
         print(str(e))
         return
     print(f"Created profile '{args.name}' ({slug}).")
+    if recovery_code:
+        print(
+            f"\nRECOVERY CODE (save this now -- shown once):\n\n    {recovery_code}\n\n"
+            "If you forget your password, this code is the ONLY way back into this "
+            f"profile's data. mtdo does not store it and cannot recover it for you.\n"
+            f"To reset a forgotten password: `{_PROG} profile recover {args.name}`\n"
+        )
 
     adopted = False
     if args.from_current:
@@ -422,8 +429,36 @@ def cmd_profile_import(args):
         print(f"This is the active profile -- {_GOALS_DISPLAY} was updated too.")
 
 
+def cmd_profile_recover(args):
+    """Resets a protected profile's password using its recovery code -- the gh40
+    fix. Doesn't need (or change) the old password, and doesn't touch goals.json/
+    state.json; only the wrapped-key envelope is rewrapped."""
+    target = _resolve_profile(args.name)
+    if target is None:
+        print(f"No profile named '{args.name}'.")
+        return
+    if not target.get("protected"):
+        print(f"'{target['name']}' has no password set -- nothing to recover.")
+        return
+    recovery_code = getpass.getpass("Recovery code (shown once at profile creation): ")
+    new_password = getpass.getpass("New password: ")
+    confirm = getpass.getpass("Confirm new password: ")
+    if new_password != confirm:
+        print("Passwords didn't match -- not reset.")
+        return
+    try:
+        pf.recover_profile(target["slug"], recovery_code, new_password)
+    except pf.InvalidRecoveryCode as e:
+        print(str(e))
+        return
+    except pf.ProfileError as e:
+        print(str(e))
+        return
+    print(f"Password reset for '{target['name']}'. The recovery code still works if you need it again.")
+
+
 def cmd_profile_help(args):
-    print(f"Usage: {_PROG} profile <list|current|create|switch|delete|import> ...")
+    print(f"Usage: {_PROG} profile <list|current|create|switch|delete|import|recover> ...")
     print(f"Run `{_PROG} profile <subcommand> --help` for details.")
 
 
@@ -518,6 +553,12 @@ def main():
     p_profile_import.add_argument("name")
     p_profile_import.add_argument("json_path")
     p_profile_import.set_defaults(func=cmd_profile_import)
+
+    p_profile_recover = profile_sub.add_parser(
+        "recover", help="Reset a forgotten password using the profile's recovery code",
+    )
+    p_profile_recover.add_argument("name")
+    p_profile_recover.set_defaults(func=cmd_profile_recover)
 
     p_reset = sub.add_parser(
         "reset",
