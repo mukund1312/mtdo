@@ -505,13 +505,24 @@ class ProfileUnlockScreen(ModalScreen):
     with no password"; it does not make the plaintext working copy disappear
     between runs. Deliberately no Escape-to-bypass, unlike every other modal
     here -- quitting the app (Ctrl+C) is the only way out besides the right
-    password."""
+    password or the recovery code below.
+
+    "Forgot password?" was missing for one whole day (2026-08-25) after this
+    screen first shipped -- a real, sharp lockout bug: this screen blocks
+    *before* the rest of the app mounts, so Manage Profiles' Reset Password
+    (where the recovery-code flow otherwise lives) was flatly unreachable if
+    you actually forgot the password. Fixed by routing this button through the
+    same TodoApp._reset_profile_password used there, with an on_done callback
+    that dismisses this screen with the freshly-reset password once it
+    succeeds, so a successful reset unlocks immediately instead of making you
+    retype it."""
 
     CSS = """
     ProfileUnlockScreen { align: center middle; }
     #unlock-box { width: 60; height: auto; border: round yellow; padding: 1 2; background: $panel; }
     #unlock-box Input { margin: 1 0; }
     #unlock-error { color: $error; height: 1; margin: 0 0 1 0; }
+    #unlock-forgot { margin-top: 1; }
     """
 
     def __init__(self, slug, name):
@@ -530,6 +541,7 @@ class ProfileUnlockScreen(ModalScreen):
                     yield Input(placeholder="Password", id="unlock-password", password=True)
                     yield Static("", id="unlock-error")
                     yield Static("Enter to unlock. To quit instead, press Ctrl+C.", classes="dim")
+                    yield Button("Forgot password?", id="unlock-forgot")
 
     def on_mount(self):
         self.query_one("#unlock-password", Input).focus()
@@ -542,6 +554,10 @@ class ProfileUnlockScreen(ModalScreen):
         inp = self.query_one("#unlock-password", Input)
         inp.value = ""
 
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "unlock-forgot":
+            self.app._reset_profile_password(self.slug, self.profile_name, on_done=self.dismiss)
+
 
 class ProfileManageScreen(ModalScreen):
     CSS = """
@@ -551,6 +567,7 @@ class ProfileManageScreen(ModalScreen):
     #profile-manage-rows Horizontal { margin: 0 0 1 0; }
     .profile-row-primary { width: 1fr; }
     .profile-row-action { width: 10; margin-left: 1; }
+    .profile-row-action-wide { width: 18; margin-left: 1; }
     #profile-manage-actions { align: center middle; }
     #profile-manage-add { width: auto; }
     """
@@ -594,7 +611,10 @@ class ProfileManageScreen(ModalScreen):
             if profile.get("protected"):
                 # Only protected profiles have a password to reset (gh40) -- an
                 # unprotected one has nothing for a recovery code to unlock.
-                reset_btn = Button("Reset", classes="profile-row-action")
+                # "Reset Password", not "Reset" -- a bare "Reset" read as
+                # wiping the whole profile back to empty, not resetting its
+                # password.
+                reset_btn = Button("Reset Password", classes="profile-row-action-wide")
                 reset_btn.profile_slug, reset_btn.row_action = profile["slug"], "reset"
                 row_children.append(reset_btn)
             row = Horizontal(*row_children)
@@ -3221,10 +3241,17 @@ class TodoApp(App):
             self.toast(f"Deleted profile '{name}'", style="bold yellow")
         self._push_modal(TextPromptScreen(f"Type '{name}' to confirm delete", ""), on_confirm)
 
-    def _reset_profile_password(self, slug, name):
+    def _reset_profile_password(self, slug, name, on_done=None):
         """Reset a forgotten password via recovery code (gh40) -- reached from
         ProfileManageScreen's own dismiss-then-push chain, so every step uses
-        _push_modal, not push_screen (see its docstring)."""
+        _push_modal, not push_screen (see its docstring). Also reachable from
+        ProfileUnlockScreen's "Forgot password?" button (the only way past that
+        screen besides the actual password, so this had to be reachable from
+        there too -- see its docstring) -- on_done(new_password) fires only on
+        an actual successful reset, letting that screen dismiss itself with the
+        new password and unlock immediately instead of making the user retype
+        it. ProfileManageScreen's call leaves on_done unset and just toasts,
+        same as before."""
         def got_code(code):
             if code is None or not code.strip():
                 return
@@ -3246,6 +3273,8 @@ class TodoApp(App):
                         self.toast(str(exc), style="bold red")
                         return
                     self.toast(f"Password reset for '{name}'.", style="bold green")
+                    if on_done is not None:
+                        on_done(new_password)
                 self._push_modal(
                     TextPromptScreen("Confirm new password", "", secret=True), got_confirm,
                 )
