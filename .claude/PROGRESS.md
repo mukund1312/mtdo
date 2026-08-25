@@ -9,6 +9,49 @@ Add each session's PROGRESS.md entry to the same branch as the code it describes
 
 ---
 
+## 2026-08-25 (bug gh41, GH mukund1312/mtdo-bugs#41) -- API keys now go into the OS keychain, not a plaintext file
+
+Bug's own framing: chmod 600 is a defensible model, "have your one-line answer
+ready." Asked the user how far to take it before building anything, since real
+encryption-at-rest vs. just hardening/documenting the existing model are genuinely
+different-sized changes with different UX tradeoffs (a new master password just to
+store API keys is real friction). User: they're planning to redeploy to a larger
+user base, asked me to pick the best option.
+
+**Recommendation and what shipped:** the OS keychain (macOS Keychain / Windows
+Credential Locker / Linux Secret Service) via the `keyring` package -- real
+encryption at rest, with zero new password prompt of mtdo's own, since the already-
+unlocked OS session is what protects it. Same model `gh`/`aws`/1Password's CLIs
+default to. Made it a soft dependency (added to the `webchat` extra): if it's not
+installed, or installed with no usable backend (some headless Linux boxes with no
+Secret Service/dbus running), everything falls back to the original chmod-600 file
+-- itself hardened while I was in there: the file used to be written with the
+default umask then chmod'd only afterward, a real (if narrow) window where a
+crash mid-write could leave it world-readable; now created at 0600 from the first
+byte via `os.open` with an explicit mode. An existing key already sitting in the
+plaintext file gets migrated into the keychain transparently the first time it's
+read (then erased from the file), so nobody with keys already saved has to
+re-enter them.
+
+**Verified live against the real macOS Keychain, not just in a venv:** installed
+`keyring` into a throwaway venv, saved a real test credential, confirmed via
+`security find-generic-password` that it genuinely landed in
+`~/Library/Keychains/login.keychain-db` and was NOT in the plaintext file, then
+deleted it (`security delete-generic-password`) and confirmed removal. Separately
+tested the migration path: pre-seeded the legacy plaintext file, called
+`get_api_key()`, confirmed it moved into the keychain and was cleared from the
+file -- cleaned up that test credential too. Also tested the fallback path with no
+`keyring` installed at all (this environment's normal state) -- confirmed it still
+works exactly as before, file created at mode 0600. Re-ran the full test suite
+afterward (6/6 pass, nothing else broke). Confirmed real `~/.mtdo/goals.json`/
+`state.json` untouched, and real `~/.mtdo/secrets.json` doesn't even exist (no web-
+chat keys configured on this machine) -- every test ran against throwaway
+`MTDO_HOME` temp dirs.
+
+Marked local bug #35 fixed and closed GH #41 via `bug_sync.mark_fixed_and_close`.
+
+---
+
 ## 2026-08-25 -- fixed a real regression my own PR #20 caused in Janhwi's newly-merged CI tests
 
 Ran the test suite (just added in PR #19, merged just before my PR #20) as due

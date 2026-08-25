@@ -8,9 +8,26 @@ Claude Code.
 Run directly as `python3 -m mtdo.web_chat anthropic|openai|gemini` (this is exactly
 what ai_backend.list_available() spawns inside the pty). These are always offered in
 the picker regardless of whether a key is already set -- get_api_key() below checks
-the usual env var first, then ~/.mtdo/secrets.json, and only then prompts (hidden
-input, via getpass) with an offer to remember it for next time. Models can be
-overridden with MTDO_ANTHROPIC_MODEL / MTDO_OPENAI_MODEL / MTDO_GEMINI_MODEL.
+the usual env var first, then the OS keychain (macOS Keychain / Windows Credential
+Locker / Linux Secret Service, via the `keyring` package), then the legacy
+~/.mtdo/secrets.json file, and only then prompts (hidden input, via getpass) with an
+offer to remember it for next time. Models can be overridden with
+MTDO_ANTHROPIC_MODEL / MTDO_OPENAI_MODEL / MTDO_GEMINI_MODEL.
+
+Storage, in order of preference (2026-08-25, gh41 -- "API keys sit in a plaintext
+file"): the OS keychain first -- real encryption at rest, with no new password prompt
+of mtdo's own, since the OS session itself is what unlocks it (same model `gh`/`aws`/
+1Password's CLIs default to). `keyring` is a soft dependency: if it's not installed,
+or installed but no backend is actually available (some headless Linux boxes have no
+Secret Service/dbus running), everything here falls back to the plaintext
+~/.mtdo/secrets.json file exactly as before, just with two hardenings: the file is now
+created at 0600 from its very first byte (os.open with an explicit mode) instead of
+being written with the default umask and chmod'd only afterward -- that used to leave
+a brief window, and any crash mid-write, where the file could sit world-readable -- and
+an existing key already found in that file gets transparently migrated into the
+keychain (then erased from the file) the first time it's read, once a keychain becomes
+available. Nothing here ever raises on a keyring failure; every call is wrapped so a
+broken backend degrades to the file path silently rather than crashing the AI panel.
 
 Same story for the underlying SDK: if it's missing, _ensure_import() asks once
 ("install it now with pip?") and, on yes, installs it right there before continuing --
@@ -41,6 +58,31 @@ _PROVIDERS = {
     "gemini": {"env": ("GEMINI_API_KEY", "GOOGLE_API_KEY"), "secrets_key": "gemini_api_key", "display": "Google"},
 }
 
+_KEYRING_SERVICE = "mtdo"
+_keyring_checked = False
+_keyring_mod = None
+
+
+def _keyring_module():
+    """Best-effort `keyring` import, cached after the first check so a broken/missing
+    backend doesn't get re-probed on every single key lookup. Returns the module if
+    it's both installed AND has a usable backend, None otherwise -- callers treat None
+    exactly like "no keychain available, use the file" rather than an error."""
+    global _keyring_checked, _keyring_mod
+    if _keyring_checked:
+        return _keyring_mod
+    _keyring_checked = True
+    try:
+        import keyring
+        # A cheap probe: get_password on a name that (almost certainly) doesn't exist.
+        # Raises if there's genuinely no usable backend (e.g. headless Linux with no
+        # Secret Service running); returns None harmlessly if there IS one.
+        keyring.get_password(_KEYRING_SERVICE, "__mtdo_probe__")
+        _keyring_mod = keyring
+    except Exception:
+        _keyring_mod = None
+    return _keyring_mod
+
 
 def _load_secrets():
     try:
@@ -50,18 +92,51 @@ def _load_secrets():
         return {}
 
 
+def _write_secrets(secrets):
+    os.makedirs(os.path.dirname(SECRETS_PATH), exist_ok=True)
+    # Created at 0600 from the first byte (os.open with an explicit mode), not written
+    # with the default umask and chmod'd only afterward -- that used to leave a real
+    # window (and any crash mid-write) where the file could sit world-readable.
+    fd = os.open(SECRETS_PATH, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w") as f:
+        json.dump(secrets, f)
+    os.chmod(SECRETS_PATH, stat.S_IRUSR | stat.S_IWUSR)  # self-heals if the file already existed with wider perms
+
+
 def _save_secret(key_name, value):
     secrets = _load_secrets()
     secrets[key_name] = value
-    os.makedirs(os.path.dirname(SECRETS_PATH), exist_ok=True)
-    with open(SECRETS_PATH, "w") as f:
-        json.dump(secrets, f)
-    os.chmod(SECRETS_PATH, stat.S_IRUSR | stat.S_IWUSR)  # owner read/write only -- it holds API keys
+    _write_secrets(secrets)
+
+
+def _forget_secret(key_name):
+    """Removes a key from the plaintext file -- used right after migrating it into the
+    OS keychain, so it doesn't keep sitting in both places."""
+    secrets = _load_secrets()
+    if key_name in secrets:
+        del secrets[key_name]
+        _write_secrets(secrets)
+
+
+def _remember_secret(key_name, value):
+    """Saves a key wherever it belongs: the OS keychain if one's available, the
+    (hardened) plaintext file otherwise. Returns "keychain" or "file" so the caller can
+    tell the user accurately where it went."""
+    kr = _keyring_module()
+    if kr:
+        try:
+            kr.set_password(_KEYRING_SERVICE, key_name, value)
+            return "keychain"
+        except Exception:
+            pass  # fall through to the file
+    _save_secret(key_name, value)
+    return "file"
 
 
 def get_api_key(provider):
-    """Resolves an API key for `provider`: env var, then ~/.mtdo/secrets.json, then an
-    interactive hidden prompt with an offer to remember it. Returns None if the user
+    """Resolves an API key for `provider`: env var, then the OS keychain, then the
+    legacy plaintext file (migrating a hit there into the keychain transparently), then
+    an interactive hidden prompt with an offer to remember it. Returns None if the user
     declines to provide one (e.g. Ctrl+D at the prompt)."""
     cfg = _PROVIDERS[provider]
     for name in cfg["env"]:
@@ -69,11 +144,33 @@ def get_api_key(provider):
         if value:
             return value
 
-    value = _load_secrets().get(cfg["secrets_key"])
-    if value:
-        return value
+    key_name = cfg["secrets_key"]
+    kr = _keyring_module()
+    if kr:
+        try:
+            value = kr.get_password(_KEYRING_SERVICE, key_name)
+        except Exception:
+            value = None
+        if value:
+            return value
+        legacy = _load_secrets().get(key_name)
+        if legacy:
+            # Found in the old plaintext file but not yet in the keychain -- migrate
+            # it over transparently now that one's available, then stop keeping the
+            # plaintext copy around.
+            try:
+                kr.set_password(_KEYRING_SERVICE, key_name, legacy)
+                _forget_secret(key_name)
+            except Exception:
+                pass
+            return legacy
+    else:
+        value = _load_secrets().get(key_name)
+        if value:
+            return value
 
-    print(f"No {cfg['display']} API key found (checked {'/'.join(cfg['env'])} and {SECRETS_PATH_DISPLAY}).")
+    print(f"No {cfg['display']} API key found (checked {'/'.join(cfg['env'])}, "
+          f"the OS keychain, and {SECRETS_PATH_DISPLAY}).")
     try:
         value = getpass.getpass(f"Paste your {cfg['display']} API key (input hidden): ").strip()
     except EOFError:
@@ -86,8 +183,11 @@ def get_api_key(provider):
     except EOFError:
         save = ""
     if save == "y":
-        _save_secret(cfg["secrets_key"], value)
-        print(f"Saved to {SECRETS_PATH_DISPLAY} (owner-only permissions).")
+        where = _remember_secret(key_name, value)
+        if where == "keychain":
+            print("Saved to your OS keychain.")
+        else:
+            print(f"Saved to {SECRETS_PATH_DISPLAY} (owner-only permissions).")
     return value
 
 
