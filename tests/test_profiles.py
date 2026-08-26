@@ -312,6 +312,52 @@ async def test_switching_to_protected_profile_always_reprompts_even_if_unlocked_
         assert isinstance(app.screen, TextPromptScreen), "must re-prompt even though A was already unlocked this session"
 
 
+async def test_switching_away_auto_saves_without_reprompting(unique_slug):
+    """gh52: switching from protected profile A to protected profile B used to ask
+    for a password TWICE -- once (correctly, per gh49) to switch into B, and once
+    more, entirely redundantly, just to auto-save A on the way out, even though A's
+    password had already been proven to unlock it this session. Confirms the
+    second prompt is gone (the switch to B asks exactly once) and that A is still
+    actually saved correctly with its own real password -- this must not turn into
+    a silent no-op or a save under the wrong key."""
+    import json
+    from mtdo import config as appconfig
+
+    slug_a = pf.create_profile(f"{unique_slug}_a", password="pw-a")[0]
+    slug_b = pf.create_profile(f"{unique_slug}_b", password="pw-b")[0]
+    pf.set_active(slug_a)
+
+    app = TodoApp()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        for ch in "pw-a":
+            await pilot.press(ch)
+        await pilot.press("enter")
+        await pilot.pause()
+
+        app.state["_meta"]["gh52_marker"] = "left-by-a"
+        with open(appconfig.STATE_PATH, "w") as f:
+            json.dump(app.state, f)
+
+        app.action_open_profile_menu()
+        await pilot.pause()
+        btn_b = next(c for c in app.screen.profile_list.children if getattr(c, "profile_slug", None) == slug_b)
+        btn_b.press()
+        await pilot.pause()
+        assert isinstance(app.screen, TextPromptScreen), "must still ask once, for B's own password"
+
+        for ch in "pw-b":
+            await pilot.press(ch)
+        await pilot.press("enter")
+        await pilot.pause()
+        assert pf.get_active_slug() == slug_b, \
+            "must switch straight through -- no second prompt for A's save password"
+
+        saved_state = pf.read_state(slug_a, "pw-a")
+        assert saved_state["_meta"]["gh52_marker"] == "left-by-a", \
+            "A must still be auto-saved for real, under its own real password"
+
+
 async def test_deleting_protected_profile_requires_its_password(unique_slug):
     """gh49: rename/delete used to need no authentication at all -- anyone at
     the app could permanently delete a protected profile (its encrypted files
