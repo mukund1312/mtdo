@@ -60,6 +60,36 @@ def _display_name(login):
     return DISPLAY_NAMES.get(login, login)
 
 
+_DASHBOARD_NOTE_PREFIXES = tuple(f"{name}: " for name in DISPLAY_NAMES.values())
+
+
+def _render_comment_notes(issue):
+    """Real, durable GitHub comments on this issue, in the {"author", "text"} shape
+    _render_issue_detail expects -- the dashboard's "Conversation" thread reads
+    these instead of anything living only in the live-doc page state (see
+    bug_sync.sync_dashboard_overrides's docstring for the real incident that made
+    this change necessary).
+
+    A comment sync'd here from a dashboard note was posted under whoever's own
+    `gh` CLI ran the sync (always the same machine identity, regardless of which
+    of the two people actually typed the note in the browser) -- the note's real
+    author is baked into the comment body text itself instead ("Mukund: ...",
+    see sync_dashboard_overrides), which is why that case renders as-is rather
+    than re-prefixing with the syncing account's name. Anything else on the
+    issue (a fix-note left by mark_fixed_and_close, a plain `gh issue comment`)
+    has no such prefix and gets one derived from its real GitHub comment author
+    instead, so it still reads naturally in the thread."""
+    notes = []
+    for c in issue.get("comments", []):
+        body = c.get("body") or ""
+        if body.startswith(_DASHBOARD_NOTE_PREFIXES):
+            notes.append({"author": "", "text": body})
+        else:
+            login = c["author"]["login"] if c.get("author") else None
+            notes.append({"author": _display_name(login) if login else "GitHub", "text": body})
+    return notes
+
+
 def _age_days(iso_ts):
     then = datetime.datetime.fromisoformat(iso_ts.replace("Z", "+00:00"))
     now = datetime.datetime.now(then.tzinfo)
@@ -197,12 +227,33 @@ def _render_assign_control(issue_number, current_login):
     </div>"""
 
 
-def _render_issue_detail(issue, assigned_to, description, notes, priority=None):
+_STATUS_LABELS = {"open": "Open", "postponed": "Postponed", "fixed": "Fixed"}
+_STATUS_PILL_CLASS = {"open": "pill-open", "postponed": "pill-postponed", "fixed": "pill-fixed"}
+
+
+def _render_status_control(issue_number, status):
+    """One editable status control (Open / Postponed / Fixed), same live-doc pattern
+    as _render_assign_control -- reused for both the issues table row and the issue
+    detail page. Clicking an option here only changes what's shown live on the page
+    immediately (see the script); the real GitHub state (close/reopen the issue,
+    add/remove the postponed label) is applied the next time someone runs
+    dashboard.generate() with this page's current overrides -- see
+    bug_sync.sync_dashboard_overrides."""
+    options = "".join(
+        f'<button type="button" class="status-option" data-status="{key}">{label}</button>'
+        for key, label in _STATUS_LABELS.items()
+    )
+    return f"""<div class="status-control edit-affordance" data-issue="{issue_number}" data-status="{status}">
+      <button type="button" class="status-current pill {_STATUS_PILL_CLASS[status]}">{_STATUS_LABELS[status].upper()}</button>
+      <div class="status-menu">
+        {options}
+      </div>
+    </div>"""
+
+
+def _render_issue_detail(issue, assigned_to, description, notes, priority=None, status="open"):
     number = issue["number"]
     title = html.escape(issue["title"])
-    state = issue["state"]
-    pill_class = "pill-open" if state == "OPEN" else "pill-fixed"
-    pill_text = "OPEN" if state == "OPEN" else "FIXED"
     found_login = issue["author"]["login"] if issue.get("author") else "unknown"
     found_name = html.escape(_display_name(found_login))
     found_age = _age(issue["createdAt"])
@@ -228,7 +279,9 @@ def _render_issue_detail(issue, assigned_to, description, notes, priority=None):
         )
 
     comment_items = "".join(
-        f'<p class="comment">{html.escape(n.get("author", "?"))}: {html.escape(n.get("text", ""))}</p>'
+        f'<p class="comment">'
+        f'{(html.escape(n["author"]) + ": ") if n.get("author") else ""}'
+        f'{html.escape(n.get("text", ""))}</p>'
         for n in notes
     )
 
@@ -237,7 +290,7 @@ def _render_issue_detail(issue, assigned_to, description, notes, priority=None):
       <button type="button" class="back-to-issues">&larr; Back to Issues</button>
       <h1>#{number} {title}</h1>
       <div class="issue-meta">
-        <div><span class="meta-label">Status</span><span class="pill {pill_class}">{pill_text}</span></div>
+        <div><span class="meta-label">Status</span>{_render_status_control(number, status)}</div>
         <div><span class="meta-label">Priority</span>{priority_html}</div>
         <div><span class="meta-label">Found by</span>{found_name}</div>
         <div><span class="meta-label">Assigned to</span>{_render_assign_control(number, assigned_to)}</div>
@@ -347,7 +400,8 @@ _SCRIPT = """
       return {
         number: link ? parseInt(link.getAttribute("href").split("/").pop(), 10) : null,
         title: link ? link.textContent : "",
-        state: row.querySelector(".pill-open") ? "OPEN" : "CLOSED",
+        state: row.getAttribute("data-state") || "OPEN",
+        status: row.getAttribute("data-status") || "open",
         foundBy: row.getAttribute("data-found-by"),
         assignedTo: control ? (control.getAttribute("data-assigned-to") || "") : "",
       };
@@ -367,7 +421,9 @@ _SCRIPT = """
       list.innerHTML = '<li class="dim">Pick "Viewing as" in the sidebar to see your assigned bugs here.</li>';
       return;
     }
-    var mine = getRowsData().filter(function (r) { return r.state === "OPEN" && r.assignedTo === me; });
+    // Postponed is deliberately excluded here -- that's the whole point of postponing
+    // something, it shouldn't keep nagging your own "assigned to me" active queue.
+    var mine = getRowsData().filter(function (r) { return r.status === "open" && r.assignedTo === me; });
     if (!mine.length) {
       list.innerHTML = '<li class="dim">Nothing assigned to you right now.</li>';
       return;
@@ -422,6 +478,63 @@ _SCRIPT = """
           c.setAttribute("data-assigned-to", login);
           c.querySelector(".assign-current").textContent = name;
           c.removeAttribute("data-local-open");
+        });
+        applyFilters();
+        renderDashboard();
+      });
+    });
+  });
+
+  // ---------- editable status (Open / Postponed / Fixed) -- table rows + issue detail ----------
+  var STATUS_LABELS = { open: "OPEN", postponed: "POSTPONED", fixed: "FIXED" };
+  var STATUS_PILL_CLASS = { open: "pill-open", postponed: "pill-postponed", fixed: "pill-fixed" };
+  var STATUS_REAL_STATE = { open: "OPEN", postponed: "OPEN", fixed: "CLOSED" };
+
+  document.querySelectorAll(".status-current").forEach(function (btn) {
+    btn.addEventListener("click", function (e) {
+      e.stopPropagation();
+      if (btn.closest(".edit-affordance").classList.contains("is-readonly")) return;
+      var control = btn.closest(".status-control");
+      var isOpen = control.getAttribute("data-local-open") === "true";
+      document.querySelectorAll(".status-control").forEach(function (c) { c.removeAttribute("data-local-open"); });
+      if (!isOpen) control.setAttribute("data-local-open", "true");
+    });
+  });
+  document.addEventListener("click", function () {
+    document.querySelectorAll(".status-control").forEach(function (c) { c.removeAttribute("data-local-open"); });
+  });
+  document.querySelectorAll(".status-option").forEach(function (btn) {
+    btn.addEventListener("click", function (e) {
+      e.stopPropagation();
+      var status = btn.dataset.status;
+      var issueNum = btn.closest(".status-control").dataset.issue;
+      var controls = document.querySelectorAll('.status-control[data-issue="' + issueNum + '"]');
+      var ops = [];
+      var rows = [];
+      controls.forEach(function (c) {
+        var label = c.querySelector(".status-current");
+        ops.push({ op: "set-attr", target: c.dataset.id, key: "data-status", val: status });
+        ops.push({ op: "set-attr", target: label.dataset.id, key: "class", val: "status-current pill " + STATUS_PILL_CLASS[status] });
+        ops.push({ op: "set-text", target: label.dataset.id, text: STATUS_LABELS[status] });
+        var row = c.closest("tr");
+        if (row) {
+          rows.push(row);
+          ops.push({ op: "set-attr", target: row.dataset.id, key: "data-state", val: STATUS_REAL_STATE[status] });
+          ops.push({ op: "set-attr", target: row.dataset.id, key: "data-status", val: status });
+        }
+      });
+      withWriter(function (api) { return api.edit(ops); }).then(function (ok) {
+        if (!ok) return;
+        controls.forEach(function (c) {
+          c.setAttribute("data-status", status);
+          var label = c.querySelector(".status-current");
+          label.className = "status-current pill " + STATUS_PILL_CLASS[status];
+          label.textContent = STATUS_LABELS[status];
+          c.removeAttribute("data-local-open");
+        });
+        rows.forEach(function (row) {
+          row.setAttribute("data-state", STATUS_REAL_STATE[status]);
+          row.setAttribute("data-status", status);
         });
         applyFilters();
         renderDashboard();
@@ -497,8 +610,8 @@ _SCRIPT = """
       row.href = "#/issue/" + r.number;
       row.className = "search-result";
       var pillSpan = document.createElement("span");
-      pillSpan.className = "pill " + (r.state === "OPEN" ? "pill-open" : "pill-fixed");
-      pillSpan.textContent = r.state;
+      pillSpan.className = "pill " + STATUS_PILL_CLASS[r.status];
+      pillSpan.textContent = STATUS_LABELS[r.status];
       row.appendChild(pillSpan);
       row.appendChild(document.createTextNode(" #" + r.number + " " + r.title));
       row.addEventListener("click", closeSearch);
@@ -618,16 +731,14 @@ def render_html(issues, statuses, overrides=None):
         override = overrides.get(number, overrides.get(str(number), {}))
         assigned_to = override.get("assigned_to", bug_sync.assigned_person(issue))
         description = override.get("description", issue.get("body") or "")
-        notes = override.get("notes", [])
+        notes = _render_comment_notes(issue)
         priority = bug_sync.bug_priority(issue)
+        status = bug_sync.bug_status(issue)
 
         if assigned_to in assignments:
             key = "assigned_open" if issue["state"] == "OPEN" else "assigned_fixed"
             assignments[assigned_to][key] += 1
 
-        state = issue["state"]
-        pill_class = "pill-open" if state == "OPEN" else "pill-fixed"
-        pill_text = "OPEN" if state == "OPEN" else "FIXED"
         title = html.escape(issue["title"])
         found_login = issue["author"]["login"] if issue.get("author") else "unknown"
         author = html.escape(_display_name(found_login))
@@ -645,8 +756,9 @@ def render_html(issues, statuses, overrides=None):
             f'<span class="comment-badge" data-issue="{number}" hidden></span>'
         )
         rows += f"""
-        <tr data-found-by="{html.escape(found_login)}" data-priority="{priority or ''}" data-age-days="{age_days}">
-          <td><span class="pill {pill_class}">{pill_text}</span></td>
+        <tr data-found-by="{html.escape(found_login)}" data-priority="{priority or ''}" data-age-days="{age_days}"
+            data-state="{issue['state']}" data-status="{status}">
+          <td>{_render_status_control(number, status)}</td>
           <td>{priority_cell}</td>
           <td class="bug-title"><a href="#/issue/{number}">{title}</a>{comment_badge}</td>
           <td>{author}</td>
@@ -654,7 +766,7 @@ def render_html(issues, statuses, overrides=None):
           <td class="dim">{age}</td>
         </tr>"""
 
-        detail_sections += _render_issue_detail(issue, assigned_to, description, notes, priority)
+        detail_sections += _render_issue_detail(issue, assigned_to, description, notes, priority, status)
 
     person_cards = ""
     team_rows = ""
@@ -718,7 +830,7 @@ def render_html(issues, statuses, overrides=None):
   :root {{
     --bg: #faf9f5; --surface: #ffffff; --surface-2: #f1efe8; --border: #e4e0d4;
     --text: #171a18; --text-dim: #5b6660; --good: #1f8f52; --warn: #a6721f; --danger: #b3261e;
-    --mukund: #2f7fa8; --janhwi: #7c5cc4;
+    --postponed: #6f42c1; --mukund: #2f7fa8; --janhwi: #7c5cc4;
     --font-display: "IBM Plex Sans", ui-sans-serif, system-ui, sans-serif;
     --font-mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
   }}
@@ -726,13 +838,13 @@ def render_html(issues, statuses, overrides=None):
     :root:not([data-theme="light"]) {{
       --bg: #060807; --surface: #0c0f0d; --surface-2: #0a0c0b; --border: #1c2622;
       --text: #d8ded9; --text-dim: #7c8c83; --good: #39ff88; --warn: #e0b34d; --danger: #ff6b5e;
-      --mukund: #5fb3d9; --janhwi: #a684e8;
+      --postponed: #b794f6; --mukund: #5fb3d9; --janhwi: #a684e8;
     }}
   }}
   :root[data-theme="dark"] {{
     --bg: #060807; --surface: #0c0f0d; --surface-2: #0a0c0b; --border: #1c2622;
     --text: #d8ded9; --text-dim: #7c8c83; --good: #39ff88; --warn: #e0b34d; --danger: #ff6b5e;
-    --mukund: #5fb3d9; --janhwi: #a684e8;
+    --postponed: #b794f6; --mukund: #5fb3d9; --janhwi: #a684e8;
   }}
   * {{ box-sizing: border-box; }}
   html, body {{ height: 100%; }}
@@ -853,6 +965,7 @@ def render_html(issues, statuses, overrides=None):
   }}
   .pill-open {{ color: var(--warn); background: color-mix(in srgb, var(--warn) 16%, transparent); }}
   .pill-fixed {{ color: var(--good); background: color-mix(in srgb, var(--good) 16%, transparent); }}
+  .pill-postponed {{ color: var(--postponed); background: color-mix(in srgb, var(--postponed) 16%, transparent); }}
   .pill-priority-high {{ color: var(--danger); background: color-mix(in srgb, var(--danger) 16%, transparent); }}
   .pill-priority-medium {{ color: var(--warn); background: color-mix(in srgb, var(--warn) 16%, transparent); }}
   .pill-priority-low {{ color: var(--text-dim); background: var(--surface-2); }}
@@ -895,6 +1008,20 @@ def render_html(issues, statuses, overrides=None):
     color: var(--text); background: none; border: none; padding: 7px 12px; cursor: pointer;
   }}
   .assign-option:hover {{ background: var(--surface-2); }}
+
+  .status-control {{ position: relative; display: inline-block; }}
+  .status-current {{ cursor: pointer; border: none; }}
+  .status-menu {{
+    display: none; position: absolute; top: 100%; left: 0; margin-top: 4px; z-index: 20;
+    background: var(--surface); border: 1px solid var(--border); border-radius: 8px;
+    box-shadow: 0 8px 24px rgba(0,0,0,0.18); overflow: hidden; min-width: 110px;
+  }}
+  .status-control[data-local-open="true"] .status-menu {{ display: block; }}
+  .status-option {{
+    display: block; width: 100%; text-align: left; font-family: var(--font-mono); font-size: 0.8rem;
+    color: var(--text); background: none; border: none; padding: 7px 12px; cursor: pointer;
+  }}
+  .status-option:hover {{ background: var(--surface-2); }}
   .is-readonly {{ opacity: 0.5; pointer-events: none; }}
 
   .git-list {{ list-style: none; padding: 0; margin: 0 0 4px; font-size: 0.8rem; }}
@@ -1051,8 +1178,17 @@ def generate(overrides=None):
     second attempt (by which point more time and GitHub calls have elapsed) is often what
     actually catches a brand-new bug -- confirmed live, not just theoretical (2026-08-24).
     Callers that want an accurate "N bugs triaged" message should use this return value,
-    not just whatever sync_and_triage() reported on its own."""
+    not just whatever sync_and_triage() reported on its own.
+
+    Calls bug_sync.sync_dashboard_overrides(overrides) FIRST, before fetching fresh
+    issue state -- pushes any status/assignment/note changes made live on the
+    currently-published page back to real GitHub, so this generation (and every
+    generation after it, even one run with no overrides at all) reflects them
+    durably instead of only for as long as nobody republishes without remembering
+    to carry the override dict forward by hand. See that function's own docstring
+    for the real incident that made this necessary, not just a hypothetical."""
     _fetch_remotes_quiet()
+    bug_sync.sync_dashboard_overrides(overrides)
     triaged = bug_sync.auto_triage_pending()
     issues = bug_sync.list_all()
     statuses = status_sync.get_all_status()

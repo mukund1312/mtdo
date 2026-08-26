@@ -23,6 +23,8 @@ LABEL = "sandbox-bug"
 ASSIGN_PREFIX = "assigned:"
 PRIORITY_PREFIX = "priority:"
 PRIORITIES = ["high", "medium", "low"]
+STATUS_PREFIX = "status:"
+POSTPONED_LABEL = f"{STATUS_PREFIX}postponed"
 
 # The known two-person roster. Each maps to a friendly display name/color for the
 # dashboard, and to every git identity (name+email pairs are inconsistent across
@@ -158,11 +160,15 @@ def board():
 def list_all():
     """Every synced bug issue, full detail -- used by the dashboard for per-person
     found/fixed attribution (author = found by; assignee on a closed issue = fixed by,
-    set by mark_fixed_and_close) and for assignment tracking (labels)."""
+    set by mark_fixed_and_close) and for assignment tracking (labels). Includes
+    `comments` (full author/body/createdAt per comment, not just a count -- confirmed
+    `gh issue list --json comments` returns the whole thing in this one bulk call) so
+    the dashboard's "Conversation" thread can read real, durable notes without an extra
+    per-issue `gh issue view` round trip for every bug on the board."""
     out = _run([
         "gh", "issue", "list", "--repo", TRACKER_REPO, "--label", LABEL,
         "--state", "all",
-        "--json", "number,title,body,author,assignees,state,createdAt,closedAt,updatedAt,labels",
+        "--json", "number,title,body,author,assignees,state,createdAt,closedAt,updatedAt,labels,comments",
         "--limit", "1000",
     ])
     return json.loads(out)
@@ -412,3 +418,125 @@ def auto_triage_pending():
             plan[issue["number"]] = desired
 
     return apply_triage(plan)
+
+
+def bug_status(issue):
+    """The dashboard's 3-way status (gh: dashboard status picker + durable notes) --
+    "fixed" if the issue is actually closed, "postponed" if it's open but carrying
+    POSTPONED_LABEL, else "open". Deliberately a label on top of GitHub's own open/
+    closed rather than a fourth GitHub state (there isn't one) -- postponed is real
+    open work that's just not being actively worked on right now, so it stays open
+    (counts toward the same Found/Fixed/Open split as before) and is only a visual/
+    filterable distinction layered on top."""
+    if issue["state"] == "CLOSED":
+        return "fixed"
+    for label in issue.get("labels", []):
+        name = label["name"] if isinstance(label, dict) else label
+        if name == POSTPONED_LABEL:
+            return "postponed"
+    return "open"
+
+
+def _ensure_status_labels():
+    existing = set(_run([
+        "gh", "label", "list", "--repo", TRACKER_REPO, "--json", "name", "-q", ".[].name",
+    ]).splitlines())
+    if POSTPONED_LABEL not in existing:
+        subprocess.run(
+            ["gh", "label", "create", POSTPONED_LABEL, "--repo", TRACKER_REPO,
+             "--color", "6f42c1", "--description", "Real work, deliberately not being worked on right now"],
+            capture_output=True,
+        )
+
+
+def set_status(number, status):
+    """Applies a status change from the dashboard's status picker to the real
+    issue. "fixed" closes it (same GitHub effect as mark_fixed_and_close, minus
+    the local bug_log side -- the dashboard only ever knows GitHub issue numbers,
+    not local bug ids, so callers that also need the local bug_log entry updated
+    should use mark_fixed_and_close instead of this directly) and clears
+    POSTPONED_LABEL if present, since a closed issue being also "postponed"
+    doesn't mean anything. "postponed"/"open" both reopen if the issue was
+    closed, then add or remove POSTPONED_LABEL to match."""
+    if status not in ("open", "fixed", "postponed"):
+        raise ValueError(f"unknown status: {status!r}")
+    _ensure_status_labels()
+    if status == "fixed":
+        _run(["gh", "issue", "close", str(number), "--repo", TRACKER_REPO])
+        _run(["gh", "issue", "edit", str(number), "--repo", TRACKER_REPO, "--remove-label", POSTPONED_LABEL])
+        return
+    _run(["gh", "issue", "reopen", str(number), "--repo", TRACKER_REPO])
+    if status == "postponed":
+        _run(["gh", "issue", "edit", str(number), "--repo", TRACKER_REPO, "--add-label", POSTPONED_LABEL])
+    else:
+        _run(["gh", "issue", "edit", str(number), "--repo", TRACKER_REPO, "--remove-label", POSTPONED_LABEL])
+
+
+def sync_dashboard_overrides(overrides):
+    """Pushes whatever changed live on the dashboard page since the last
+    generate() back to the real tracker, given the overrides dict read from the
+    currently-published page (dashboard.py's own docstring: `{issue_number:
+    {"assigned_to":..., "status":..., "notes": [{"author":str,"text":str}, ...]}}`).
+    Call this before re-fetching fresh issue state for the next generation.
+
+    Why this exists (a real bug, not a hypothetical): posting a note on the
+    dashboard was a pure live-doc DOM edit with nowhere durable to live --
+    correctly synced in real time between simultaneous viewers (confirmed: it
+    uses the same api.edit() pattern as reassignment, which the assign-control's
+    own docstring confirms keeps every copy in sync), but a dashboard republish
+    replaces the WHOLE page from scratch, silently destroying every note ever
+    left, for anyone, the moment ANY session republishes without first reading
+    back and re-threading the current page's state. That happened for real --
+    multiple republishes from other sessions in short succession, no overrides
+    preserved. Posting synced notes as real GitHub issue comments here (instead
+    of only ever carrying them forward as a Python dict some future generate()
+    call might or might not remember to pass) makes them durable regardless of
+    whether the NEXT republish remembers to extract overrides at all: once
+    synced, a note lives on the issue itself, read back fresh by
+    dashboard.render_html() from list_all()'s own bundled `comments` field every
+    time, forever.
+
+    Best-effort per issue and per field -- one failure (a bad issue number, a
+    transient gh error) shouldn't block syncing everything else."""
+    if not overrides:
+        return
+    issues_by_number = {i["number"]: i for i in list_all()}
+    for key, ov in overrides.items():
+        try:
+            number = int(key)
+        except (TypeError, ValueError):
+            continue
+        issue = issues_by_number.get(number)
+        if issue is None:
+            continue
+
+        if "status" in ov and ov["status"] != bug_status(issue):
+            try:
+                set_status(number, ov["status"])
+            except Exception:
+                pass
+
+        if "assigned_to" in ov:
+            target = ov["assigned_to"] or None
+            current = assigned_person(issue)
+            if target != current:
+                try:
+                    _ensure_assignment_labels()
+                    if current:
+                        _run(["gh", "issue", "edit", str(number), "--repo", TRACKER_REPO,
+                              "--remove-label", f"{ASSIGN_PREFIX}{current}"])
+                    if target:
+                        _run(["gh", "issue", "edit", str(number), "--repo", TRACKER_REPO,
+                              "--add-label", f"{ASSIGN_PREFIX}{target}"])
+                except Exception:
+                    pass
+
+        if ov.get("notes"):
+            already = {c["body"] for c in issue.get("comments", [])}
+            for note in ov["notes"]:
+                body = f"{note.get('author', '?')}: {note.get('text', '')}"
+                if body not in already:
+                    try:
+                        _run(["gh", "issue", "comment", str(number), "--repo", TRACKER_REPO, "--body", body])
+                    except Exception:
+                        pass
