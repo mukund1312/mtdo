@@ -253,6 +253,13 @@ class TextPromptScreen(ModalScreen):
 
     def on_key(self, event):
         if event.key == "escape":
+            # Unlike the branches below, this one was missing stop/prevent_default --
+            # the unstopped key event kept bubbling past this (now-dismissed) modal to
+            # whatever screen was underneath, so e.g. cancelling the "y" YouTube URL
+            # prompt in the Vault also triggered VaultScreen's own escape binding and
+            # closed the whole Vault instead of just the prompt.
+            event.prevent_default()
+            event.stop()
             self.dismiss(None)
         elif self.multiline and event.key == "ctrl+s":
             event.prevent_default()
@@ -1374,7 +1381,11 @@ class VaultScreen(Screen):
             yield self.list_view
             self.editor = TextArea(id="vault-editor")
             yield self.editor
-            self.preview = Markdown("", id="vault-preview")
+            # Markdown isn't scrollable on its own, unlike TextArea -- it needs a
+            # scrolling container around it (same as Textual's own MarkdownViewer
+            # does internally), or content past what fits on screen is unreachable.
+            self.preview_md = Markdown("")
+            self.preview = VerticalScroll(self.preview_md, id="vault-preview")
             self.preview.display = False
             yield self.preview
         yield Static(
@@ -1430,15 +1441,23 @@ class VaultScreen(Screen):
             self.current_idx = None
             self.editor.load_text("")
             if self.preview.display:
-                self.preview.update("")
+                self.preview_md.update("")
             return
         self.current_idx = idx
         body = notes[idx]["body"]
         self.editor.load_text(body)
         # Preview mode is sticky across selection changes -- if it's open, keep
         # showing whatever note is now selected instead of silently going stale.
+        # scroll_home resets the scroll position too -- otherwise switching to a
+        # shorter note while scrolled down in a longer one left the view stuck
+        # mid-scroll, showing nothing of the newly-selected note. Markdown.update()
+        # returns an AwaitComplete -- its actual re-layout (new block widgets get
+        # mounted) doesn't happen synchronously, so scroll_home has to wait for
+        # the next refresh or it resets the scroll position against the *old*
+        # (about-to-be-replaced) content and the reset doesn't stick.
         if self.preview.display:
-            self.preview.update(body)
+            self.preview_md.update(body)
+            self.call_after_refresh(self.preview.scroll_home, animate=False)
 
     def on_list_view_highlighted(self, message: ListView.Highlighted):
         item = message.item
@@ -1525,9 +1544,12 @@ class VaultScreen(Screen):
         if self.current_idx is None:
             return
         notes = tc.list_notes(self.app_ref.state)
-        self.preview.update(notes[self.current_idx]["body"])
+        self.preview_md.update(notes[self.current_idx]["body"])
         self.editor.display = False
         self.preview.display = True
+        # See _load_editor's comment on why this waits for a refresh rather than
+        # calling scroll_home() immediately after update().
+        self.call_after_refresh(self.preview.scroll_home, animate=False)
         self.preview.focus()
 
     def action_add_from_youtube(self):
