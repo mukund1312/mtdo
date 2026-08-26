@@ -18,6 +18,7 @@ from . import config as appconfig
 from . import coaching
 from . import ai_backend
 from . import ai_ask
+from . import youtube_notes
 from . import music
 from . import plan_wizard
 from . import bug_log
@@ -1317,6 +1318,7 @@ class VaultScreen(Screen):
         ("d", "delete_note", "Delete"),
         ("/", "focus_search", "Search"),
         ("e", "focus_editor", "Edit"),
+        ("y", "add_from_youtube", "From YouTube"),
     ]
 
     CSS = """
@@ -1340,7 +1342,7 @@ class VaultScreen(Screen):
             yield self.list_view
             self.editor = TextArea(id="vault-editor")
             yield self.editor
-        yield Static("a: add   d: delete   e: edit body   /: search   esc/q: back",
+        yield Static("a: add   d: delete   e: edit body   y: from YouTube   /: search   esc/q: back",
                       id="vault-help", classes="dim")
 
     def on_mount(self):
@@ -1427,6 +1429,38 @@ class VaultScreen(Screen):
         tc.delete_note(self.app_ref.state, item.idx)
         tc.save_state(self.app_ref.state)
         self.rebuild()
+
+    def action_add_from_youtube(self):
+        def on_url(url):
+            url = (url or "").strip()
+            if not url:
+                return
+            self.app_ref.toast("Fetching transcript...", style="dim")
+            threading.Thread(target=self._youtube_worker, args=(url,), daemon=True).start()
+
+        self.app.push_screen(TextPromptScreen("YouTube video URL", ""), on_url)
+
+    def _youtube_worker(self, url):
+        """Runs off the main thread -- fetch_transcript()/generate_notes_and_quiz()
+        both do real network calls (yt-dlp, then the AI backend), same reasoning as
+        every other ai_ask caller in this app (see practice_lab_panel.py). Every
+        Textual state touch goes back through call_from_thread."""
+        title, transcript, error = youtube_notes.fetch_transcript(url)
+        if error:
+            self.app.call_from_thread(self.app_ref.toast, error, style="bold red")
+            return
+        self.app.call_from_thread(self.app_ref.toast, f'Writing notes for "{title}"...', style="dim")
+        body, error = youtube_notes.generate_notes_and_quiz(title, transcript)
+        if error:
+            self.app.call_from_thread(self.app_ref.toast, error, style="bold red")
+            return
+        self.app.call_from_thread(self._add_youtube_note, title, body)
+
+    def _add_youtube_note(self, title, body):
+        tc.add_note(self.app_ref.state, title, body)
+        tc.save_state(self.app_ref.state)
+        self.rebuild(select_index=len(tc.list_notes(self.app_ref.state)))
+        self.app_ref.toast(f'Added notes from "{title}"', style="bold green")
 
 
 # ---- Help / cheat sheet screen ------------------------------------------------
