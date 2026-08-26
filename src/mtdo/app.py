@@ -1324,6 +1324,7 @@ class VaultScreen(Screen):
     CSS = """
     VaultScreen { layout: vertical; }
     #vault-search { dock: top; }
+    #vault-status { dock: top; height: 1; padding: 0 1; }
     #vault-body { height: 1fr; }
     #vault-list { width: 1fr; border: round cyan; padding: 0 1; }
     #vault-editor { width: 2fr; border: round magenta; }
@@ -1337,6 +1338,8 @@ class VaultScreen(Screen):
 
     def compose(self) -> ComposeResult:
         yield Input(placeholder="/ to search notes...", id="vault-search")
+        self.status_line = Static("", id="vault-status")
+        yield self.status_line
         with Horizontal(id="vault-body"):
             self.list_view = VimListView(id="vault-list")
             yield self.list_view
@@ -1344,6 +1347,17 @@ class VaultScreen(Screen):
             yield self.editor
         yield Static("a: add   d: delete   e: edit body   y: from YouTube   /: search   esc/q: back",
                       id="vault-help", classes="dim")
+
+    def _set_status(self, text, style="dim"):
+        """VaultScreen is a full Screen push, not a ModalScreen -- the main app's
+        ToastLine lives on the board screen underneath it, which is completely
+        hidden while Vault is active. self.app_ref.toast(...) still "succeeds"
+        (no exception, the ToastLine widget's own content genuinely updates) but
+        is never actually visible to the user, since Textual only renders the
+        current top screen -- confirmed by hand: the message text showed up in
+        ToastLine.content but never in an actual screenshot render. Vault needs
+        its own visible status line instead of relying on the app-level toast."""
+        self.status_line.update(Text(text, style=style))
 
     def on_mount(self):
         self.rebuild()
@@ -1435,7 +1449,7 @@ class VaultScreen(Screen):
             url = (url or "").strip()
             if not url:
                 return
-            self.app_ref.toast("Fetching transcript...", style="dim")
+            self._set_status("⏳ Fetching transcript...", style="bold yellow")
             threading.Thread(target=self._youtube_worker, args=(url,), daemon=True).start()
 
         self.app.push_screen(TextPromptScreen("YouTube video URL", ""), on_url)
@@ -1444,15 +1458,17 @@ class VaultScreen(Screen):
         """Runs off the main thread -- fetch_transcript()/generate_notes_and_quiz()
         both do real network calls (yt-dlp, then the AI backend), same reasoning as
         every other ai_ask caller in this app (see practice_lab_panel.py). Every
-        Textual state touch goes back through call_from_thread."""
+        Textual state touch goes back through call_from_thread. Status goes through
+        _set_status (this screen's own status line), not self.app_ref.toast -- see
+        _set_status's docstring for why toast() is silently invisible here."""
         title, transcript, error = youtube_notes.fetch_transcript(url)
         if error:
-            self.app.call_from_thread(self.app_ref.toast, error, style="bold red")
+            self.app.call_from_thread(self._set_status, f"✗ {error}", "bold red")
             return
-        self.app.call_from_thread(self.app_ref.toast, f'Writing notes for "{title}"...', style="dim")
+        self.app.call_from_thread(self._set_status, f'⏳ Writing notes for "{title}"...', "bold yellow")
         body, error = youtube_notes.generate_notes_and_quiz(title, transcript)
         if error:
-            self.app.call_from_thread(self.app_ref.toast, error, style="bold red")
+            self.app.call_from_thread(self._set_status, f"✗ {error}", "bold red")
             return
         self.app.call_from_thread(self._add_youtube_note, title, body)
 
@@ -1460,7 +1476,7 @@ class VaultScreen(Screen):
         tc.add_note(self.app_ref.state, title, body)
         tc.save_state(self.app_ref.state)
         self.rebuild(select_index=len(tc.list_notes(self.app_ref.state)))
-        self.app_ref.toast(f'Added notes from "{title}"', style="bold green")
+        self._set_status(f'✓ Added notes from "{title}"', style="bold green")
 
 
 # ---- Help / cheat sheet screen ------------------------------------------------
