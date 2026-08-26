@@ -24,6 +24,19 @@ for) so you can see it working immediately, but it's yours to edit or replace fr
 ## Install
 
 ```bash
+git clone https://github.com/mukund1312/mtdo.git
+cd mtdo
+./install.sh
+```
+
+`install.sh` checks everything mtdo actually needs (git, Python 3.10+, sqlite3, and on
+macOS, Xcode Command Line Tools) up front, with a specific fix for whichever one is
+missing, instead of failing partway through a pip install with no clear next step. It
+sets up its own virtual environment (`.venv`) rather than touching your system Python.
+
+Already have everything installed and would rather do it by hand?
+
+```bash
 pip install -e .          # from a clone of this repo
 ```
 
