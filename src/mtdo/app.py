@@ -2644,6 +2644,15 @@ class TodoApp(App):
         # last sent into the running AI panel, so switching tasks re-primes it but
         # refocusing the same task/session doesn't spam the conversation.
         self.ai_primed_ref = None
+        # The active protected profile's password, kept in memory only for as long as
+        # it's active (gh52) -- set the moment it's proven correct (startup unlock or
+        # a switch into it), cleared the moment a different profile becomes active.
+        # This is *not* the gh49 session-lifetime cache that was deliberately removed:
+        # gh49 was about not skipping re-entry when switching INTO a profile you've
+        # visited before this session; this is only ever used to auto-save the
+        # profile you are *currently, already* in on your way out of it, which needs
+        # no re-proof since you're already proving it every time you touch the app.
+        self._active_profile_password = None
         try:
             self._goals_mtime = os.path.getmtime(appconfig.GOALS_PATH)
         except OSError:
@@ -2691,7 +2700,10 @@ class TodoApp(App):
             # gh49: gate the app itself on launch, not just switches -- see
             # ProfileUnlockScreen's docstring. Everything else in this method is
             # deferred until unlocked.
-            self._push_modal(ProfileUnlockScreen(active, profile["name"]), lambda _pw: self._finish_startup())
+            def _unlocked(pw):
+                self._active_profile_password = pw
+                self._finish_startup()
+            self._push_modal(ProfileUnlockScreen(active, profile["name"]), _unlocked)
             return
         self._finish_startup()
 
@@ -3306,9 +3318,13 @@ class TodoApp(App):
             active_message_pump.reset(token)
 
     def _save_current_profile(self):
-        """gh49: always re-prompts for a protected profile's password when saving
-        it on the way out of a switch -- no cross-call cache (see _switch_profile's
-        docstring note for why)."""
+        """Auto-saves the outgoing profile on the way out of a switch, using the
+        password already cached in self._active_profile_password from when THIS
+        profile became active (startup unlock or an earlier switch into it) --
+        gh52: re-prompting here was pure friction, since saving the profile you're
+        already in proves nothing gh49 cares about (that's about not skipping
+        re-entry for a profile you're switching INTO). Falls back to prompting only
+        if that cache is somehow unset (defensive; shouldn't happen in practice)."""
         active = pf.get_active_slug()
         if active is None:
             return
@@ -3316,6 +3332,9 @@ class TodoApp(App):
         if profile is None:
             return
         if profile.get("protected"):
+            if self._active_profile_password is not None:
+                self._write_current_profile(active, self._active_profile_password)
+                return
             self._push_modal(
                 TextPromptScreen(f"Password for profile '{profile['name']}' (saving)", "", secret=True),
                 lambda value: self._save_current_profile_after_password(value, active),
@@ -3339,11 +3358,20 @@ class TodoApp(App):
 
     def _switch_profile(self, slug, password=None):
         """gh49: every switch to a protected profile re-prompts for its password,
-        every time -- no session-lifetime cache (there used to be one; a tester
-        explicitly asked for a password to be required "each time," not just the
-        first). If canceled (Escape -> None from the prompt), the lambda below
-        just doesn't recurse, so the switch quietly doesn't happen instead of
-        looping back into asking again forever."""
+        every time -- no cache that would let you switch INTO a profile without
+        re-proving you know its password (there used to be one; a tester explicitly
+        asked for a password to be required "each time," not just the first). If
+        canceled (Escape -> None from the prompt), the lambda below just doesn't
+        recurse, so the switch quietly doesn't happen instead of looping back into
+        asking again forever.
+
+        Once `password` is actually verified below (via read_goals/read_state), it's
+        cached onto self._active_profile_password for as long as this profile stays
+        active -- gh52, so a *later* switch away from THIS profile can auto-save it
+        without asking a third time for a password already proven twice today (once
+        to switch in here, and originally to unlock it in the first place). This
+        cache never shortcuts switching INTO a profile -- gh49's protection is
+        untouched -- only saving the one you're already, currently in."""
         target = pf.get_profile(slug)
         if target is None:
             self.toast("No profile selected.", style="bold red")
@@ -3373,6 +3401,7 @@ class TodoApp(App):
             import json
             json.dump(state or {"_meta": {}}, f, indent=2, sort_keys=False)
         pf.set_active(slug)
+        self._active_profile_password = password if target.get("protected") else None
         appconfig.set_user_name(target["name"])
         self.state = state or {"_meta": {}}
         self.reload_from_goals()
