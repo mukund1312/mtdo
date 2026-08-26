@@ -9,6 +9,45 @@ Add each session's PROGRESS.md entry to the same branch as the code it describes
 
 ---
 
+## 2026-08-27 (bug gh51, GH mukund1312/mtdo-bugs#51, PR https://github.com/mukund1312/mtdo/pull/39) -- recovery-code reset validated too late
+
+Bug, verbatim: "can change password and modify the profile with wrong reovery
+code but it is on the top it says wrong recovery code but allows to change
+password."
+
+Reproduced live before touching anything (headless Textual pilot against a real
+protected profile): the reset flow -- reached from either ProfileUnlockScreen's
+"Forgot password?" or ProfileManageScreen's "Reset Password", and the CLI's
+`profile recover` -- asks for the recovery code, then a new password, then a
+confirmation, and only calls `pf.recover_profile()` (which is where the code
+actually gets checked) at the very end. A wrong code still walked the user
+through both password prompts before failing. The underlying reset was never
+actually vulnerable -- `check_password`/`recover_profile` confirmed the
+password never changes on a wrong code -- but the UX is indistinguishable from
+"it let me change the password": the app doesn't say the code was wrong until
+after you've already typed and confirmed a brand-new one.
+
+**Fix:** added `profiles.check_recovery_code(slug, code)`, mirroring the
+existing `check_password()` -- unwraps the recovery-wrapped data key without
+rewrapping anything, i.e. a pure yes/no check. Both `app._reset_profile_password`
+(TUI) and `cli.cmd_profile_recover` now call it immediately after the code is
+entered, before asking for a new password at all. `recover_profile()` still
+re-validates the code itself at the end (belt and suspenders, e.g. against the
+profile record changing between the check and the actual reset).
+
+**Tested:** live headless-pilot repro confirmed the bug (wrong code reached the
+"New password" prompt) before the fix and confirmed the fix (wrong code now
+rejects immediately, never leaving the lock screen) after. Happy path (correct
+code) re-verified end-to-end: still resets and unlocks in one flow. Added
+`test_forgot_password_rejects_wrong_recovery_code_immediately` as a permanent
+regression test next to the existing happy-path test. Full suite: 59 passed, 1
+skipped, in a scratch venv (repo has no pytest installed globally --
+created and discarded `/tmp/mtdo_test_venv2`, same throwaway-venv convention as
+before). Real `~/.mtdo` never touched -- all repro/testing used a scratch
+`MTDO_HOME`.
+
+---
+
 ## 2026-08-27 (PR https://github.com/mukund1312/mtdo/pull/38) -- dashboard: postponed status + durable notes sync
 
 User's ask, verbatim: "asing it between me and janhwi and also give me an option to

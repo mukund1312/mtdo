@@ -3493,9 +3493,20 @@ class TodoApp(App):
         an actual successful reset, letting that screen dismiss itself with the
         new password and unlock immediately instead of making the user retype
         it. ProfileManageScreen's call leaves on_done unset and just toasts,
-        same as before."""
+        same as before.
+
+        The recovery code is checked (pf.check_recovery_code) as soon as it's
+        entered, before asking for a new password at all (gh51) -- it used to only
+        get validated at the very end, after the user had already typed and
+        confirmed a brand-new password, which read exactly like the app "let" a
+        wrong code through even though the actual reset was always correctly
+        rejected. recover_profile() itself still re-validates the code at the end
+        (belt and suspenders against the profile record changing in between)."""
         def got_code(code):
             if code is None or not code.strip():
+                return
+            if not pf.check_recovery_code(slug, code):
+                self.toast(f'wrong recovery code for profile "{name}".', style="bold red")
                 return
             def got_new_password(new_password):
                 if new_password is None or not new_password.strip():

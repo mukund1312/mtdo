@@ -283,6 +283,37 @@ def check_password(slug, password):
         return False
 
 
+def _unwrap_data_key_via_recovery(profile, recovery_code):
+    """Recovery-code counterpart to _unwrap_data_key -- same envelope, unwrapped with
+    the recovery-code-derived key instead of the password-derived one."""
+    Fernet, InvalidToken, _hashes, _PBKDF2HMAC = _require_cryptography()
+    rec_salt = base64.b64decode(profile["recovery_salt"])
+    rec_key = _derive_key(_normalize_recovery_code(recovery_code), rec_salt)
+    try:
+        return Fernet(rec_key).decrypt(profile["wrapped_key_recovery"].encode("ascii"))
+    except InvalidToken:
+        raise InvalidRecoveryCode(f'wrong recovery code for profile "{profile["name"]}".')
+
+
+def check_recovery_code(slug, recovery_code):
+    """True if `recovery_code` is right for `slug`. Mirrors check_password -- lets a
+    caller validate the code by itself, before asking for (and confirming) a new
+    password, instead of only finding out it was wrong at the very end of that flow
+    (gh51: the reset itself was never actually vulnerable to a wrong code, but asking
+    the user to type and confirm a new password *before* telling them the code was
+    wrong reads exactly like the app "let" the change through)."""
+    profile = get_profile(slug)
+    if profile is None:
+        raise ProfileNotFound(f"no such profile: {slug}")
+    if not profile.get("protected"):
+        return False
+    try:
+        _unwrap_data_key_via_recovery(profile, recovery_code)
+        return True
+    except InvalidRecoveryCode:
+        return False
+
+
 def recover_profile(slug, recovery_code, new_password):
     """Resets a protected profile's password using its recovery code, without
     needing (or changing) the old password -- the gh40 fix. Unwraps the data key via
@@ -301,12 +332,7 @@ def recover_profile(slug, recovery_code, new_password):
         raise ProfileError("a new password is required.")
 
     Fernet, InvalidToken, _hashes, _PBKDF2HMAC = _require_cryptography()
-    rec_salt = base64.b64decode(profile["recovery_salt"])
-    rec_key = _derive_key(_normalize_recovery_code(recovery_code), rec_salt)
-    try:
-        data_key = Fernet(rec_key).decrypt(profile["wrapped_key_recovery"].encode("ascii"))
-    except InvalidToken:
-        raise InvalidRecoveryCode(f'wrong recovery code for profile "{profile["name"]}".')
+    data_key = _unwrap_data_key_via_recovery(profile, recovery_code)
 
     pw_salt = os.urandom(16)
     wrapped_key = Fernet(_derive_key(new_password, pw_salt)).encrypt(data_key).decode("ascii")
