@@ -404,6 +404,36 @@ async def test_forgot_password_from_lock_screen_unlocks_via_recovery_code(unique
         assert pf.check_password(slug, "original-pw") is False
 
 
+async def test_forgot_password_rejects_wrong_recovery_code_immediately(unique_slug):
+    """gh51: a wrong recovery code used to only get caught at the very end of this
+    flow -- after the user had already typed and confirmed a whole new password --
+    which read exactly like the app "let" the change through even though the actual
+    reset was always correctly rejected underneath. Fixed by validating the code
+    (pf.check_recovery_code) the moment it's entered, so a wrong code never even
+    reaches the "New password" prompt."""
+    slug, code = pf.create_profile(unique_slug, password="original-pw")
+    pf.set_active(slug)
+
+    app = TodoApp()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        assert isinstance(app.screen, ProfileUnlockScreen)
+
+        await pilot.press("tab")  # -> "Forgot password?"
+        await pilot.press("enter")
+        await pilot.pause()
+        assert isinstance(app.screen, TextPromptScreen)  # recovery code prompt
+
+        for ch in "totally-wrong-code":
+            await pilot.press(ch)
+        await pilot.press("enter")
+        await pilot.pause()
+
+        assert isinstance(app.screen, ProfileUnlockScreen), \
+            "a wrong code must reject immediately, never reaching a new-password prompt"
+        assert pf.check_password(slug, "original-pw") is True
+
+
 async def test_manage_profiles_reset_button_says_reset_password(unique_slug):
     """The bare label "Reset" on a protected profile's row read as resetting
     the whole profile back to empty, not resetting its password -- confirms

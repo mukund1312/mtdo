@@ -457,7 +457,12 @@ def cmd_profile_import(args):
 def cmd_profile_recover(args):
     """Resets a protected profile's password using its recovery code -- the gh40
     fix. Doesn't need (or change) the old password, and doesn't touch goals.json/
-    state.json; only the wrapped-key envelope is rewrapped."""
+    state.json; only the wrapped-key envelope is rewrapped.
+
+    The code is checked as soon as it's entered, before asking for a new password
+    at all (gh51) -- it used to only get caught at the very end, after the user had
+    already typed and confirmed a brand-new password, which read like the CLI let a
+    wrong code through even though the actual reset was always correctly rejected."""
     target = _resolve_profile(args.name)
     if target is None:
         print(f"No profile named '{args.name}'.")
@@ -466,6 +471,9 @@ def cmd_profile_recover(args):
         print(f"'{target['name']}' has no password set -- nothing to recover.")
         return
     recovery_code = getpass.getpass("Recovery code (shown once at profile creation): ")
+    if not pf.check_recovery_code(target["slug"], recovery_code):
+        print(f"Wrong recovery code for '{target['name']}'.")
+        return
     new_password = getpass.getpass("New password: ")
     confirm = getpass.getpass("Confirm new password: ")
     if new_password != confirm:
