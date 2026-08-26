@@ -9,6 +9,44 @@ Add each session's PROGRESS.md entry to the same branch as the code it describes
 
 ---
 
+## 2026-08-27 (bug gh52, GH mukund1312/mtdo-bugs#52, PR https://github.com/mukund1312/mtdo/pull/40) -- switching profiles auto-saves the outgoing one instead of re-prompting
+
+Bug, verbatim (Janhwi): "while switchign the profile there should be auto save
+instead of asking password again to save."
+
+Root cause: switching from protected profile A to protected profile B asked for a
+password *twice* -- once (correctly, per gh49's "ask every time" rule) to switch
+into B, and once more purely to auto-save A on the way out via
+`_save_current_profile()`, even though A's password had already been proven to
+unlock it earlier in the same session (at startup or an earlier switch into it).
+gh49 deliberately removed a cross-switch password cache, but that was about not
+letting you skip re-entry when switching *into* a profile you'd visited before --
+it was never about the profile you're *already, currently* in needing to reprove
+itself just to be saved.
+
+**Fix:** added `self._active_profile_password`, cached the moment a protected
+profile's password is actually verified (startup unlock in `on_mount`, or a
+successful `_switch_profile` call), cleared implicitly whenever a different
+profile becomes active. `_save_current_profile()` now uses that cached password
+directly instead of prompting, falling back to the old prompt only if the cache is
+somehow unset (defensive, shouldn't happen in practice). This cache never touches
+the switch-in path -- `target.get("protected") and password is None` still always
+prompts, so gh49's protection is fully intact.
+
+**Tested:** live headless-pilot repro before the fix confirmed 3 total password
+prompts across one A -> B switch (unlock A at launch, switch into B, save A on the
+way out); after the fix, exactly 1 (B's own). Verified A's data is genuinely
+persisted correctly during the auto-save (wrote a marker into `state.json` while
+active in A, read it back via `pf.read_state(slug_a, "pw-a")` after switching to
+B). Confirmed gh49's own regression test
+(`test_switching_to_protected_profile_always_reprompts_even_if_unlocked_earlier`)
+still passes unchanged. Added a new permanent regression test,
+`test_switching_away_auto_saves_without_reprompting`. Full suite: 59 passed, 1
+skipped, in a scratch venv. Real `~/.mtdo` never touched -- all repro/testing used
+a scratch `MTDO_HOME`.
+
+---
+
 ## 2026-08-27 (bug gh51, GH mukund1312/mtdo-bugs#51, PR https://github.com/mukund1312/mtdo/pull/39) -- recovery-code reset validated too late
 
 Bug, verbatim: "can change password and modify the profile with wrong reovery
