@@ -740,13 +740,22 @@ def list_notes(state):
     return state.get(NOTES_KEY, [])
 
 
-def add_note(state, title, body=""):
+def add_note(state, title, body="", tags=None):
     now = get_today().isoformat()
-    state.setdefault(NOTES_KEY, []).append({"title": title, "body": body, "created": now, "updated": now})
+    state.setdefault(NOTES_KEY, []).append(
+        {"title": title, "body": body, "tags": list(tags or []), "created": now, "updated": now}
+    )
 
 
 def set_note_body(state, idx, body):
     state[NOTES_KEY][idx]["body"] = body
+    state[NOTES_KEY][idx]["updated"] = get_today().isoformat()
+
+
+def set_note_tags(state, idx, tags):
+    """tags: a list of plain strings, whatever casing/spacing the caller already
+    normalized -- this just stores them and bumps updated, same as set_note_body."""
+    state[NOTES_KEY][idx]["tags"] = list(tags)
     state[NOTES_KEY][idx]["updated"] = get_today().isoformat()
 
 
@@ -755,11 +764,18 @@ def delete_note(state, idx):
 
 
 def search_notes(state, query):
+    """Matches title, body, or tags -- .get("tags", []) rather than n["tags"]
+    since notes created before tags existed don't have the key at all."""
     notes = list(enumerate(list_notes(state)))
     q = query.lower().strip()
     if not q:
         return notes
-    return [(i, n) for i, n in notes if q in n["title"].lower() or q in n["body"].lower()]
+    return [
+        (i, n) for i, n in notes
+        if q in n["title"].lower()
+        or q in n["body"].lower()
+        or any(q in t.lower() for t in n.get("tags", []))
+    ]
 
 
 # ---- Reports ------------------------------------------------------------------

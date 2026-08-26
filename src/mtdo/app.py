@@ -29,7 +29,7 @@ from .errorlog import LOG_PATH, log as app_log
 
 from textual.app import App, ComposeResult
 from textual.containers import Horizontal, Vertical, VerticalScroll, Center, Middle
-from textual.widgets import Static, ListView, ListItem, Label, Input, Footer, TextArea, Button, DirectoryTree
+from textual.widgets import Static, ListView, ListItem, Label, Input, Footer, TextArea, Button, DirectoryTree, Markdown, LoadingIndicator
 from textual.screen import ModalScreen, Screen
 from textual.message_pump import active_message_pump
 from textual.reactive import reactive
@@ -1298,6 +1298,20 @@ class CareerScreen(Screen):
 
 # ---- Knowledge Vault screen ---------------------------------------------------
 
+def _note_age(iso_date_str):
+    """Notes only ever store a date (get_today().isoformat(), no time-of-day
+    component -- see core.add_note), so this is day-granularity only, same as
+    dashboard.py's own (separate, ISO-datetime-based) _age() -- not shared with
+    it since the two work off different timestamp formats."""
+    then = datetime.date.fromisoformat(iso_date_str)
+    days = (tc.get_today() - then).days
+    if days <= 0:
+        return "today"
+    if days == 1:
+        return "1 day ago"
+    return f"{days} days ago"
+
+
 class NoteItem(ListItem):
     def __init__(self, idx, note):
         self.idx = idx
@@ -1305,9 +1319,15 @@ class NoteItem(ListItem):
 
     def _render_note(self, note):
         header = Text(note["title"], style="bold cyan")
-        first_line = note["body"].strip().splitlines()[0] if note["body"].strip() else "(empty)"
-        body = Text(first_line[:50], style="dim")
-        return Group(header, body)
+        first_line = note["body"].strip().splitlines()[0].lstrip("#").strip() if note["body"].strip() else "(empty)"
+        preview = Text(first_line[:50], style="dim")
+        tags = note.get("tags", [])
+        meta_parts = []
+        if tags:
+            meta_parts.append(" ".join(f"#{t}" for t in tags))
+        meta_parts.append(_note_age(note.get("updated") or note.get("created", tc.get_today().isoformat())))
+        meta = Text(" · ".join(meta_parts), style="italic #6a9955" if tags else "dim")
+        return Group(header, preview, meta)
 
 
 class VaultScreen(Screen):
@@ -1318,16 +1338,21 @@ class VaultScreen(Screen):
         ("d", "delete_note", "Delete"),
         ("/", "focus_search", "Search"),
         ("e", "focus_editor", "Edit"),
+        ("t", "edit_tags", "Tags"),
+        ("p", "toggle_preview", "Preview"),
         ("y", "add_from_youtube", "From YouTube"),
     ]
 
     CSS = """
     VaultScreen { layout: vertical; }
     #vault-search { dock: top; }
-    #vault-status { dock: top; height: 1; padding: 0 1; }
+    #vault-status-row { dock: top; height: 1; }
+    #vault-status { width: 1fr; padding: 0 1; }
+    #vault-spinner { width: 3; height: 1; padding: 0 1 0 0; }
     #vault-body { height: 1fr; }
     #vault-list { width: 1fr; border: round cyan; padding: 0 1; }
     #vault-editor { width: 2fr; border: round magenta; }
+    #vault-preview { width: 2fr; border: round magenta; padding: 0 1; }
     #vault-help { height: 1; dock: bottom; padding: 0 1; }
     """
 
@@ -1338,15 +1363,24 @@ class VaultScreen(Screen):
 
     def compose(self) -> ComposeResult:
         yield Input(placeholder="/ to search notes...", id="vault-search")
-        self.status_line = Static("", id="vault-status")
-        yield self.status_line
+        with Horizontal(id="vault-status-row"):
+            self.status_line = Static("", id="vault-status")
+            yield self.status_line
+            self.spinner = LoadingIndicator(id="vault-spinner")
+            self.spinner.display = False
+            yield self.spinner
         with Horizontal(id="vault-body"):
             self.list_view = VimListView(id="vault-list")
             yield self.list_view
             self.editor = TextArea(id="vault-editor")
             yield self.editor
-        yield Static("a: add   d: delete   e: edit body   y: from YouTube   /: search   esc/q: back",
-                      id="vault-help", classes="dim")
+            self.preview = Markdown("", id="vault-preview")
+            self.preview.display = False
+            yield self.preview
+        yield Static(
+            "a: add  d: delete  e: edit  t: tags  p: preview  y: YouTube  /: search  esc/q: back",
+            id="vault-help", classes="dim",
+        )
 
     def _set_status(self, text, style="dim"):
         """VaultScreen is a full Screen push, not a ModalScreen -- the main app's
@@ -1358,6 +1392,9 @@ class VaultScreen(Screen):
         ToastLine.content but never in an actual screenshot render. Vault needs
         its own visible status line instead of relying on the app-level toast."""
         self.status_line.update(Text(text, style=style))
+
+    def _show_spinner(self, visible):
+        self.spinner.display = visible
 
     def on_mount(self):
         self.rebuild()
@@ -1392,9 +1429,16 @@ class VaultScreen(Screen):
             # desync, just show nothing rather than raise.
             self.current_idx = None
             self.editor.load_text("")
+            if self.preview.display:
+                self.preview.update("")
             return
         self.current_idx = idx
-        self.editor.load_text(notes[idx]["body"])
+        body = notes[idx]["body"]
+        self.editor.load_text(body)
+        # Preview mode is sticky across selection changes -- if it's open, keep
+        # showing whatever note is now selected instead of silently going stale.
+        if self.preview.display:
+            self.preview.update(body)
 
     def on_list_view_highlighted(self, message: ListView.Highlighted):
         item = message.item
@@ -1411,6 +1455,15 @@ class VaultScreen(Screen):
             tc.save_state(self.app_ref.state)
 
     def action_close(self):
+        # The editor/preview swallow every other single-letter binding while
+        # focused (TextArea treats them as literal text -- correctly, you need
+        # to be able to type the letter "t" in a note), which made Escape the
+        # only reachable key there. Without this, Escape from the editor closed
+        # the whole Vault instead of just returning to the list -- losing your
+        # place instead of getting you back to the a/d/t/p/y actions.
+        if self.editor.has_focus or self.preview.has_focus:
+            self.list_view.focus()
+            return
         self.dismiss()
 
     def action_focus_search(self):
@@ -1444,12 +1497,46 @@ class VaultScreen(Screen):
         tc.save_state(self.app_ref.state)
         self.rebuild()
 
+    def action_edit_tags(self):
+        item = self.current_item()
+        if item is None:
+            return
+        notes = tc.list_notes(self.app_ref.state)
+        current_tags = notes[item.idx].get("tags", [])
+
+        def on_result(value):
+            if value is None:
+                return
+            tags = [t.strip() for t in value.split(",") if t.strip()]
+            tc.set_note_tags(self.app_ref.state, item.idx, tags)
+            tc.save_state(self.app_ref.state)
+            self.rebuild(select_index=self.list_view.index)
+
+        self.app.push_screen(
+            TextPromptScreen("Tags (comma-separated)", ", ".join(current_tags)), on_result
+        )
+
+    def action_toggle_preview(self):
+        if self.preview.display:
+            self.preview.display = False
+            self.editor.display = True
+            self.editor.focus()
+            return
+        if self.current_idx is None:
+            return
+        notes = tc.list_notes(self.app_ref.state)
+        self.preview.update(notes[self.current_idx]["body"])
+        self.editor.display = False
+        self.preview.display = True
+        self.preview.focus()
+
     def action_add_from_youtube(self):
         def on_url(url):
             url = (url or "").strip()
             if not url:
                 return
-            self._set_status("⏳ Fetching transcript...", style="bold yellow")
+            self._set_status("Fetching transcript...", style="bold yellow")
+            self._show_spinner(True)
             threading.Thread(target=self._youtube_worker, args=(url,), daemon=True).start()
 
         self.app.push_screen(TextPromptScreen("YouTube video URL", ""), on_url)
@@ -1463,16 +1550,21 @@ class VaultScreen(Screen):
         _set_status's docstring for why toast() is silently invisible here."""
         title, transcript, error = youtube_notes.fetch_transcript(url)
         if error:
-            self.app.call_from_thread(self._set_status, f"✗ {error}", "bold red")
+            self.app.call_from_thread(self._youtube_failed, error)
             return
-        self.app.call_from_thread(self._set_status, f'⏳ Writing notes for "{title}"...', "bold yellow")
+        self.app.call_from_thread(self._set_status, f'Writing notes for "{title}"...', "bold yellow")
         body, error = youtube_notes.generate_notes_and_quiz(title, transcript)
         if error:
-            self.app.call_from_thread(self._set_status, f"✗ {error}", "bold red")
+            self.app.call_from_thread(self._youtube_failed, error)
             return
         self.app.call_from_thread(self._add_youtube_note, title, body)
 
+    def _youtube_failed(self, error):
+        self._show_spinner(False)
+        self._set_status(f"✗ {error}", style="bold red")
+
     def _add_youtube_note(self, title, body):
+        self._show_spinner(False)
         tc.add_note(self.app_ref.state, title, body)
         tc.save_state(self.app_ref.state)
         self.rebuild(select_index=len(tc.list_notes(self.app_ref.state)))
