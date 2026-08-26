@@ -1,16 +1,21 @@
 # MTDO
 
-A terminal task board built around a 4-column Kanban (Backlog / Todo / In Progress / Done),
-with a Pomodoro timer, streaks + a GitHub-style heatmap, a Focus Mode, a Career CRM for job
+**A terminal practice system for interview and skill prep.** Track what you're studying
+today, get coached through it instead of just checking it off, and see proof you're
+actually improving -- all in one keyboard-driven session, without switching between a
+to-do app, a study guide, an AI chat tab, and a code sandbox.
+
+It does that with a 4-column Kanban (Backlog / Todo / In Progress / Done), a Pomodoro
+timer, streaks + a GitHub-style heatmap, a Focus Mode, a Career CRM for job
 applications, a Knowledge Vault for notes, a Learning Coach panel that surfaces study and
 interview-prep guidance (and, for DSA/SQL, generates an actual practice problem) for
 whatever task is in progress, an embedded AI assistant panel that already knows what
 you're working on, a real Practice Lab (Python/Java/C/C++/SQL, real execution, a real
 sqlite3 database), and now-playing music controls -- all keyboard-first, no mouse required.
 
-MTDO is built for deliberate practice, not entertainment -- every panel exists to help you
-learn, retain, and get interview-ready faster. There's no animation/video panel and never
-will be; screen space goes to coaching content instead.
+There's no animation/video panel and never will be; screen space goes to coaching
+content instead -- every panel here exists to help you learn, retain, and get
+interview-ready faster, not to entertain you.
 
 Everything about *what* you're tracking -- your categories, your curriculum, your goal -- lives
 in a config file, not in code. The app ships with a demo config (the plan I actually built this
