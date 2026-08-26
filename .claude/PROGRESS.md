@@ -9,6 +9,80 @@ Add each session's PROGRESS.md entry to the same branch as the code it describes
 
 ---
 
+## 2026-08-27 (PR https://github.com/mukund1312/mtdo/pull/38) -- dashboard: postponed status + durable notes sync
+
+User's ask, verbatim: "asing it between me and janhwi and also give me an option to
+chnage between the options like open fixed and postpon and also when i am leave a note
+and janhwi is leaving a note we r not able to see it" -- three parts.
+
+**"Assign whatever's unassigned between us"**: needed no code change. Checked directly --
+`distribute_pending()` already keeps every *open* bug assigned; the only unassigned issues
+on the tracker (#5-#9, #12-#16) are old, already-closed ones that predate the
+auto-triage/distribution automation and were never re-touched. Confirmed by re-running
+`distribute_pending()`, which returned `{'mukund1312': 0, 'janhwirai': 0}` -- nothing to do.
+
+**Root cause of "we can't see each other's notes"**: not a live-sync bug. The dashboard's
+`.assign-control`/`.thread-post` live-doc wiring (via the `artifact` capability's
+`api.edit()`) is correct and does sync in real time between simultaneous viewers. The
+actual gap: notes only ever lived in ephemeral live-doc DOM state, with no durable backing
+store. Any republish of the artifact -- by this session or another -- replaces the entire
+page and silently discards that state unless the publisher explicitly re-threads it via
+`generate(overrides=...)`, which wasn't happening reliably (this same session saw five
+rapid "republished by another session" notifications shortly before this fix, almost
+certainly the actual mechanism that ate real notes).
+
+**Fix, `bug_sync.py`**:
+- `list_all()` now bundles `comments` into its existing bulk `--json` field list (`gh issue
+  list` returns full comment bodies for every issue in one call, not just a count --
+  confirmed empirically), so nothing needs an extra per-issue round trip.
+- `bug_status(issue)` derives a 3-way status from GitHub's binary open/closed: `"fixed"` if
+  closed, `"postponed"` if open with a new `status:postponed` label, else `"open"`.
+- `set_status(number, status)` applies that back to real GitHub state (close/reopen +
+  add/remove the label; closing always clears `postponed`, since closed+postponed is
+  meaningless).
+- `sync_dashboard_overrides(overrides)`: the actual durability fix. Given whatever changed
+  live on the currently-published page, pushes status/assignment changes to real GitHub
+  state and posts new notes as real `gh issue comment`s (skipping ones already posted, so
+  it's safe to call repeatedly with the same overrides). Best-effort per issue/field so one
+  failure doesn't block the rest.
+
+**Fix, `dashboard.py`**:
+- `generate()` now calls `bug_sync.sync_dashboard_overrides(overrides)` *before*
+  re-fetching fresh issue state -- so the very same call that could otherwise discard live
+  state now durably preserves it first, regardless of whether the caller remembers to do
+  anything special.
+- Notes render from real GitHub comments (`_render_comment_notes`) instead of purely from
+  `overrides["notes"]`, so they survive a page reload/republish either way. A comment
+  that's a synced note carries its real author inside the body text itself (`"Mukund:
+  ..."`) since the `gh` CLI that posts it always runs as whoever's machine ran the sync,
+  not whoever typed it in the browser -- rendered as-is; anything else (a plain GitHub
+  comment) gets its author from the real comment metadata instead.
+- Added a status control (`_render_status_control`) in the issues table and issue detail
+  view, matching the existing assignment-picker's exact interaction pattern (click to open,
+  click an option, live-doc edit ops, immediate visual update).
+- `getRowsData()` switched from inferring open/closed by sniffing for a `.pill-open` CSS
+  class to explicit `data-state`/`data-status` attributes set directly at render time --
+  the old sniffing would have silently misclassified postponed bugs as closed, since a
+  postponed row has no element matching `.pill-open` once the pill became a dynamically
+  classed button. Caught by reasoning before shipping, not live.
+
+**Tested:** Full pytest suite (54 passed, 1 skipped) against current `main` in a scratch
+venv (repo has no pytest installed globally; created and discarded `/tmp/mtdo_test_venv`,
+matching the project's established throwaway-venv convention). `bug_status`/`set_status`
+transitions (open -> postponed -> fixed -> open) and `sync_dashboard_overrides` (status +
+assignment + notes, idempotent on repeat) verified live against a real disposable GitHub
+issue, created then deleted. End-to-end `dashboard.generate()` verified to post a note
+through to a real GitHub comment and render it back correctly. Checked the live artifact
+for pending notes immediately before republishing (none existed, so nothing was at risk of
+being lost by this regeneration). Real `~/.mtdo/{goals.json,state.json}` untouched
+throughout -- confirmed unchanged mtimes.
+
+No local bug_log/tracker issue closed for this piece of work -- it came directly from the
+user in chat, not through the dashboard's own bug-report flow, so there was no tracker
+issue to close.
+
+---
+
 ## 2026-08-25 (bug gh28, GH mukund1312/mtdo-bugs#28) -- walkthrough reordered, and a shared "Setup N of M" indicator across the whole first-run sequence
 
 Bug's literal mechanism no longer exists: it described a gap while waiting on
