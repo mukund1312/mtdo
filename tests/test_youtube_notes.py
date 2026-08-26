@@ -145,3 +145,15 @@ async def test_vault_add_from_youtube_creates_a_note(monkeypatch):
         assert notes[-1]["title"] == "Two Pointers Explained"
         assert "Use two pointers" in notes[-1]["body"]
         assert "Questions" in notes[-1]["body"]
+
+        # Regression check for a real bug: this flow originally reported status
+        # via self.app_ref.toast(...), which updates ToastLine on the *board*
+        # screen underneath -- invisible the whole time VaultScreen (a full
+        # Screen push, not a ModalScreen) is on top. toast() never raised, so it
+        # was a silent failure: confirmed by hand that the message landed in
+        # ToastLine.content but never appeared in an actual screenshot render.
+        # Status now goes through VaultScreen's own status_line instead.
+        assert isinstance(app.screen, VaultScreen)
+        status = app.screen.status_line.content
+        status_text = status.plain if hasattr(status, "plain") else str(status)
+        assert 'Added notes from "Two Pointers Explained"' in status_text
