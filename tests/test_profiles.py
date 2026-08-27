@@ -15,6 +15,7 @@ import os
 from mtdo import profiles as pf
 from mtdo.app import (
     ClockHeader,
+    LocalRecoveryCodeViewScreen,
     ProfileCreateScreen,
     ProfileManageScreen,
     ProfileMenuScreen,
@@ -140,6 +141,130 @@ async def test_creating_profile_with_password_shows_recovery_code(unique_slug):
         profile = pf.get_profile(slug)
         assert profile["name"] == unique_slug
         assert profile["protected"] is True
+
+
+async def _create_protected_profile_to_recovery_screen(pilot, app, slug_name):
+    """Shared setup for the gh53 tests below: drives ProfileCreateScreen through
+    the "Yes, set a password" path up to the point RecoveryCodeScreen appears,
+    returning it. Factored out since every gh53 test needs this same setup before
+    exercising a different local-save choice from there."""
+    app.action_create_profile()
+    await pilot.pause()
+    for ch in slug_name:
+        await pilot.press(ch)
+    await pilot.click("#protect-yes")
+    await pilot.pause()
+    for ch in "abc123":
+        await pilot.press(ch)
+    await pilot.press("tab")
+    for ch in "abc123":
+        await pilot.press(ch)
+    await pilot.click("#profile-create-save")
+    await pilot.pause()
+    assert isinstance(app.screen, RecoveryCodeScreen)
+    return app.screen
+
+
+async def test_recovery_code_screen_offers_to_save_a_local_copy_unprotected(unique_slug):
+    """gh53: "if no password just save it in local" -- choosing to save without
+    protecting it must leave a plain, readable local copy that reads back
+    correctly."""
+    app = TodoApp()
+    async with app.run_test() as pilot:
+        await _dismiss_first_run_prompts(pilot, app)
+        screen = await _create_protected_profile_to_recovery_screen(pilot, app, unique_slug)
+        code, slug = screen.recovery_code, screen.slug
+
+        await pilot.click("#recovery-save-yes")
+        await pilot.pause()
+        await pilot.click("#recovery-protect-no")
+        await pilot.pause()
+
+        assert pf.has_local_recovery_code(slug) is True
+        assert pf.local_recovery_code_protected(slug) is False
+        assert pf.read_local_recovery_code(slug) == code
+
+
+async def test_recovery_code_screen_can_save_a_local_copy_with_its_own_password(unique_slug):
+    """gh53: "if selected for password protection... let them set it" -- the local
+    save's password is its own secret, independent of the profile's password
+    (abc123 here) -- confirms both that it's required to read the code back and
+    that the profile's own password does NOT also work for it."""
+    import pytest
+
+    app = TodoApp()
+    async with app.run_test() as pilot:
+        await _dismiss_first_run_prompts(pilot, app)
+        screen = await _create_protected_profile_to_recovery_screen(pilot, app, unique_slug)
+        code, slug = screen.recovery_code, screen.slug
+
+        await pilot.click("#recovery-save-yes")
+        await pilot.pause()
+        await pilot.click("#recovery-protect-yes")
+        await pilot.pause()
+        for ch in "backup-secret":
+            await pilot.press(ch)
+        await pilot.press("tab")
+        for ch in "backup-secret":
+            await pilot.press(ch)
+        await pilot.click("#recovery-save-confirm")
+        await pilot.pause()
+
+        assert pf.local_recovery_code_protected(slug) is True
+        assert pf.read_local_recovery_code(slug, "backup-secret") == code
+        with pytest.raises(pf.WrongPassword):
+            pf.read_local_recovery_code(slug, "abc123")  # the profile's own password must NOT work
+
+
+async def test_declining_local_recovery_code_save_leaves_no_local_copy(unique_slug):
+    """gh53: "if doesnt want to save in local just move ahead" -- declining must
+    not create any local file at all, same as before this feature existed."""
+    app = TodoApp()
+    async with app.run_test() as pilot:
+        await _dismiss_first_run_prompts(pilot, app)
+        screen = await _create_protected_profile_to_recovery_screen(pilot, app, unique_slug)
+        slug = screen.slug
+
+        await pilot.click("#recovery-save-no")
+        await pilot.pause()
+
+        assert pf.has_local_recovery_code(slug) is False
+        assert not isinstance(app.screen, RecoveryCodeScreen), "must move on, not get stuck"
+
+
+async def test_view_recovery_code_button_shows_saved_code_behind_its_own_password(unique_slug):
+    """gh53's read-back half: Manage Profiles only offers "View Recovery Code"
+    once a local copy actually exists, and reading a protected one back requires
+    its own separate password, matching how it was saved."""
+    slug, code = pf.create_profile(unique_slug, password="abc123")
+    pf.set_active(slug)
+    pf.save_recovery_code_locally(slug, code, password="backup-secret")
+
+    app = TodoApp()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        for ch in "abc123":
+            await pilot.press(ch)
+        await pilot.press("enter")
+        await pilot.pause()
+
+        app.action_manage_profiles()
+        await pilot.pause()
+        row = next(r for r in app.screen.rows.children if any(
+            getattr(c, "profile_slug", None) == slug for c in r.children
+        ))
+        view_btn = next(c for c in row.children if getattr(c, "row_action", None) == "view-recovery")
+        view_btn.press()
+        await pilot.pause()
+        assert isinstance(app.screen, TextPromptScreen)
+
+        for ch in "backup-secret":
+            await pilot.press(ch)
+        await pilot.press("enter")
+        await pilot.pause()
+
+        assert isinstance(app.screen, LocalRecoveryCodeViewScreen)
+        assert str(app.screen.query_one("#view-recovery-code").render()) == code
 
 
 async def test_creating_profile_mismatched_passwords_does_not_create_it(unique_slug):

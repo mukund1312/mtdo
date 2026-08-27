@@ -253,6 +253,78 @@ def delete_profile(slug):
     shutil.rmtree(profile_dir(slug), ignore_errors=True)
 
 
+def _recovery_code_local_path(slug):
+    return os.path.join(profile_dir(slug), "recovery_code.json")
+
+
+def save_recovery_code_locally(slug, recovery_code, password=None):
+    """Saves an optional local backup copy of a profile's recovery code (gh53) --
+    purely a convenience for a user who'd rather not write it down somewhere else
+    themselves; RecoveryCodeScreen offers this right after showing the code.
+    Deliberately independent of the profile's own password/data-key envelope: a
+    `password` here (if given) protects only this saved copy, with its own
+    separate salt, using the same PBKDF2+Fernet scheme as everything else in this
+    module -- gating the one thing meant to survive forgetting your password
+    behind that same password would defeat the point. `password=None` saves it as
+    plain, readable JSON, the same tradeoff an unprotected profile already makes.
+    Lives inside the profile's own directory, so delete_profile's rmtree already
+    cleans it up -- no separate teardown needed."""
+    profile = get_profile(slug)
+    if profile is None:
+        raise ProfileNotFound(f"no such profile: {slug}")
+    os.makedirs(profile_dir(slug), exist_ok=True)
+    if password:
+        Fernet, _InvalidToken, _hashes, _PBKDF2HMAC = _require_cryptography()
+        salt = os.urandom(16)
+        encrypted = Fernet(_derive_key(password, salt)).encrypt(recovery_code.encode("utf-8"))
+        record = {
+            "protected": True,
+            "salt": base64.b64encode(salt).decode("ascii"),
+            "code": encrypted.decode("ascii"),
+        }
+    else:
+        record = {"protected": False, "code": recovery_code}
+    with open(_recovery_code_local_path(slug), "w") as f:
+        json.dump(record, f, indent=2)
+
+
+def has_local_recovery_code(slug):
+    return os.path.exists(_recovery_code_local_path(slug))
+
+
+def local_recovery_code_protected(slug):
+    """True only if a local recovery-code save exists AND is password-protected --
+    lets a caller (e.g. the "View Recovery Code" button) decide whether to prompt
+    for a password before calling read_local_recovery_code, without needing to
+    attempt-and-catch as a way to probe that."""
+    path = _recovery_code_local_path(slug)
+    if not os.path.exists(path):
+        return False
+    with open(path) as f:
+        return bool(json.load(f).get("protected"))
+
+
+def read_local_recovery_code(slug, password=None):
+    """Reads back a locally saved recovery code (gh53's counterpart to
+    save_recovery_code_locally). Raises ProfileError if no local copy was ever
+    saved for this profile, WrongPassword if it's protected and `password` is
+    wrong."""
+    path = _recovery_code_local_path(slug)
+    if not os.path.exists(path):
+        raise ProfileError("no locally saved recovery code for this profile.")
+    with open(path) as f:
+        record = json.load(f)
+    if not record.get("protected"):
+        return record["code"]
+    Fernet, InvalidToken, _hashes, _PBKDF2HMAC = _require_cryptography()
+    salt = base64.b64decode(record["salt"])
+    key = _derive_key(password or "", salt)
+    try:
+        return Fernet(key).decrypt(record["code"].encode("ascii")).decode("utf-8")
+    except InvalidToken:
+        raise WrongPassword("wrong password for this saved recovery code.")
+
+
 def _unwrap_data_key(profile, password):
     """The Fernet key goals.json/state.json are actually encrypted with, recovered
     by decrypting the password-wrapped copy stored in the index. Also serves as the

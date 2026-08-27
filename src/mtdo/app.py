@@ -475,23 +475,37 @@ class ProfileCreateScreen(ModalScreen):
 
 class RecoveryCodeScreen(ModalScreen):
     """Shown exactly once, right after a password-protected profile is created (the
-    gh40 fix). This is the only time mtdo ever displays the recovery code -- it
-    isn't stored anywhere, so it can't be shown again later; losing both the
-    password and this code means the profile's data really is gone for good.
-    Nothing here is cancelable (the profile already exists by the time this shows),
-    so Escape acknowledges the same as the button."""
+    gh40 fix). This is the only time mtdo ever *generates and displays* the
+    recovery code -- it isn't stored anywhere by default, so it can't be shown
+    again later; losing both the password and this code means the profile's data
+    really is gone for good.
+
+    gh53: after showing it, offers to save a local copy too (so "I'll write it
+    down somewhere" isn't the only option), with the same three-way choice the
+    bug asked for -- protected with its own separate password, protected with
+    nothing at all, or don't save a local copy and just move on. That local copy
+    is deliberately independent of the profile's own password/data-key envelope:
+    the whole point of a recovery code is surviving forgetting that password, so
+    gating the backup behind the same secret would defeat it. Nothing here is
+    cancelable (the profile already exists by the time this shows) -- Escape at
+    any step just moves on without saving a local copy, same as the original
+    single "I've saved it" button always did."""
 
     CSS = """
     RecoveryCodeScreen { align: center middle; }
     #recovery-box { width: 64; height: auto; border: round yellow; padding: 1 2; background: $panel; }
     #recovery-code { text-align: center; text-style: bold; padding: 1 0; color: $warning; }
     #recovery-warning { padding-bottom: 1; }
-    #recovery-actions { height: 3; align: center middle; }
+    .recovery-explain { color: $text-muted; padding: 0 0 1 0; }
+    #recovery-action-area { height: auto; }
+    #recovery-action-area Horizontal { height: 3; align: center middle; }
+    #recovery-action-area Input { margin: 0 0 1 0; }
     """
 
-    def __init__(self, recovery_code):
+    def __init__(self, recovery_code, slug):
         super().__init__()
         self.recovery_code = recovery_code
+        self.slug = slug
 
     def compose(self) -> ComposeResult:
         with Center():
@@ -505,18 +519,144 @@ class RecoveryCodeScreen(ModalScreen):
                         "show it to you again.",
                         id="recovery-warning",
                     )
-                    with Horizontal(id="recovery-actions"):
-                        yield Button("I've saved it", id="recovery-ack", variant="primary")
+                    yield Vertical(id="recovery-action-area")
 
     def on_mount(self):
-        self.query_one("#recovery-ack", Button).focus()
+        self._show_save_choice()
+
+    def _action_area(self):
+        return self.query_one("#recovery-action-area", Vertical)
+
+    def _clear_action_area(self):
+        for child in list(self._action_area().children):
+            child.remove()
+
+    def _show_save_choice(self):
+        # Unlike _show_protect_choice/_show_password_inputs below (reached from a
+        # button click, well after mount has settled), this one runs from on_mount
+        # itself -- focusing a button mounted moments earlier in the very same
+        # on_mount call raises NoMatches, since it isn't queryable yet at that
+        # point. ProfileCreateScreen's own on_mount-time step (_show_protect_choice)
+        # skips auto-focus for the same reason; Tab/click both still reach it fine.
+        self._clear_action_area()
+        area = self._action_area()
+        area.mount(Static(
+            "Also save a local copy of this code, in case you don't write it down "
+            "elsewhere?",
+            classes="recovery-explain",
+        ))
+        area.mount(Horizontal(
+            Button("Save a local copy", id="recovery-save-yes", variant="primary"),
+            Button("No, I've saved it myself", id="recovery-save-no"),
+        ))
+
+    def _show_protect_choice(self):
+        self._clear_action_area()
+        area = self._action_area()
+        area.mount(Static(
+            "Protect this local copy with its own password? (Separate from this "
+            "profile's password -- the point of a recovery code is surviving "
+            "forgetting that one.)",
+            classes="recovery-explain",
+        ))
+        area.mount(Horizontal(
+            Button("Yes, set a password", id="recovery-protect-yes", variant="primary"),
+            Button("No, save it as plain text", id="recovery-protect-no"),
+        ))
+        # No .focus() here -- a freshly-mounted Button isn't reliably queryable/
+        # focusable in the same call that mounts it (unlike Input, see
+        # _show_password_inputs below); Tab/click both still reach it fine.
+
+    def _show_password_inputs(self):
+        self._clear_action_area()
+        area = self._action_area()
+        area.mount(Input(placeholder="Password for this saved copy", password=True, id="recovery-save-password"))
+        area.mount(Input(placeholder="Confirm password", password=True, id="recovery-save-password-confirm"))
+        area.mount(Horizontal(
+            Button("Save", id="recovery-save-confirm", variant="primary"),
+            Button("Back", id="recovery-save-back"),
+        ))
+        self.query_one("#recovery-save-password", Input).focus()
+
+    def _finish(self, password=None, protected=False):
+        try:
+            pf.save_recovery_code_locally(
+                self.slug, self.recovery_code, password=password if protected else None,
+            )
+        except pf.ProfileError as exc:
+            self.app.toast(str(exc), style="bold red")
+        else:
+            self.app.toast("Local copy of the recovery code saved.", style="bold green")
+        self.dismiss(True)
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
-        self.dismiss(True)
+        bid = event.button.id
+        if bid == "recovery-save-no":
+            self.dismiss(True)
+            return
+        if bid == "recovery-save-yes":
+            self._show_protect_choice()
+            return
+        if bid == "recovery-protect-no":
+            self._finish(protected=False)
+            return
+        if bid == "recovery-protect-yes":
+            self._show_password_inputs()
+            return
+        if bid == "recovery-save-back":
+            self._show_protect_choice()
+            return
+        if bid == "recovery-save-confirm":
+            password = self.query_one("#recovery-save-password", Input).value
+            confirm = self.query_one("#recovery-save-password-confirm", Input).value
+            if not password:
+                self.query_one("#recovery-save-password", Input).focus()
+                return
+            if password != confirm:
+                self.app.toast("Passwords didn't match.", style="bold red")
+                confirm_input = self.query_one("#recovery-save-password-confirm", Input)
+                confirm_input.value = ""
+                confirm_input.focus()
+                return
+            self._finish(password=password, protected=True)
 
     def on_key(self, event):
         if event.key == "escape":
             self.dismiss(True)
+
+
+class LocalRecoveryCodeViewScreen(ModalScreen):
+    """Read-only display of a recovery code that was saved locally via
+    RecoveryCodeScreen (gh53) -- reached from Manage Profiles' "View Recovery
+    Code" button, the counterpart that makes saving one actually useful."""
+
+    CSS = """
+    LocalRecoveryCodeViewScreen { align: center middle; }
+    #view-recovery-box { width: 64; height: auto; border: round yellow; padding: 1 2; background: $panel; }
+    #view-recovery-code { text-align: center; text-style: bold; padding: 1 0; color: $warning; }
+    """
+
+    def __init__(self, recovery_code):
+        super().__init__()
+        self.recovery_code = recovery_code
+
+    def compose(self) -> ComposeResult:
+        with Center():
+            with Middle():
+                with Vertical(id="view-recovery-box"):
+                    yield Static("Saved recovery code")
+                    yield Static(self.recovery_code, id="view-recovery-code")
+                    yield Button("Close", id="view-recovery-close", variant="primary")
+
+    def on_mount(self):
+        self.query_one("#view-recovery-close", Button).focus()
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        self.dismiss(None)
+
+    def on_key(self, event):
+        if event.key == "escape":
+            self.dismiss(None)
 
 
 class ProfileUnlockScreen(ModalScreen):
@@ -643,6 +783,12 @@ class ProfileManageScreen(ModalScreen):
                 reset_btn = Button("Reset Password", classes="profile-row-action-wide")
                 reset_btn.profile_slug, reset_btn.row_action = profile["slug"], "reset"
                 row_children.append(reset_btn)
+            if pf.has_local_recovery_code(profile["slug"]):
+                # gh53: only shown once a local copy actually exists to view --
+                # most profiles won't have one, since saving it was always optional.
+                view_btn = Button("View Recovery Code", classes="profile-row-action-wide")
+                view_btn.profile_slug, view_btn.row_action = profile["slug"], "view-recovery"
+                row_children.append(view_btn)
             row = Horizontal(*row_children)
             self.rows.mount(row)
 
@@ -677,6 +823,13 @@ class ProfileManageScreen(ModalScreen):
                 return
             self.dismiss(None)
             self.app._reset_profile_password(slug, profile["name"])
+            return
+        if action == "view-recovery":
+            profile = pf.get_profile(slug)
+            if not profile:
+                return
+            self.dismiss(None)
+            self.app._view_local_recovery_code(slug, profile["name"])
 
     def on_key(self, event):
         if event.key == "escape":
@@ -3426,7 +3579,7 @@ class TodoApp(App):
         appconfig.set_user_name(name)
         if recovery_code:
             self._push_modal(
-                RecoveryCodeScreen(recovery_code),
+                RecoveryCodeScreen(recovery_code, slug),
                 lambda _r=None: self._switch_profile(slug, password=password),
             )
         else:
@@ -3566,6 +3719,42 @@ class TodoApp(App):
         self._push_modal(
             TextPromptScreen(f"Recovery code for '{name}'", ""), got_code,
         )
+
+    def _view_local_recovery_code(self, slug, name):
+        """Shows a locally saved recovery code back to the user (gh53) -- the
+        read-back counterpart to RecoveryCodeScreen's optional local save, without
+        which saving one would be write-only and pointless. Only reachable via
+        Manage Profiles' "View Recovery Code" button, itself only shown when
+        pf.has_local_recovery_code(slug) is true.
+
+        Deliberately NOT gated behind _with_profile_auth (the profile's own
+        password), unlike rename/delete -- a recovery code exists specifically to
+        get back in when that password is forgotten, so requiring it here would
+        defeat the entire feature. If the local save itself was protected at save
+        time, its own separate password (below) is the real gate; if it wasn't,
+        that was the user's own explicit choice, same tradeoff an unprotected
+        profile already makes."""
+        if pf.local_recovery_code_protected(slug):
+            def got_password(password):
+                if password is None:
+                    return
+                try:
+                    code = pf.read_local_recovery_code(slug, password)
+                except pf.WrongPassword as exc:
+                    self.toast(str(exc), style="bold red")
+                    return
+                self.push_screen(LocalRecoveryCodeViewScreen(code))
+            self._push_modal(
+                TextPromptScreen(f"Password for '{name}''s saved recovery code", "", secret=True),
+                got_password,
+            )
+            return
+        try:
+            code = pf.read_local_recovery_code(slug)
+        except pf.ProfileError as exc:
+            self.toast(str(exc), style="bold red")
+            return
+        self.push_screen(LocalRecoveryCodeViewScreen(code))
 
     def action_open_help(self):
         self.push_screen(HelpScreen())
