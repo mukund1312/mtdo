@@ -9,6 +9,64 @@ Add each session's PROGRESS.md entry to the same branch as the code it describes
 
 ---
 
+## 2026-08-27 (bug gh53, GH mukund1312/mtdo-bugs#53, PR https://github.com/mukund1312/mtdo/pull/41) -- offer to save the recovery code locally, protected or not
+
+Bug, verbatim: "user should be given choice to save the recovery code in local
+with password protection or without the password protection and if selected
+for password protection and let them set it and if no password just save it in
+local and if doesnt want to save in local just move ahead after showing them
+the recovery password." A genuinely well-specified three-way UX ask, not a
+vague one -- implemented exactly as described, no clarifying questions needed.
+
+**RecoveryCodeScreen** (shown once, right after creating a password-protected
+profile) now follows up the code display with that exact choice: save a local
+copy protected by its own separate password (set right there), save it as
+plain text, or don't save one and just proceed (the only behavior that existed
+before this). The local save is deliberately independent of the profile's own
+password/data-key envelope -- gating the one thing meant to survive forgetting
+that password behind that same password would defeat the entire point of a
+recovery code.
+
+Also added the natural read-back half: Manage Profiles' new "View Recovery
+Code" button, shown only once `pf.has_local_recovery_code(slug)` is true --
+without it, saving a copy would be write-only and pointless. Deliberately NOT
+gated behind `_with_profile_auth` (the profile's own password, used for
+rename/delete) for the same reason as above; the local save's own password (if
+it has one) is the real gate. CLI gets the same choice in `profile create
+--password`, plus a new `profile view-recovery-code <name>` command -- same
+dual TUI+CLI treatment as gh51.
+
+New `profiles.py` functions: `save_recovery_code_locally`,
+`has_local_recovery_code`, `local_recovery_code_protected`,
+`read_local_recovery_code` -- same PBKDF2+Fernet scheme as everything else in
+the module, own random salt, stored as `recovery_code.json` inside the
+profile's own directory so `delete_profile`'s existing `rmtree` already cleans
+it up with no extra teardown needed.
+
+**Two real bugs caught by testing my own new code, both fixed before
+shipping:** (1) calling `.focus()` on a Button immediately after mounting it
+inside `on_mount()` raised `NoMatches` -- a freshly-mounted Button isn't
+reliably queryable in the same call that mounts it (Input doesn't have this
+problem, which is why `ProfileCreateScreen`'s analogous step never hit it).
+Fixed by not auto-focusing those buttons, matching `ProfileCreateScreen`'s own
+convention for its structurally identical on-mount step. (2) reusing the same
+widget id for the explanatory text across two different steps raised
+`DuplicateIds`, since `.remove()` doesn't complete synchronously before the
+next `.mount()` runs -- fixed by using a shared CSS class instead of a
+repeated id.
+
+**Tested:** live headless-pilot repro of all three save choices, a back-
+navigation, and a mismatched-password retry, before writing permanent tests.
+Confirmed the local save's password is genuinely independent -- the profile's
+own password does not unlock a protected local save and vice versa. Confirmed
+`delete_profile` cleans up the local save too. Verified the CLI path (create +
+view-recovery-code, correct and wrong password) end-to-end via subprocess.
+Added 4 new permanent regression tests. Full suite: 63 passed, 1 skipped, in a
+scratch venv. Real `~/.mtdo` never touched -- all repro/testing used scratch
+`MTDO_HOME`s.
+
+---
+
 ## 2026-08-27 (bug gh52, GH mukund1312/mtdo-bugs#52, PR https://github.com/mukund1312/mtdo/pull/40) -- switching profiles auto-saves the outgoing one instead of re-prompting
 
 Bug, verbatim (Janhwi): "while switchign the profile there should be auto save
