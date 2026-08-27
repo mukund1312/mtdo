@@ -21,7 +21,6 @@ dependencies = [
 spotify = []  # Spotify controls use AppleScript on macOS -- no extra package needed, just macOS + Spotify.app
 webchat = ["anthropic", "openai", "google-generativeai", "keyring"]  # browser-free API chat options in the AI panel picker -- see ai_backend.py / web_chat.py. keyring: OS keychain storage for API keys (gh41), soft dependency -- absence/no-backend falls back to the chmod'd secrets.json file, never crashes
 youtube = ["yt-dlp"]  # Knowledge Vault's "paste a YouTube URL" -> AI notes + quiz (gh23) -- see youtube_notes.py. Captions only, no video/audio download.
-vinyl = ["textual-image>=0.13"]  # Radio screen's spinning-vinyl visual (gh -- cliamp UI) -- purely decorative, soft dependency: radio.has_vinyl_support() checks it's importable and skips the visual entirely if not (station playback itself never needs it). Pulls in Pillow transitively.
 dev = ["pytest>=8.0", "pytest-asyncio>=0.24"]
 
 [project.scripts]
@@ -32,7 +31,7 @@ mtdo-sandbox = "mtdo.sandbox_entry:main"
 where = ["src"]
 
 [tool.setuptools.package-data]
-mtdo = ["*.yaml", "*.json", "*.mp4"]
+mtdo = ["*.yaml", "*.json"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
