@@ -9,12 +9,25 @@ all (see radio.py's module docstring and PROGRESS.md for that verification).
 """
 import json
 import os
+import shutil
 from unittest.mock import MagicMock, patch
 
 import pytest
 
 from mtdo import config as appconfig
 from mtdo import radio
+
+_needs_vinyl_support = pytest.mark.skipif(
+    not radio.has_vinyl_support(),
+    reason="needs the vinyl extra (textual-image + Pillow) AND a real ffmpeg "
+           "on PATH -- CI's `pip install -e \".[dev]\"` deliberately doesn't "
+           "pull in the vinyl extra (it's a soft, decorative-only "
+           "dependency), so has_vinyl_support() is exactly the right skip "
+           "condition here: it's the same check the real code path itself "
+           "makes before ever touching any of this. Frame extraction shells "
+           "out to a real ffmpeg rather than mocking it (see radio.py's "
+           "module docstring for why), so this can't run without both.",
+)
 
 
 @pytest.fixture(autouse=True)
@@ -339,3 +352,95 @@ async def test_favoriting_a_station_persists_across_reopening_the_screen():
             await pilot.press("R")
             await pilot.pause()
         assert app.screen.favorites == {0}
+
+
+# -- Vinyl-spin visual -- purely decorative, soft dependency (textual-image +
+# Pillow). extract_vinyl_frames() runs the real, bundled, ~5s clip through the
+# real ffmpeg (fast and deterministic -- confirmed by hand, ~0.1s -- so this
+# is tested for real rather than mocked, same as this file already does for
+# other cheap/local/deterministic pieces). Playback itself is still mocked
+# throughout, as everywhere else in this file.
+
+def test_has_vinyl_support_reflects_ffmpeg_and_the_bundled_asset():
+    with patch("shutil.which", return_value=None):
+        assert radio.has_vinyl_support() is False
+    with patch("shutil.which", return_value="/opt/homebrew/bin/ffmpeg"), \
+         patch("mtdo.radio.os.path.exists", return_value=False):
+        assert radio.has_vinyl_support() is False
+
+
+def test_has_vinyl_support_false_without_textual_image_or_pillow():
+    import builtins
+    real_import = builtins.__import__
+
+    def blocked_import(name, *args, **kwargs):
+        if name in ("textual_image", "PIL"):
+            raise ImportError(f"simulated missing {name}")
+        return real_import(name, *args, **kwargs)
+
+    with patch("builtins.__import__", side_effect=blocked_import):
+        assert radio.has_vinyl_support() is False
+
+
+@_needs_vinyl_support
+def test_extract_vinyl_frames_returns_real_cached_pil_images():
+    frames = radio.extract_vinyl_frames()
+    assert len(frames) > 0
+    assert all(hasattr(f, "size") for f in frames)  # genuine PIL Images, not paths/bytes
+
+    with patch("mtdo.radio.subprocess.run") as mock_run:
+        cached = radio.extract_vinyl_frames()
+        mock_run.assert_not_called()
+    assert len(cached) == len(frames)
+
+
+@_needs_vinyl_support
+def test_extract_vinyl_frames_raises_and_cleans_up_on_real_extraction_failure():
+    shutil.rmtree(radio._vinyl_cache_key(), ignore_errors=True)
+    with patch("mtdo.radio.subprocess.run", return_value=type(
+        "R", (), {"returncode": 1, "stdout": b"", "stderr": b"boom"},
+    )()):
+        with pytest.raises(RuntimeError):
+            radio.extract_vinyl_frames()
+    assert not os.path.isdir(radio._vinyl_cache_key())
+    radio.extract_vinyl_frames()  # leaves a real, working cache behind for later tests
+
+
+async def test_radio_screen_omits_vinyl_widget_when_unsupported():
+    app = TodoApp()
+    async with app.run_test() as pilot:
+        await _dismiss_first_run_prompts(pilot, app)
+        with patch("mtdo.radio.has_mpv", return_value=True), \
+             patch("mtdo.radio.has_vinyl_support", return_value=False):
+            await pilot.press("R")
+            await pilot.pause()
+        assert app.screen.vinyl_widget is None
+
+
+@_needs_vinyl_support
+async def test_vinyl_spins_while_playing_freezes_on_pause_parks_on_stop():
+    """Real frame data (radio.extract_vinyl_frames()), but a fake player
+    object standing in for the real one -- this only needs to exercise
+    RadioScreen._advance_vinyl's own logic, not actual mpv/ffmpeg playback."""
+    app = TodoApp()
+    async with app.run_test() as pilot:
+        await _dismiss_first_run_prompts(pilot, app)
+        with patch("mtdo.radio.has_mpv", return_value=True):
+            await pilot.press("R")
+            await pilot.pause()
+        screen = app.screen
+        assert screen._vinyl_frames, "vinyl support is available in this test environment"
+
+        with patch.object(screen.player, "is_playing", return_value=True):
+            screen._last_paused = False
+            screen._vinyl_frame_index = 0
+            screen._advance_vinyl()
+            assert screen._vinyl_frame_index == 1
+
+            screen._last_paused = True
+            screen._advance_vinyl()
+            assert screen._vinyl_frame_index == 1, "must freeze in place while paused"
+
+        with patch.object(screen.player, "is_playing", return_value=False):
+            screen._advance_vinyl()
+            assert screen._vinyl_frame_index == 0, "must park back on frame 0 once stopped"

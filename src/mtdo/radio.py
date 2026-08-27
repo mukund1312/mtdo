@@ -36,7 +36,76 @@ import tempfile
 import threading
 import time
 
+from . import config as appconfig
+
 MPV_INSTALL_HINT = "brew install mpv"
+
+# -- Vinyl-spin visual (gh -- cliamp UI) -----------------------------------
+#
+# A purely decorative "now spinning" loop shown while a station plays --
+# entirely separate from actual playback, same spirit as the visualizer
+# being a silent side channel that can never affect what's actually heard.
+# Bundled as one short (~5s), small (512x768, ~370KB) source clip and
+# decoded into a handful of low-res PIL frames via ffmpeg (already a hard
+# dependency of this module) once per real install, cached under APP_DIR so
+# it isn't redone on every screen open -- confirmed by hand this decode is
+# fast (ffmpeg reported ~200x realtime for the whole clip at this size), but
+# there's still no reason to repeat it.
+#
+# textual-image (rendering) + Pillow (frame loading) are a *soft* dependency
+# -- has_vinyl_support() checks both are importable and the bundled asset
+# exists, and the radio screen just omits the visual entirely if not. Radio
+# playback itself never depends on any of this.
+_VINYL_ASSET_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "vinyl.mp4")
+_VINYL_CACHE_DIR = os.path.join(appconfig.APP_DIR, "radio_vinyl_cache")
+_VINYL_FPS = 8
+_VINYL_WIDTH = 48
+
+
+def has_vinyl_support():
+    try:
+        import textual_image  # noqa: F401
+        from PIL import Image  # noqa: F401
+    except ImportError:
+        return False
+    return shutil.which("ffmpeg") is not None and os.path.exists(_VINYL_ASSET_PATH)
+
+
+def _vinyl_cache_key():
+    """Cache is keyed on fps+width so changing either constant above doesn't
+    silently keep serving frames extracted under the old settings."""
+    return os.path.join(_VINYL_CACHE_DIR, f"{_VINYL_FPS}fps_{_VINYL_WIDTH}w")
+
+
+def extract_vinyl_frames():
+    """Returns an ordered list of PIL Images for one full loop of the vinyl
+    clip, extracting (and caching to disk) via ffmpeg on first call. Raises
+    RuntimeError if extraction genuinely fails -- callers should already have
+    checked has_vinyl_support() before ever reaching this, so a failure here
+    means something's actually wrong (corrupt asset, ffmpeg misbehaving),
+    worth surfacing rather than silently returning an empty list."""
+    from PIL import Image as PILImage
+
+    cache_dir = _vinyl_cache_key()
+    pattern = os.path.join(cache_dir, "frame_%03d.png")
+    if not os.path.isdir(cache_dir):
+        os.makedirs(cache_dir, exist_ok=True)
+        result = subprocess.run(
+            ["ffmpeg", "-y", "-i", _VINYL_ASSET_PATH,
+             "-vf", f"fps={_VINYL_FPS},scale={_VINYL_WIDTH}:-1",
+             pattern],
+            capture_output=True,
+        )
+        if result.returncode != 0:
+            shutil.rmtree(cache_dir, ignore_errors=True)
+            raise RuntimeError("failed to extract the vinyl-spin frames.")
+    frame_paths = sorted(
+        os.path.join(cache_dir, name) for name in os.listdir(cache_dir) if name.endswith(".png")
+    )
+    if not frame_paths:
+        shutil.rmtree(cache_dir, ignore_errors=True)
+        raise RuntimeError("vinyl-spin extraction produced no frames.")
+    return [PILImage.open(path) for path in frame_paths]
 
 _RMS_LINE_RE = re.compile(r"Parsed_ametadata_(\d+).*?RMS_level=(-?[\d.]+|-?inf)")
 
