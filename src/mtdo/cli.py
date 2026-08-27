@@ -288,6 +288,26 @@ def cmd_profile_current(_args):
     print(f"Active profile: {profile['name']} ({profile['slug']}){lock}")
 
 
+def _offer_local_recovery_code_save(slug, recovery_code):
+    """CLI counterpart to RecoveryCodeScreen's local-save choice (gh53) -- same
+    three-way choice (save protected / save plain / don't save), for parity with
+    the TUI. `input()` here is fine even though the rest of this function uses
+    getpass elsewhere -- these are plain yes/no prompts, not secrets."""
+    answer = input("Also save a local copy of this code? [y/N] ").strip().lower()
+    if answer not in ("y", "yes"):
+        return
+    protect = input("Protect this local copy with its own password? [y/N] ").strip().lower()
+    password = None
+    if protect in ("y", "yes"):
+        password = getpass.getpass("Password for this saved copy: ")
+        confirm = getpass.getpass("Confirm password: ")
+        if password != confirm:
+            print("Passwords didn't match -- not saved locally (the code is still printed above).")
+            return
+    pf.save_recovery_code_locally(slug, recovery_code, password=password)
+    print("Local copy of the recovery code saved.")
+
+
 def cmd_profile_create(args):
     password = None
     if args.password:
@@ -311,6 +331,7 @@ def cmd_profile_create(args):
             f"profile's data. mtdo does not store it and cannot recover it for you.\n"
             f"To reset a forgotten password: `{_PROG} profile recover {args.name}`\n"
         )
+        _offer_local_recovery_code_save(slug, recovery_code)
     else:
         print(
             f"No password set -- '{args.name}'s goals/state files are stored as plain, "
@@ -490,8 +511,30 @@ def cmd_profile_recover(args):
     print(f"Password reset for '{target['name']}'. The recovery code still works if you need it again.")
 
 
+def cmd_profile_view_recovery_code(args):
+    """Shows a recovery code that was saved locally at creation time (gh53) -- the
+    read-back counterpart to _offer_local_recovery_code_save. Nothing to show if
+    that offer was declined; mtdo never generates or stores one after the fact."""
+    target = _resolve_profile(args.name)
+    if target is None:
+        print(f"No profile named '{args.name}'.")
+        return
+    if not pf.has_local_recovery_code(target["slug"]):
+        print(f"No recovery code was saved locally for '{target['name']}'.")
+        return
+    password = None
+    if pf.local_recovery_code_protected(target["slug"]):
+        password = getpass.getpass("Password for this saved copy: ")
+    try:
+        code = pf.read_local_recovery_code(target["slug"], password)
+    except pf.WrongPassword as e:
+        print(str(e))
+        return
+    print(f"\nRECOVERY CODE for '{target['name']}':\n\n    {code}\n")
+
+
 def cmd_profile_help(args):
-    print(f"Usage: {_PROG} profile <list|current|create|switch|delete|import|recover> ...")
+    print(f"Usage: {_PROG} profile <list|current|create|switch|delete|import|recover|view-recovery-code> ...")
     print(f"Run `{_PROG} profile <subcommand> --help` for details.")
 
 
@@ -592,6 +635,12 @@ def main():
     )
     p_profile_recover.add_argument("name")
     p_profile_recover.set_defaults(func=cmd_profile_recover)
+
+    p_profile_view_recovery = profile_sub.add_parser(
+        "view-recovery-code", help="Show a recovery code saved locally at creation time (gh53)",
+    )
+    p_profile_view_recovery.add_argument("name")
+    p_profile_view_recovery.set_defaults(func=cmd_profile_view_recovery_code)
 
     p_reset = sub.add_parser(
         "reset",
