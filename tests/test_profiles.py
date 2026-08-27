@@ -12,8 +12,10 @@ event-dispatch path, not when a test calls a handler directly.
 import json
 import os
 
+from mtdo import core as tc
 from mtdo import profiles as pf
 from mtdo.app import (
+    ChoicePickScreen,
     ClockHeader,
     LocalRecoveryCodeViewScreen,
     ProfileCreateScreen,
@@ -625,3 +627,117 @@ async def test_manage_profiles_reset_button_says_reset_password(unique_slug):
             if getattr(c, "profile_slug", None) == slug and getattr(c, "row_action", None) == "reset"
         )
         assert str(reset_btn.label) == "Reset Password"
+
+
+async def test_switching_profiles_resets_pomodoro_and_task_bound_bookkeeping(unique_slug):
+    """gh57: none of Pomodoro's running/elapsed state, or the Learning Coach's
+    DSA/AI-priming bookkeeping, lives in goals.json/state.json (it's plain
+    runtime attributes on TodoApp/PomodoroPanel) -- so it used to survive a
+    profile switch completely untouched. A Pomodoro left running in profile A,
+    with custom durations, kept ticking under those same custom durations
+    after switching to profile B; stale DSA/AI-priming refs pointing at A's
+    specific tasks could carry over into B's unrelated ones. Confirms a
+    genuine switch resets all of it back to defaults."""
+    slug_a = pf.create_profile(f"{unique_slug}_a")[0]
+    slug_b = pf.create_profile(f"{unique_slug}_b")[0]
+    pf.set_active(slug_a)
+
+    app = TodoApp()
+    async with app.run_test() as pilot:
+        await _dismiss_first_run_prompts(pilot, app)
+
+        app.pomo_panel.running = True
+        app.pomo_panel.on_break = True
+        app.pomo_panel.remaining = 123
+        app.pomo_panel.work_minutes = 50
+        app.pomo_panel.break_minutes = 15
+        app.current_dsa_ref = ("2026-01-01", "dsa", 0)
+        app.ai_primed_ref = ("2026-01-01", "dsa", 0)
+        app.dsa_generating.add(999)
+        app.coaching_generating.add(999)
+        app._hint_prompt_open = True
+
+        app._switch_profile(slug_b)
+        await pilot.pause()
+
+        assert app.pomo_panel.running is False
+        assert app.pomo_panel.on_break is False
+        assert app.pomo_panel.remaining == tc.DEFAULT_POMODORO_MINUTES * 60
+        assert app.pomo_panel.work_minutes == tc.DEFAULT_POMODORO_MINUTES
+        assert app.pomo_panel.break_minutes == tc.DEFAULT_BREAK_MINUTES
+        assert app.current_dsa_ref is None
+        assert app.ai_primed_ref is None
+        assert app.dsa_generating == set()
+        assert app.coaching_generating == set()
+        assert app._hint_prompt_open is False
+
+
+async def test_reselecting_the_same_active_profile_does_not_reset_pomodoro(unique_slug):
+    """The reset above is specifically for switching to a *different* profile
+    -- re-selecting the one you're already in (e.g. clicking your own name in
+    Manage Profiles) must not interrupt a Pomodoro you're actively running."""
+    slug = pf.create_profile(unique_slug)[0]
+    pf.set_active(slug)
+
+    app = TodoApp()
+    async with app.run_test() as pilot:
+        await _dismiss_first_run_prompts(pilot, app)
+        app.pomo_panel.running = True
+        app.pomo_panel.remaining = 42
+
+        app._switch_profile(slug)
+        await pilot.pause()
+
+        assert app.pomo_panel.running is True
+        assert app.pomo_panel.remaining == 42
+
+
+async def test_creating_an_additional_profile_triggers_the_goals_setup_wizard(unique_slug):
+    """gh57: "goals setup manual or guided should be asked for each [new
+    profile]" -- creating a profile via the manual "Add Profile" action used
+    to switch straight into a silently empty board, with no prompt to fill it
+    in, unlike a genuine first run. Confirms the same wizard 'g' re-runs
+    (action_plan_wizard) now fires automatically right after."""
+    existing = pf.create_profile(f"{unique_slug}_existing")[0]
+    pf.set_active(existing)
+
+    app = TodoApp()
+    async with app.run_test() as pilot:
+        await _dismiss_first_run_prompts(pilot, app)
+
+        app.action_create_profile()
+        await pilot.pause()
+        for ch in f"{unique_slug}_new":
+            await pilot.press(ch)
+        await pilot.click("#protect-no")
+        await pilot.pause()
+
+        assert isinstance(app.screen, ProfileMenuScreen), \
+            "must chain into the setup wizard (profile step), same as a manual 'g' re-run"
+        await pilot.press("escape")
+        await pilot.pause()
+        assert isinstance(app.screen, ChoicePickScreen), \
+            "must proceed to the manual/guided populate-method step next"
+
+
+async def test_on_profile_created_does_not_trigger_the_setup_wizard_itself(unique_slug):
+    """_on_profile_created is only ever reached from _begin_setup_flow's own
+    first-run bootstrapping branch (no profiles exist yet), which already
+    chains straight from there into _pick_populate_method itself -- if
+    _on_profile_created also called _begin_setup_flow(), a genuine first run
+    would show an extra, redundant ProfileMenuScreen step before the
+    populate-method picker it's already headed to. This is exactly what
+    _on_profile_created_manual (the "Add Profile" action's own handler, gh57)
+    exists to avoid entangling with. Verified directly against the handler,
+    not by trying to force pf.list_profiles() empty through the pilot -- the
+    shared test session's MTDO_HOME already has other tests' profiles in it
+    by the time this runs, so that precondition can't be relied on here."""
+    from unittest.mock import patch
+
+    app = TodoApp()
+    async with app.run_test() as pilot:
+        await _dismiss_first_run_prompts(pilot, app)
+        with patch.object(app, "_begin_setup_flow") as mock_begin:
+            app._on_profile_created((unique_slug, None))
+            await pilot.pause()
+        mock_begin.assert_not_called()

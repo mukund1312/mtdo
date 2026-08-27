@@ -3566,7 +3566,8 @@ class TodoApp(App):
             )
             return
         current = pf.get_active_slug()
-        if current is not None and current != slug:
+        switching_profile = current is not None and current != slug
+        if switching_profile:
             self._save_current_profile()
         try:
             goals = pf.read_goals(slug, password)
@@ -3587,6 +3588,29 @@ class TodoApp(App):
         self._active_profile_password = password if target.get("protected") else None
         appconfig.set_user_name(target["name"])
         self.state = state or {"_meta": {}}
+        if switching_profile:
+            # gh57: none of this is part of goals.json/state.json (it's plain
+            # runtime bookkeeping on TodoApp/PomodoroPanel), so it survived a
+            # profile switch untouched before this -- a Pomodoro left running
+            # in profile A kept ticking, still showing its elapsed time, after
+            # switching to profile B, and stale DSA/coaching/AI-priming refs
+            # from A's specific tasks could carry over into B's (different)
+            # ones. Reset here, before reload_from_goals() (which re-renders
+            # every side panel via refresh_side_panels()), so that render
+            # already reflects the fresh values instead of needing a second
+            # pass. Deliberately NOT resetting focus_mode -- that's a view
+            # preference, not profile data, and nothing here reads or writes
+            # through it in a way that could leak between profiles.
+            self.pomo_panel.running = False
+            self.pomo_panel.on_break = False
+            self.pomo_panel.work_minutes = tc.DEFAULT_POMODORO_MINUTES
+            self.pomo_panel.break_minutes = tc.DEFAULT_BREAK_MINUTES
+            self.pomo_panel.remaining = tc.DEFAULT_POMODORO_MINUTES * 60
+            self.current_dsa_ref = None
+            self.dsa_generating = set()
+            self.coaching_generating = set()
+            self.ai_primed_ref = None
+            self._hint_prompt_open = False
         self.reload_from_goals()
         self._refresh_profile_footer()
         self.toast(f"Switched to profile '{target['name']}'", style="bold green")
@@ -3595,9 +3619,46 @@ class TodoApp(App):
         self.push_screen(ProfileMenuScreen())
 
     def action_create_profile(self):
-        self._push_modal(ProfileCreateScreen(), self._on_profile_created)
+        self._push_modal(ProfileCreateScreen(), self._on_profile_created_manual)
+
+    def _on_profile_created_manual(self, result):
+        """The "Add Profile" action (Manage Profiles / footer badge), reached
+        once at least one profile already exists -- deliberately a separate
+        method from _on_profile_created below, not a shared one with an extra
+        flag: that method is also called internally by _begin_setup_flow's own
+        first-run bootstrapping branch (when there are no profiles at all yet),
+        which already chains straight into _pick_populate_method itself --
+        triggering the setup wizard here too would fire it twice for a brand
+        new install. A profile created via *this* action is always brand new
+        with an empty board, so the goals-setup wizard always makes sense here
+        -- gh57: this used to be silently skipped, leaving a fresh profile's
+        board empty with no prompt to fill it in until the user discovered 'g'
+        themselves. Fires after the actual switch, not merely after creation,
+        so it lands correctly whether or not a recovery-code screen appears in
+        between (protected profiles show one; unprotected ones don't)."""
+        if result is None:
+            return
+        name, password = result
+        try:
+            slug, recovery_code = pf.create_profile(name, password=password)
+        except pf.ProfileError as exc:
+            self.toast(str(exc), style="bold red")
+            return
+        appconfig.set_user_name(name)
+        def _switch_then_setup():
+            self._switch_profile(slug, password=password)
+            self._begin_setup_flow()
+        if recovery_code:
+            self._push_modal(RecoveryCodeScreen(recovery_code, slug), lambda _r=None: _switch_then_setup())
+        else:
+            _switch_then_setup()
 
     def _on_profile_created(self, result):
+        """Only reached from _begin_setup_flow's first-run bootstrapping branch
+        (no profiles exist yet) -- that caller already chains into
+        _pick_populate_method itself right after this returns, so this must
+        NOT also trigger _begin_setup_flow() (see _on_profile_created_manual's
+        docstring for why). See that method for the "Add Profile" action."""
         if result is None:
             return
         name, password = result
