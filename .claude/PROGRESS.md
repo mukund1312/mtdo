@@ -9,6 +9,56 @@ Add each session's PROGRESS.md entry to the same branch as the code it describes
 
 ---
 
+## 2026-08-27 (PR https://github.com/mukund1312/mtdo/pull/44) -- redesign the radio screen to match the user's cliamp mockup
+
+User provided a specific reference mockup (a fictional "cliamp" retro-terminal
+radio player screenshot) and asked for that exact UI. Rebuilt `RadioScreen`'s
+layout/styling to match: a fake `$ cliamp --provider radio ... tty1` terminal
+prompt bar, a bordered CLIAMP panel with a song/state line, a green monochrome
+audio-reactive visualizer, a `STREAMING`/`PAUSED`/`STOPPED` divider, an EQ
+readout, a volume bar, a `Playlist -- [Shuffle][Repeat][idx/total]` header,
+numbered station rows, and key-cap-styled hint chips at the bottom (solid-
+background text spans faking a bordered key, since Rich/Textual can only
+border a whole widget, never a span within a line).
+
+**One deliberate departure, discussed with the user first via
+`AskUserQuestion`** before building anything: the mockup's `EQ [ Rock ]` row
+implies a genre EQ preset that actually reshapes the sound -- a real audio-
+processing feature (mpv's superequalizer filter, switchable presets), not a
+UI concern. Presented three options (real band levels / build a real genre
+EQ / purely decorative); the user chose real band levels. That row now shows
+the same real per-band levels already driving the visualizer, labeled `EQ
+[Live]` rather than a fake preset name -- honest instead of decorative, and
+no new audio-processing feature was needed. Also dropped two mockup elements
+with no real backing data in this app (a `SRC 1/9` source counter, a `SPD
+[1x]`/bandwidth footer) rather than fabricate plausible-looking numbers for
+either.
+
+Added `radio.RadioPlayer.get_volume()` (mirrors the existing
+`get_position()`/`is_paused()` pattern) so the new volume bar reflects mpv's
+real current volume via IPC, not a hardcoded value.
+
+**Tested:** live verification throughout -- real playback, real audio-
+reactive EQ/visualizer values changing with actual loudness, pause/resume
+correctly reflected across all the new status lines (now/time/state/
+divider/topbar icon), favoriting still works and persists. Confirmed clean
+process shutdown via the real `action_quit()` path with a proper wait before
+checking `pgrep` (an immediate check can false-positive on a just-issued
+SIGKILL the OS hasn't finished reaping yet -- caught this exact false alarm
+once during this work, then re-verified properly). Also found and killed one
+genuinely stray leftover process from much earlier in this session's
+original radio-feature build (28 minutes old, unrelated to this change) that
+had escaped an earlier cleanup check -- a reminder to wait a beat before
+trusting an immediate post-quit `pgrep`. Full pytest suite: 88 passed, 1
+skipped, in a scratch venv. **CI (GitHub Actions) confirmed green on this PR
+before calling it done** -- the previous PR (#43) revealed this repo has real
+CI that hadn't been checked all session (main happened to stay green through
+every earlier merge regardless), and needed three follow-up pushes before it
+actually passed there, so this one was watched through to a real green run
+first rather than trusting local-only verification again.
+
+---
+
 ## 2026-08-27 (PR https://github.com/mukund1312/mtdo/pull/43) -- retro-terminal internet-radio player (CLIAMP-style)
 
 User's ask: "a touch of coolness" in the music integration, inspired by a
