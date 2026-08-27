@@ -9,6 +9,158 @@ Add each session's PROGRESS.md entry to the same branch as the code it describes
 
 ---
 
+## 2026-08-27 (PR https://github.com/mukund1312/mtdo/pull/47) -- spinning-vinyl visual on the radio screen
+
+User re-shared the cliamp mockup asking for "this exact" UI (already matched
+closely by PR #44), plus a new ask: a spinning-vinyl loop next to it "for
+relaxation," providing a real ~5s `vinyl.mp4` clip.
+
+**Technical spike before committing to an approach** -- terminal video
+rendering is a genuinely different kind of feature from CSS/layout work, not
+something to guess at:
+- Confirmed `textual-image` (already available in this environment, added as
+  a new soft `vinyl` optional-dependency group) can render a `PIL.Image`
+  inside a real Textual widget, and that reassigning `.image` after mount
+  triggers an actual re-render -- verified via a real SVG-exported screenshot
+  of a live widget, not just reading the package's docs.
+- Extracted the bundled clip into a handful of low-res PIL frames via
+  `ffmpeg` (already a hard dependency of `radio.py` for the audio-level
+  analysis) -- confirmed live: ~0.1s for the whole clip, cached under
+  `APP_DIR` afterward so it's not redone on every screen open.
+- **Deliberately used `HalfcellImage`, not `AutoImage`.** `AutoImage`
+  auto-detects Kitty/iTerm2/Sixel graphics protocols for sharper rendering
+  where a terminal supports one, but there's no way to verify those actually
+  render correctly for everyone from this sandboxed dev environment -- an
+  early integration test using `AutoImage` came back as a broken monochrome
+  block image under the headless test harness's SVG export, while the exact
+  same frame via `HalfcellImage` rendered with real, correct color. A
+  slightly-blockier-but-guaranteed-working image beats a sharper one that
+  might come back blank or garbled on some terminals.
+
+**Implementation:** `radio.py` gains `has_vinyl_support()`,
+`extract_vinyl_frames()` (cached PIL frame list), and the bundled
+`vinyl.mp4` asset (`pyproject.toml`'s `package-data` extended to `*.mp4`).
+`radio_screen.py`'s header row gains a vinyl widget to the left of the
+existing song/status info when support is available -- frames cycle on a
+timer, but only actually *advance* while a station is genuinely playing:
+frozen exactly in place on pause (like a real turntable needle stopping
+where it is, not resetting), parked back on frame 0 once nothing is playing
+at all. Soft dependency throughout -- `has_vinyl_support()` checks
+`textual-image`, Pillow (pulled in transitively), `ffmpeg`, and the bundled
+asset are all genuinely available, and the screen just omits the widget
+entirely otherwise; station playback itself never depends on any of it.
+
+**One real bug caught and fixed before shipping:** the new frame-advance
+tick (running at 8/sec) initially called `player.is_paused()` directly --
+the same "frequent blocking IPC round trip on Textual's own event-loop
+thread" concern `_update_status`'s own docstring already warns against,
+just reintroduced at a faster rate. Fixed by reusing `_update_status`'s
+already-cached pause state instead of querying mpv's socket a second time
+every tick.
+
+**A second real gap caught via the exact CI-mismatch lesson from PR #43:**
+the first version of the new tests called `radio.extract_vinyl_frames()`
+unconditionally, assuming a real `ffmpeg` (fine) and `textual-image`/Pillow
+(NOT fine -- CI's `pip install -e ".[dev]"` deliberately doesn't pull in the
+new `vinyl` extra, since it's a soft, decorative-only dependency). Caught
+this locally *before* pushing, by actually reproducing CI's real dependency
+set in a fresh venv rather than assuming -- fixed by gating the three tests
+that need real extraction behind `pytest.mark.skipif(not
+radio.has_vinyl_support(), ...)`, the same real condition the production
+code itself checks, verified to skip cleanly (not fail) under that exact
+simulated environment before ever pushing.
+
+**Tested:** live verification via real SVG-exported renders throughout --
+vinyl genuinely spinning through real, colorful frames while a station
+plays, alongside correct real station/EQ/VOL data; confirmed the freeze-on-
+pause and park-on-stop behavior; confirmed clean process shutdown (no
+orphaned mpv/ffmpeg) via the real `action_quit()` path; confirmed graceful
+degradation with `textual-image` not installed at all (screen still opens
+and plays fine, `vinyl_widget` stays `None`). 6 new tests in `test_radio.py`.
+Full suite passes both with and without the `vinyl` extra installed. **CI
+(GitHub Actions) confirmed green before merging.**
+
+No tracker bug for this -- came directly from the user in chat, nothing to
+close.
+
+---
+
+## 2026-08-27 (no code change -- asset capture only) -- real screenshots for the docs/redesign landing pages
+
+User feedback on the two hand-drawn HTML mockups at `docs/redesign/option-a-landing.html`
+/ `option-b-storytelling.html`: the fake `.kgrid`/`.mini-pipeline`/fake-code-block mockups
+"don't look alike to the actual app ... like false advertising." Asked for genuine
+screenshots of the real running app instead. This session only produced the screenshot
+assets -- the HTML rewrite itself is the user's to do.
+
+Captured via Textual's `App.export_screenshot()` (real SVG, text-selectable) driven
+through `TodoApp().run_test()`, same Pilot pattern `tests/test_smoke.py` already uses.
+One-off script (not added to the repo, lived in the session scratchpad) that:
+- Set `MTDO_HOME` to a scratch dir *before* importing `mtdo` (same ordering constraint
+  `tests/conftest.py` documents -- `config.APP_DIR` is computed once at import time).
+- Seeded the scratch config from the real shipped demo plan
+  (`appconfig.init_config(fresh=False)` -> `demo_config.yaml`), not an empty board --
+  the whole point was genuine shipped content, not fabricated card names.
+- Called `appconfig.mark_onboarded()` / `mark_plan_configured()` to skip straight to the
+  real board instead of the first-run walkthrough/wizard.
+- One deliberate scratch-only config tweak: the shipped `demo_config.yaml`'s `dsa`
+  category has no `topic_type` set, so the AI-generated-problem view never actually
+  triggers from the demo as shipped (confirmed by reading `coaching.py`/`app.py` --
+  `has_generated_problem_support` gates strictly on `topic_type`). Added
+  `topic_type: dsa` to the scratch copy only (never touched the repo's real
+  `demo_config.yaml`) so the Learning Coach screenshot could show a real, live
+  AI-generated problem using the same real curriculum item names ("Two Sum" etc.) --
+  not a fabricated feature, just flipping on a real flag the demo leaves off.
+- Learned along the way: curriculum categories (dsa/backend/sysdesign) start each day
+  **blank** on the board (`core.ensure_day_registered`) -- the board only gets a card
+  once you pick one off that week's menu (`core.get_weekly_menu`/`pick_menu_item`), same
+  as the real 'a' add-card flow. First capture attempt skipped that and got an empty
+  "No task in progress" Learning Coach in both Focus Mode screenshots; fixed by calling
+  `pick_menu_item` then `advance_status` twice (todo -> in_progress) before entering
+  Focus Mode, mirroring the real UI's own state-transition functions rather than
+  fabricating state by hand.
+- The DSA problem generation is a real, live `claude -p` subprocess call
+  (`ai_ask.ask` -> `ai_backend.detect()`, picked "Claude Code" automatically since
+  nothing was pre-selected in the scratch profile) -- genuinely returned a real "Two
+  Sum" problem statement + examples, confirmed by extracting the SVG's text content,
+  not just checking file size.
+
+**Captured (all 9 requested), saved to `~/mtdo/docs/redesign/screens/`:**
+- `board.svg` -- default Kanban board
+- `focus.svg` -- Focus Mode (before a task was in progress)
+- `coach.svg` -- Learning Coach with a real generated "Two Sum" problem showing
+- `lab.svg` -- Practice Lab (Shift+T) alongside the Learning Coach, in Focus Mode
+- `crm.svg` -- Career CRM (press c) -- genuinely empty (0 in every stage), since the
+  scratch profile has no applications and the demo config's `jobs` category has no
+  curriculum to seed one from. Left authentically empty rather than inventing a fake
+  company name -- same "no fabricated content" principle as the DSA-problem tweak above.
+- `vault.svg` -- Knowledge Vault (press v) -- genuinely empty, same reasoning
+- `ai.svg` -- AI Assistant panel (Shift+C) -- captured the real `AIBackendPickScreen`
+  (Claude Code, several real local Ollama models, API options) since no backend was
+  pre-chosen in the scratch profile; matches what the task explicitly said was fine
+  ("a backend picker ... whatever's actually true")
+- `profiles.svg` -- Profile menu (U) -- genuinely "No profiles yet" empty state
+- `keys.svg` -- full `?` keybindings cheat sheet
+
+**Tested:** ran the capture script twice (first run caught the blank-curriculum-board
+bug above via empty Learning Coach output), verified every SVG has a proper
+`<svg>...</svg>` envelope and non-trivial size, and spot-checked extracted text content
+(not just file size) for board/focus/coach/lab/crm/vault/ai/profiles/keys to confirm
+each shows the real intended screen rather than a stale/duplicate capture. Confirmed
+real `~/.mtdo/config.yaml` mtime unchanged after the whole session (untouched, per the
+usual sandbox discipline -- `MTDO_HOME` was only ever set inside the throwaway script's
+own process, never exported into this shell).
+
+**Next / open items:** the actual `docs/redesign/*.html` rewrite to embed these SVGs
+belongs to the user ("Don't touch the docs/redesign HTML files yourself -- that part's
+mine"). If a next session picks this up: crm.svg/vault.svg being empty-state is
+accurate-but-maybe-underwhelming for a marketing page -- worth asking the user whether
+they'd rather add a couple of their own real CRM/vault entries to their real profile (or
+a sandbox instance) and recapture those two specifically, rather than this session
+inventing placeholder company/note names.
+
+---
+
 ## 2026-08-27 (bug gh57, GH mukund1312/mtdo-bugs#57, PR https://github.com/mukund1312/mtdo/pull/46) -- profile switch left Pomodoro/task state leaking, new profiles skipped the setup wizard
 
 Bug, verbatim: "when i switch to the next profile then everything should be
