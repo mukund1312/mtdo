@@ -9,6 +9,90 @@ Add each session's PROGRESS.md entry to the same branch as the code it describes
 
 ---
 
+## 2026-08-27 (PR https://github.com/mukund1312/mtdo/pull/43) -- retro-terminal internet-radio player (CLIAMP-style)
+
+User's ask: "a touch of coolness" in the music integration, inspired by a
+retro-terminal music player mockup (CLIAMP: neon colors, ASCII visualizer,
+station playlist, shuffle/repeat, favorites, keyboard hints). Scoped through
+discussion (`AskUserQuestion`, twice) into: not a reskin of the existing
+`NowPlayingPanel`; a genuine, self-contained internal radio player; real
+audio-reactive visualizer, not a fake idle animation; reachable "with a
+click" as a session you dip in and out of, separate from the existing
+external-player remote control (which stays completely untouched).
+
+**Architecture, verified live piece by piece before writing any UI code**
+(matching this whole session's established practice -- see PLAN at
+`~/.claude/plans/mossy-wandering-lighthouse.md` for the full design writeup):
+
+- `mpv` (installed via `brew install mpv` for this work) does the real
+  playback, controlled entirely via its `--input-ipc-server` JSON socket --
+  confirmed live: connect, `{"command":["cycle","pause"]}`,
+  `{"command":["get_property","time-pos"]}` all work exactly as documented
+  against a real SomaFM stream.
+- The audio-reactive visualizer needed a second, silent `ffmpeg` process
+  against the *same* stream, split into 8 frequency bands each metered with
+  `astats`. Two real bugs found and fixed during this verification, not
+  guessed at from docs: (1) `ametadata`'s `file=` target buffers and never
+  flushes for an indefinite (never-exits) run -- every real radio stream --
+  so writing per-band level files looked like it worked in a short, bounded
+  test (`-t 8`, which flushes cleanly on exit) but produced nothing at all
+  during real, ongoing playback; switched to reading each band's
+  `Parsed_ametadata_<N>` output straight off ffmpeg's own stderr, confirmed
+  live to flush continuously (hundreds of samples/sec) while the process
+  keeps running. (2) band instance numbers aren't 1,2,3 -- discovered and
+  mapped in first-seen order instead of hardcoded, confirmed correct against
+  real audio (bass ~-16dB, mid ~-33dB, treble ~-51dB, on the same instant).
+- 11 stations (`radio.py`'s `STATIONS`), all real, all verified via `curl`
+  (HTTP 200) before being added -- SomaFM and Nightride FM, both of which
+  publish direct stream URLs specifically for third-party player
+  integration, unlike the mockup's fictional "NCS Radio" stations, which
+  don't correspond to any real 24/7 stream.
+
+**New files:** `radio.py` (`RadioPlayer` -- owns the mpv+ffmpeg subprocess
+pair per active station, IPC control, thread-safe level snapshots, SIGTERM-
+then-SIGKILL shutdown mirroring `pty_panel.py`'s own two-step process
+teardown), `radio_screen.py` (`RadioScreen`, a full `Screen` mirroring
+`VaultScreen`'s pattern -- station list, live visualizer, favorites/shuffle/
+repeat). `config.py` gains `radio_state.json` (favorites/last-station/
+shuffle/repeat), following the existing `goals.json`/`state.json` plain-JSON
+idiom rather than the marker-file pattern (doesn't fit a list+index+enum
+shape). `app.py` owns one shared `RadioPlayer` for the whole app run --
+reached via a new `R` keybinding or a clickable "🎧 Enter Radio Session"
+button mounted right after the existing `NowPlayingPanel` -- and stops it
+explicitly on quit (`_stop_claude_and_exit`), alongside the existing
+`claude_panel.stop()` call.
+
+**Two more real bugs caught by testing the actual new UI code, both fixed
+before shipping:** (1) `StationItem`'s own helper was named `_render()`,
+silently overriding `Widget`'s internal `_render()` (different signature) --
+crashed on the very next real paint with a `TypeError` deep inside Textual's
+own rendering internals. Renamed to `_build_label`. (2) `ListView`'s built-in
+Enter binding intercepted the key before a same-named `RadioScreen`-level
+binding ever fired -- confirmed live, Enter silently did nothing. Same class
+of bug `pty_panel.py`'s own docstring already warns about for
+`PracticeLabPanel` (a focused child widget's bindings win over an ancestor's
+for the same key). Fixed by handling `ListView.Selected` instead of trying to
+intercept "enter" at the Screen level.
+
+**Tested:** full live end-to-end runs against real stations throughout
+(navigation, playback, pause/resume via IPC, real audio-reactive visualizer
+bars matching actual per-band levels, favorites/shuffle/repeat persisting
+across closing/reopening the screen and a full app restart). Verified via the
+*real* `action_quit()` path -- not just calling `stop()` directly -- that no
+`mpv`/`ffmpeg` process survives mtdo exiting (`pgrep` empty afterward), the
+single biggest risk this whole feature carries. 19 new tests in
+`test_radio.py` (mocked `subprocess.Popen`/IPC socket, synthetic
+ffmpeg-stderr parsing fed through the real parsing function, config
+round-trips, 3 Textual-pilot screen tests) -- no real subprocess, audio, or
+network touched anywhere in the suite. Full suite: 82 passed, 1 skipped, in a
+scratch venv. Real `~/.mtdo` never touched -- all repro/testing used scratch
+`MTDO_HOME`s.
+
+No tracker bug for this -- came directly from the user in chat, nothing to
+close.
+
+---
+
 ## 2026-08-27 (bug gh53, GH mukund1312/mtdo-bugs#53, PR https://github.com/mukund1312/mtdo/pull/41) -- offer to save the recovery code locally, protected or not
 
 Bug, verbatim: "user should be given choice to save the recovery code in local
