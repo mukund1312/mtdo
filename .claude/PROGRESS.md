@@ -9,6 +9,36 @@ Add each session's PROGRESS.md entry to the same branch as the code it describes
 
 ---
 
+## 2026-08-27 (PR https://github.com/mukund1312/mtdo/pull/49) -- radio panel scrolling
+
+Follow-up to PR #48: the shine-sweep art is 33 rows tall on its own, and once
+stacked with the rest of the radio panel's content (title, now-playing, time,
+visualizer, EQ/VOL, playlist header, 11-station list), total height easily
+exceeds a shorter terminal's viewport. User reported "not able to scroll
+down" -- the panel was a plain `Vertical` with no scroll capability, so
+`#radio-list`'s `height: 1fr` just got squeezed toward zero instead of the
+panel scrolling, making the playlist unreachable on a short terminal.
+
+**Fix:** swapped `Vertical` for Textual's `VerticalScroll` container (mouse
+wheel/PageUp/PageDown/Home/End all work automatically) and changed
+`#radio-list`'s height from `1fr` to `auto` so it sizes to its actual 11
+items rather than competing for leftover space in a scrollable container,
+where "leftover space" isn't a well-defined concept.
+
+**Verified headlessly** at a deliberately short terminal (40 rows, shorter
+than the art alone): `max_scroll_y` is a real nonzero value (33) and
+`scroll_y` moves through the full range via `scroll_home`/`scroll_end`/
+relative scroll, confirmed against matching screenshots (art visible at the
+top when scrolled home, full playlist visible at the bottom when scrolled to
+end). Also confirmed Textual's default focus-follow behavior auto-scrolls
+the newly-focused station list into view on mount, so the playlist is
+immediately reachable without the user needing to discover the scrollbar
+themselves. At a tall terminal where everything already fits, `max_scroll_y`
+is 0 -- no spurious scrollbar. Full pytest suite green (95 passed, 1
+skipped); PR #49's own CI green.
+
+---
+
 ## 2026-08-27 (PR https://github.com/mukund1312/mtdo/pull/48) -- shine-sweep replaces the vinyl-spin visual
 
 The spinning-vinyl feature from PR #47 (below) shipped, then got direct

@@ -29,7 +29,7 @@ stopping it on quit -- this screen only ever reads/commands that instance,
 never creates its own.
 """
 from textual.app import ComposeResult
-from textual.containers import Horizontal, Vertical
+from textual.containers import Horizontal, VerticalScroll
 from textual.screen import Screen
 from textual.widgets import Static, ListView, ListItem, Label
 from rich.text import Text
@@ -212,7 +212,7 @@ class RadioScreen(Screen):
     #radio-eq {{ height: 1; }}
     #radio-vol {{ height: 1; margin-bottom: 1; }}
     #radio-playlist-header {{ color: {_ORANGE}; height: 1; }}
-    #radio-list {{ height: 1fr; background: {_PANEL_BG}; border: none; }}
+    #radio-list {{ height: auto; background: {_PANEL_BG}; border: none; }}
     #radio-help {{ dock: bottom; height: 1; margin: 0 0 1 2; }}
     """
 
@@ -235,7 +235,7 @@ class RadioScreen(Screen):
             yield Static(prompt, id="radio-prompt")
             self.topbar_state = Static("■  tty1", id="radio-tty")
             yield self.topbar_state
-        with Vertical(id="radio-panel"):
+        with VerticalScroll(id="radio-panel"):
             self.shine_widget = Static(_render_shine_art(0), id="radio-shine")
             yield self.shine_widget
             with Horizontal(id="radio-title-row"):
