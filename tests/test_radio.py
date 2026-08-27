@@ -271,20 +271,23 @@ async def test_radio_screen_opens_via_keybinding_and_plays_on_enter():
             await pilot.pause()
         assert isinstance(app.screen, RadioScreen)
 
-        # Deliberately not driving this via a real Enter keypress through the
-        # focused ListView: confirmed on CI (Linux, but not locally on macOS)
-        # that pressing Enter there does not reliably produce the Selected
-        # message this relies on, even with the mock scope widened to cover
-        # pilot.pause() too (still failed identically) -- some Textual/
-        # platform-specific keyboard-dispatch difference this wasn't able to
-        # root-cause without CI shell access. ListView's own Enter->Selected
-        # wiring is Textual's own tested behavior, not this app's; what this
-        # test actually needs to prove is that RadioScreen's own handler
-        # correctly starts playback given that message, so it's invoked
-        # directly instead of depending on the keypress reliably cascading
-        # into it on every platform.
+        # Real root cause of this test failing on CI (Linux, no mpv
+        # installed) but passing locally every time on macOS (mpv genuinely
+        # installed there for this work): RadioPlayer.start() calls has_mpv()
+        # a SECOND time, independently of action_open_radio's own check above
+        # -- that first `with` block already exited by this point, and this
+        # one only patched subprocess.Popen/threading.Thread, not has_mpv.
+        # start() raised RuntimeError (silently caught and swallowed by
+        # _play()) before ever reaching Popen, so _mpv_proc was never set --
+        # nothing to do with keyboard/message-dispatch timing, which is what
+        # this looked like at first and wasted real effort chasing. Two
+        # earlier fix attempts (widening the press+pause mock scope, then
+        # invoking on_list_view_selected directly instead of a real keypress)
+        # both left this exact gap and both failed identically on CI for
+        # exactly this reason.
         item = app.screen.list_view.children[0]
-        with patch("mtdo.radio.subprocess.Popen", side_effect=_mock_popen_pair()), \
+        with patch("mtdo.radio.has_mpv", return_value=True), \
+             patch("mtdo.radio.subprocess.Popen", side_effect=_mock_popen_pair()), \
              patch("mtdo.radio.threading.Thread"):
             app.screen.on_list_view_selected(_FakeSelected(item))
             await pilot.pause()
