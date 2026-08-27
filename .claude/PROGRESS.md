@@ -9,6 +9,79 @@ Add each session's PROGRESS.md entry to the same branch as the code it describes
 
 ---
 
+## 2026-08-27 (bug gh57, GH mukund1312/mtdo-bugs#57, PR https://github.com/mukund1312/mtdo/pull/46) -- profile switch left Pomodoro/task state leaking, new profiles skipped the setup wizard
+
+Bug, verbatim: "when i switch to the next profile then everything should be
+fresh from that goals setup manual or guided, all the pomodoro and everything
+else should be reset and saved for each profile... each profile should be
+unique to its own... nothing of the other profiles seeps in... goals setup
+manual or guided should be asked for each [profile]... password protected
+the same password for the profile."
+
+Three distinct sub-asks, investigated separately:
+
+1. **Pomodoro/task bookkeeping leaked across profiles -- confirmed live.**
+   Pomodoro's running/elapsed/duration state (`PomodoroPanel.running`/
+   `on_break`/`remaining`/`work_minutes`/`break_minutes`) and the Learning
+   Coach's DSA/AI-priming in-flight bookkeeping
+   (`current_dsa_ref`/`dsa_generating`/`coaching_generating`/`ai_primed_ref`/
+   `_hint_prompt_open`) are all plain runtime attributes on
+   `TodoApp`/`PomodoroPanel` -- never part of `goals.json`/`state.json` at
+   all -- so `_switch_profile` never touched any of it. Reproduced live: a
+   Pomodoro left running with custom 50/15 durations in profile A kept
+   ticking under those same durations after switching to profile B. **Fix:**
+   reset all of it in `_switch_profile`, right before `reload_from_goals()`
+   re-renders every side panel (so that render already reflects the fresh
+   values), only when actually switching to a genuinely *different* profile
+   -- re-selecting the one you're already in leaves an active Pomodoro alone,
+   confirmed via a dedicated regression test. Deliberately did NOT reset
+   `focus_mode` -- a view preference, not profile data, nothing here reads or
+   writes through it in a way that could leak between profiles.
+
+2. **New profiles never got the goals-setup wizard -- confirmed live.**
+   `_finish_startup`'s auto-launch check for the wizard
+   (`appconfig.has_configured_plan()`) is a single, app-wide marker file, not
+   per-profile, AND is only ever checked at app startup -- creating an
+   additional profile via "Add Profile" never consulted it at all, so it
+   switched straight into a silently empty board with no prompt to fill it
+   in, unlike a genuine first run or a manual `g` re-run. **Fix:** added
+   `_on_profile_created_manual`, a new handler used only by
+   `action_create_profile()` ("Add Profile"), which triggers
+   `_begin_setup_flow()` right after the actual switch (correctly ordered
+   whether or not a recovery-code screen appears in between for a protected
+   profile). Deliberately kept **separate** from the existing
+   `_on_profile_created` -- that one is *also* reached internally from
+   `_begin_setup_flow`'s own first-run bootstrapping branch (when zero
+   profiles exist yet), which already chains straight into
+   `_pick_populate_method` itself; making `_on_profile_created` trigger
+   `_begin_setup_flow()` too would have double-fired the wizard (an extra,
+   redundant `ProfileMenuScreen` step) for a brand-new install. Confirmed
+   live: creating profile #2 now correctly chains into the same wizard `g`
+   re-runs; a genuine first run (zero profiles) still goes straight from
+   `ProfileCreateScreen` to `ChoicePickScreen`, unaffected.
+
+3. **"password protected the same password for the profile"** -- already
+   fully satisfied by `profiles.py`'s existing envelope-encryption model
+   (verified by re-reading it, not assumed): `write_goals`/`write_state` for
+   a given profile are always wrapped under exactly that profile's own
+   password. No code change needed.
+
+**Tested:** live repro before fixing (Pomodoro state genuinely survived a
+switch untouched), live verification after (resets to defaults on a real
+switch, left alone on a same-profile re-select), live verification of the
+new-profile wizard trigger and the first-run-path non-regression. Added 4 new
+regression tests to `test_profiles.py`. One test-isolation lesson caught
+along the way: an initial version of the first-run-boundary test tried to
+force `pf.list_profiles()` empty through the pilot, which can't be relied on
+in the shared `MTDO_HOME` test session (other tests' profiles already exist
+by the time it runs) -- rewritten to verify the boundary directly against
+the handler (mocking `_begin_setup_flow` and asserting it's never called from
+`_on_profile_created`) instead. Full suite: 92 passed, 1 skipped, in a
+scratch venv. **CI (GitHub Actions) confirmed green before merging** --
+continuing the practice established after PR #43's CI-debugging saga.
+
+---
+
 ## 2026-08-27 (PR https://github.com/mukund1312/mtdo/pull/44) -- redesign the radio screen to match the user's cliamp mockup
 
 User provided a specific reference mockup (a fictional "cliamp" retro-terminal
