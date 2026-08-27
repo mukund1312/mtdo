@@ -225,6 +225,14 @@ class RadioPlayer:
     def set_volume(self, delta):
         self._send_ipc(["add", "volume", delta])
 
+    def get_volume(self):
+        """mpv's real volume property, 0-100, or None if unavailable (e.g.
+        nothing playing yet)."""
+        reply = self._send_ipc(["get_property", "volume"])
+        if reply and reply.get("error") == "success" and isinstance(reply.get("data"), (int, float)):
+            return float(reply["data"])
+        return None
+
     def is_paused(self):
         reply = self._send_ipc(["get_property", "pause"])
         return bool(reply and reply.get("data"))

@@ -4,6 +4,16 @@ repeat) requested to sit alongside, not replace, the existing NowPlayingPanel
 remote control in app.py. Extracted into its own module rather than folded
 into app.py, same precedent as practice_lab_panel.py for a feature this size.
 
+Visual design matches a specific reference mockup (a fictional "cliamp"
+terminal player) the user provided, with one deliberate departure: the
+mockup's "EQ [ Rock ]" row implies a genre EQ preset that actually reshapes
+the sound -- discussed with the user, who chose NOT to build that (a real
+audio-processing feature, not a UI concern) and instead have that row show
+the same real per-band audio levels already driving the visualizer, labeled
+honestly ("EQ [Live]") rather than a fake preset name. Everything else in the
+mockup that had no real backing data in this app (a "SRC 1/9" source
+counter, a "SPD [1x]"/bandwidth footer) was dropped rather than faked.
+
 A full Screen (VaultScreen's pattern), not a ModalScreen or docked panel --
 pushed via a keybinding/click from TodoApp, popped with q/Escape. Closing this
 screen does NOT stop playback: this is meant to be a "session" you can dip in
@@ -22,9 +32,18 @@ from rich.text import Text
 from . import config as appconfig
 from . import radio
 
-_NEON = ["#ff2d95", "#ff8c00", "#ffe135", "#39ff14", "#00fff5", "#7c5cff"]
-_BAR_ROWS = 5
+_BAR_ROWS = 6
 _REPEAT_CYCLE = ["off", "all", "one"]
+_VOL_BAR_WIDTH = 28
+
+_GREEN_BRIGHT = "#39ff8a"
+_GREEN_MID = "#1f7a4d"
+_GREEN_BG = "#0d2318"
+_TEAL = "#3ddc97"
+_ORANGE = "#ffb454"
+_DIM = "#7c8c83"
+_BOX_BORDER = "#1f4d33"
+_PANEL_BG = "#0a0f0c"
 
 
 def _fmt_mmss(seconds):
@@ -32,6 +51,31 @@ def _fmt_mmss(seconds):
         return "--:--"
     seconds = max(0, int(seconds))
     return f"{seconds // 60:02d}:{seconds % 60:02d}"
+
+
+def _key_chip(key, label):
+    """One 'key cap' hint chip -- a solid-background span faking a bordered
+    key the way terminal cheat-sheets commonly do it, since Rich/Textual can
+    only border a whole widget, never a span within a line of text."""
+    chip = Text()
+    chip.append(f" {key} ", style=f"bold black on {_TEAL}")
+    chip.append(f" {label}   ", style=_DIM)
+    return chip
+
+
+def _eq_bands_text(levels):
+    """Real per-band levels (dBFS, same data driving the visualizer) shown as
+    small signed numbers -- an honest stand-in for the mockup's genre EQ
+    preset readout (see module docstring): -30dBFS is an arbitrary but
+    reasonable mid-loudness reference point for these stations, scaled so a
+    band swinging through typical radio loudness reads roughly -9..+9,
+    matching the mockup's single-digit style without claiming to be a
+    calibrated meter."""
+    text = Text()
+    for lvl in levels:
+        rel = max(-9, min(9, round((lvl + 30) / 3)))
+        text.append(f"{rel:+d} ", style="white")
+    return text
 
 
 class StationItem(ListItem):
@@ -42,13 +86,13 @@ class StationItem(ListItem):
     # arguments" TypeError deep inside Textual's own render_content).
     def __init__(self, index, station, is_current, is_favorite):
         self.station_index = index
-        super().__init__(Label(self._build_label(station, is_current, is_favorite)))
+        super().__init__(Label(self._build_label(index, station, is_current, is_favorite)))
 
-    def _build_label(self, station, is_current, is_favorite):
+    def _build_label(self, index, station, is_current, is_favorite):
         marker = "▶ " if is_current else "  "
         star = " ★" if is_favorite else ""
-        style = "bold #39ff14" if is_current else "white"
-        return Text(f"{marker}{station['name']}{star}", style=style)
+        style = f"bold {_GREEN_BRIGHT}" if is_current else "white"
+        return Text(f"{marker}{index + 1:>2}. {station['name']}{star}", style=style)
 
 
 class RadioScreen(Screen):
@@ -65,18 +109,30 @@ class RadioScreen(Screen):
         ("r", "cycle_repeat", "Repeat"),
         ("n", "next_station", "Next"),
         ("p", "prev_station", "Prev"),
+        ("+", "volume_up", "Vol+"),
+        ("-", "volume_down", "Vol-"),
     ]
 
-    CSS = """
-    RadioScreen { layout: vertical; background: #060812; }
-    #radio-header { dock: top; height: 5; border: round #ff2d95; padding: 0 1; background: #0a0d1a; }
-    #radio-title { text-style: bold; color: #00fff5; }
-    #radio-now { color: #ffe135; }
-    #radio-status { color: #7c5cff; }
-    #radio-visualizer { dock: top; height: 7; border: round #7c5cff; padding: 0 1; background: #0a0d1a; }
-    #radio-body { height: 1fr; }
-    #radio-list { width: 1fr; border: round #00fff5; padding: 0 1; background: #0a0d1a; }
-    #radio-help { height: 1; dock: bottom; padding: 0 1; color: #7c5cff; }
+    CSS = f"""
+    RadioScreen {{ layout: vertical; background: #05070a; }}
+    #radio-topbar {{ dock: top; height: 1; padding: 0 2; background: #05070a; }}
+    #radio-prompt {{ width: 1fr; color: {_TEAL}; }}
+    #radio-tty {{ width: auto; color: {_DIM}; }}
+    #radio-panel {{ margin: 1 2 1 2; border: round {_BOX_BORDER}; background: {_PANEL_BG}; padding: 0 2 1 2; height: 1fr; }}
+    #radio-title-row {{ height: 1; margin-top: 1; }}
+    #radio-cliamp {{ width: 1fr; color: {_TEAL}; text-style: bold; }}
+    #radio-playlist-tag {{ width: auto; color: {_DIM}; }}
+    #radio-now {{ color: white; text-style: bold; height: 1; margin-top: 1; }}
+    #radio-time-row {{ height: 1; margin-bottom: 1; }}
+    #radio-time {{ width: 1fr; color: {_DIM}; }}
+    #radio-state {{ width: auto; color: {_DIM}; }}
+    #radio-visualizer {{ height: {_BAR_ROWS}; background: {_GREEN_BG}; margin-bottom: 1; }}
+    #radio-stream-divider {{ color: {_ORANGE}; text-align: center; height: 1; margin-bottom: 1; }}
+    #radio-eq {{ height: 1; }}
+    #radio-vol {{ height: 1; margin-bottom: 1; }}
+    #radio-playlist-header {{ color: {_ORANGE}; height: 1; }}
+    #radio-list {{ height: 1fr; background: {_PANEL_BG}; border: none; }}
+    #radio-help {{ dock: bottom; height: 1; margin: 0 0 1 2; }}
     """
 
     def __init__(self, player):
@@ -88,36 +144,64 @@ class RadioScreen(Screen):
         self.repeat = radio_state["repeat"]
 
     def compose(self) -> ComposeResult:
-        with Vertical(id="radio-header"):
-            yield Static("◆ M T D O   R A D I O ◆", id="radio-title")
-            self.now_line = Static("Nothing playing", id="radio-now")
+        with Horizontal(id="radio-topbar"):
+            prompt = Text()
+            prompt.append("$ ", style="bold white")
+            prompt.append("cliamp ", style=f"bold {_TEAL}")
+            prompt.append("--provider radio", style=_DIM)
+            yield Static(prompt, id="radio-prompt")
+            self.topbar_state = Static("■  tty1", id="radio-tty")
+            yield self.topbar_state
+        with Vertical(id="radio-panel"):
+            with Horizontal(id="radio-title-row"):
+                yield Static("C L I A M P", id="radio-cliamp")
+                yield Static("[Playlist]", id="radio-playlist-tag")
+            self.now_line = Static("♪ Nothing playing -- Enter to start a station", id="radio-now")
             yield self.now_line
-            self.status_line = Static("", id="radio-status")
-            yield self.status_line
-        self.visualizer = Static("", id="radio-visualizer")
-        yield self.visualizer
-        with Horizontal(id="radio-body"):
+            with Horizontal(id="radio-time-row"):
+                self.time_line = Static("--:-- / LIVE", id="radio-time")
+                yield self.time_line
+                self.state_line = Static("■ Stopped", id="radio-state")
+                yield self.state_line
+            self.visualizer = Static("", id="radio-visualizer")
+            yield self.visualizer
+            self.stream_divider = Static("", id="radio-stream-divider")
+            yield self.stream_divider
+            self.eq_line = Static("", id="radio-eq")
+            yield self.eq_line
+            self.vol_line = Static("", id="radio-vol")
+            yield self.vol_line
+            self.playlist_header = Static("", id="radio-playlist-header")
+            yield self.playlist_header
             self.list_view = ListView(id="radio-list")
             yield self.list_view
-        yield Static(
-            "↑↓ move  Enter play  Space pause  f favorite  s shuffle  r repeat  n/p station  q/esc back",
-            id="radio-help",
-        )
+        self.help_line = Static("", id="radio-help")
+        yield self.help_line
 
     def on_mount(self):
         self._rebuild_list()
+        self._render_help()
         self.list_view.focus()
         self._update_status()
         self._redraw_visualizer()
         # Two separate intervals, deliberately different rates: the visualizer
         # only reads an in-memory, lock-protected list (radio.get_levels()) --
         # cheap, redrawn fast for smoothness. The status line queries mpv over
-        # its IPC socket (is_paused/get_position) -- a real, if normally fast,
-        # blocking round trip on Textual's own event-loop thread, so it runs
-        # far less often to keep worst-case UI stall low if mpv is ever slow
-        # to respond.
+        # its IPC socket (is_paused/get_position/get_volume) -- a real, if
+        # normally fast, blocking round trip on Textual's own event-loop
+        # thread, so it runs far less often to keep worst-case UI stall low
+        # if mpv is ever slow to respond.
         self.set_interval(1 / 12, self._redraw_visualizer)
         self.set_interval(0.5, self._update_status)
+
+    def _render_help(self):
+        text = Text()
+        for key, label in (
+            ("↑↓", "Scroll"), ("Enter", "Play"), ("Spc", "Pause"), ("f", "Fav"),
+            ("s", "Shuffle"), ("r", "Repeat"), ("n/p", "Station"), ("+/-", "Vol"), ("q", "Back"),
+        ):
+            text.append(_key_chip(key, label))
+        self.help_line.update(text)
 
     def _save_state(self):
         appconfig.save_radio_state({
@@ -137,19 +221,56 @@ class RadioScreen(Screen):
         ]
         self.list_view.extend(items)
         self.list_view.index = min(prev_index, len(items) - 1)
+        self._render_playlist_header()
+
+    def _render_playlist_header(self):
+        current = self.player.station_index
+        position = f"{current + 1}/{len(radio.STATIONS)}" if current is not None else f"-/{len(radio.STATIONS)}"
+        shuffle_label = "On" if self.shuffle else "Off"
+        text = Text("▸─ Playlist ── ", style=_ORANGE)
+        text.append(f"[Shuffle: {shuffle_label}] ", style="white")
+        text.append(f"[Repeat: {self.repeat.title()}] ", style="white")
+        text.append(f"[{position}] ", style="white")
+        text.append("──", style=_ORANGE)
+        self.playlist_header.update(text)
 
     def _update_status(self):
         station = self.player.current_station()
+        playing = self.player.is_playing()
+        paused = playing and self.player.is_paused()
+
         if station is None:
-            self.now_line.update("Nothing playing -- Enter to start a station")
-            self.status_line.update("")
+            self.now_line.update("♪ Nothing playing -- Enter to start a station")
+            self.time_line.update("--:-- / LIVE")
+            self.state_line.update(Text("■ Stopped  (Enter to play)", style=_DIM))
+            self.stream_divider.update(Text("── STOPPED ──", style=_ORANGE))
+            self.topbar_state.update(Text("■  tty1", style=_DIM))
         else:
-            paused = self.player.is_paused()
-            icon = "❚❚" if paused else "▶"
-            pos = _fmt_mmss(self.player.get_position())
-            self.now_line.update(f"{icon}  {station['name']}   {pos}")
-            shuffle_label = "On" if self.shuffle else "Off"
-            self.status_line.update(f"Shuffle: {shuffle_label}   Repeat: {self.repeat.title()}")
+            self.now_line.update(f"♪ {station['name']}")
+            pos = _fmt_mmss(self.player.get_position()) if playing else "--:--"
+            self.time_line.update(f"{pos} / LIVE")
+            if paused:
+                self.state_line.update(Text("❚❚ Paused  (Space to resume)", style=_DIM))
+                self.stream_divider.update(Text("── PAUSED ──", style=_ORANGE))
+                self.topbar_state.update(Text("❚❚  tty1", style=_TEAL))
+            else:
+                self.state_line.update(Text("▶ Playing  (Space to pause)", style=_DIM))
+                self.stream_divider.update(Text("── STREAMING ──", style=_ORANGE))
+                self.topbar_state.update(Text("▶  tty1", style=_GREEN_BRIGHT))
+
+        eq = Text("EQ ", style="white")
+        eq.append("[Live] ", style=_ORANGE)
+        eq.append_text(_eq_bands_text(self.player.get_levels()))
+        self.eq_line.update(eq)
+
+        vol = self.player.get_volume() if playing else None
+        vol_pct = vol if vol is not None else 100.0
+        filled = round(vol_pct / 100 * _VOL_BAR_WIDTH)
+        bar = Text("VOL ", style="white")
+        bar.append("▮" * filled, style=_GREEN_BRIGHT)
+        bar.append("·" * (_VOL_BAR_WIDTH - filled), style=_GREEN_MID)
+        bar.append(f" {vol_pct:.0f}%", style=_DIM)
+        self.vol_line.update(bar)
 
     def _redraw_visualizer(self):
         self.visualizer.update(self._render_visualizer())
@@ -161,10 +282,13 @@ class RadioScreen(Screen):
             norm = max(0.0, min(1.0, (level + 60.0) / 60.0))
             heights.append(round(norm * _BAR_ROWS))
         text = Text()
+        col_width = 3
         for row in range(_BAR_ROWS - 1, -1, -1):
-            for col, height in enumerate(heights):
-                color = _NEON[col % len(_NEON)]
-                text.append("▇▇ " if height > row else "   ", style=color)
+            for height in heights:
+                if height > row:
+                    text.append("█" * col_width, style=_GREEN_BRIGHT)
+                else:
+                    text.append("░" * col_width, style=_GREEN_MID)
             text.append("\n")
         return text
 
@@ -196,6 +320,7 @@ class RadioScreen(Screen):
     def action_toggle_pause(self):
         if self.player.is_playing():
             self.player.toggle_pause()
+            self._update_status()
 
     def action_toggle_favorite(self):
         if self.list_view.index is None:
@@ -212,11 +337,13 @@ class RadioScreen(Screen):
 
     def action_toggle_shuffle(self):
         self.shuffle = not self.shuffle
+        self._render_playlist_header()
         self._save_state()
 
     def action_cycle_repeat(self):
         current = _REPEAT_CYCLE.index(self.repeat)
         self.repeat = _REPEAT_CYCLE[(current + 1) % len(_REPEAT_CYCLE)]
+        self._render_playlist_header()
         self._save_state()
 
     def action_next_station(self):
@@ -224,6 +351,16 @@ class RadioScreen(Screen):
 
     def action_prev_station(self):
         self._advance(-1)
+
+    def action_volume_up(self):
+        if self.player.is_playing():
+            self.player.set_volume(5)
+            self._update_status()
+
+    def action_volume_down(self):
+        if self.player.is_playing():
+            self.player.set_volume(-5)
+            self._update_status()
 
     def _advance(self, direction):
         if self.repeat == "one" or self.player.station_index is None:
