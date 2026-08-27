@@ -206,6 +206,10 @@ def test_is_paused_and_get_position_parse_real_ipc_reply_shapes():
     with patch.object(player, "_send_ipc", return_value=None):
         assert player.get_position() is None
         assert player.is_paused() is False
+    with patch.object(player, "_send_ipc", return_value={"data": 85.0, "error": "success"}):
+        assert player.get_volume() == 85.0
+    with patch.object(player, "_send_ipc", return_value=None):
+        assert player.get_volume() is None
 
 
 def test_load_radio_state_defaults_when_missing():
