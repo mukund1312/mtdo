@@ -226,6 +226,19 @@ employees with zero orders, so interview-style questions like "2nd highest salar
 department" are actually meaningful) -- `sqlite3` is the real engine, not something mtdo
 reimplements.
 
+## Radio
+
+`R` opens a retro-terminal internet-radio session -- a genuine built-in player (11 curated
+stations across lofi/synthwave/house/dubstep/drum & bass/vaporwave/pop/etc.), separate from
+the "Now Playing" panel above (that one only ever remote-controls something *already*
+playing externally; this one streams and decodes its own audio). `↑↓` to browse, `Enter` to
+play, `Space` to pause/resume, `f` to favorite, `s`/`r` for shuffle/repeat, `n`/`p` for
+next/previous station, `q`/`Escape` to leave -- closing the screen doesn't stop playback,
+it's a session you can dip in and out of. The visualizer is genuinely audio-reactive (real
+per-band levels off the actual stream, not a canned animation). Favorites/shuffle/repeat
+persist in `~/.mtdo/radio_state.json`. Needs [mpv](https://mpv.io) (`brew install mpv`) --
+mtdo tells you plainly if it's missing rather than showing a broken screen.
+
 ## Platform notes
 
 Core features (Kanban, Pomodoro, streaks, Career CRM, Knowledge Vault, Learning Coach) are
@@ -236,6 +249,12 @@ Music controls use [nowplaying-cli](https://github.com/kirtan-shah/nowplaying-cl
 owns "Now Playing" on macOS -- YouTube Music, Apple Music, Spotify, anything. Without it,
 they fall back to Spotify-specific AppleScript. Either way, **macOS only** -- they no-op
 safely everywhere else.
+
+The Radio (`R`) needs [mpv](https://mpv.io) (`brew install mpv`) for actual playback, and
+uses `ffmpeg` (usually already present, e.g. via `brew install ffmpeg`) purely to compute
+the visualizer's real audio levels -- a silent, separate analysis pass that never touches
+what's actually being played. This one isn't macOS-specific; it should work anywhere both
+tools are installed.
 
 The AI panel needs at least one backend actually available: the `claude` CLI installed, a
 running [Ollama](https://ollama.com) with a model pulled, or an API key for
