@@ -9,6 +9,65 @@ Add each session's PROGRESS.md entry to the same branch as the code it describes
 
 ---
 
+## 2026-08-27 (PR https://github.com/mukund1312/mtdo/pull/48) -- shine-sweep replaces the vinyl-spin visual
+
+The spinning-vinyl feature from PR #47 (below) shipped, then got direct
+negative feedback: "use this instead of the vinyl lopp it looks horeble." The
+user pasted a static Braille-block ASCII image (a 33-row, 65-column piece of
+art, no source video) and asked to "animate this into a loop."
+
+**Category difference from the vinyl feature, flagged before writing any
+code:** the vinyl spinner had real source frames (a video) to cycle through.
+This is one static image with no motion source at all -- "looping" it can
+only mean synthesizing motion on top of a fixed character grid, not decoding
+anything. Asked the user to choose a synthesis style (`AskUserQuestion`):
+glowing color pulse, shine sweep, or gentle bounce/scale. User picked **shine
+sweep** -- a bright highlight band sweeping across the art on a loop, "like
+light catching a spinning surface."
+
+**Why shine sweep specifically avoids repeating the vinyl mistake:** pure
+color modulation over an unchanged character grid can never distort or
+garble the art, unlike a rotate/scale/reshape approach applied to
+pre-rendered block characters (a real risk for Braille-block art, and
+plausibly part of why the vinyl rendering looked bad in the first place).
+
+**Implementation (`radio_screen.py`):** `_render_shine_art(position)` renders
+the fixed `_SHINE_ART` grid with a highlight color band centered at
+`position`, using **circular distance** (`min(abs(col - position), width -
+abs(col - position))`) so the sweep wraps seamlessly with no visible jump at
+the edges. Built with run-length-grouped style spans per row rather than one
+`.append()` per character, to stay cheap at the 20/sec redraw rate. Advances
+only while a station is genuinely playing, freezes in place on pause, and
+parks back at position 0 once stopped -- carrying forward the exact
+play/pause/stop interaction the vinyl spinner used.
+
+**Full removal of the vinyl feature's surface area**, not just its call
+site: `radio.py`'s vinyl helpers (`has_vinyl_support`, `extract_vinyl_frames`,
+related constants), the bundled `vinyl.mp4` asset, the `vinyl` optional-
+dependency group, and the `*.mp4` package-data glob in `pyproject.toml` are
+all gone. The shine-sweep needs zero image-rendering dependencies --
+`textual-image`/Pillow/ffmpeg-for-frames are no longer used anywhere in this
+codebase.
+
+**Verification:** confirmed all 33 rows of the pasted art are exactly 65
+characters wide (a transcription-length mismatch would have produced ragged/
+misaligned art); new unit tests for `_render_shine_art`'s band placement and
+circular wrap-around; a screen-level test for the play/pause/stop-driven
+advance logic (written against relative position deltas, not exact tick
+counts, since the screen's own real `set_interval` races manual test calls);
+headless Pilot screenshots confirmed the art renders intact with the rest of
+the layout undisturbed, and direct span inspection confirmed the highlight
+band's position and wrap-around math. Screenshots taken across real wall-
+clock time (through the actual `set_interval` tick, not a manual `.update()`
+poke) differed frame to frame, confirming the sweep genuinely animates in the
+running app -- an earlier attempt at manually poking `.update()` without
+going through a real render/compositor cycle produced identical screenshots
+and would have been a false negative if trusted. Full pytest suite (95
+passed, 1 skipped) green in a fresh venv built from CI's exact
+`pip install -e ".[dev]"`; PR #48's own CI run green.
+
+---
+
 ## 2026-08-27 (PR https://github.com/mukund1312/mtdo/pull/47) -- spinning-vinyl visual on the radio screen
 
 User re-shared the cliamp mockup asking for "this exact" UI (already matched

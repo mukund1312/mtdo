@@ -17,18 +17,6 @@ import pytest
 from mtdo import config as appconfig
 from mtdo import radio
 
-_needs_vinyl_support = pytest.mark.skipif(
-    not radio.has_vinyl_support(),
-    reason="needs the vinyl extra (textual-image + Pillow) AND a real ffmpeg "
-           "on PATH -- CI's `pip install -e \".[dev]\"` deliberately doesn't "
-           "pull in the vinyl extra (it's a soft, decorative-only "
-           "dependency), so has_vinyl_support() is exactly the right skip "
-           "condition here: it's the same check the real code path itself "
-           "makes before ever touching any of this. Frame extraction shells "
-           "out to a real ffmpeg rather than mocking it (see radio.py's "
-           "module docstring for why), so this can't run without both.",
-)
-
 
 @pytest.fixture(autouse=True)
 def _clean_radio_state():
@@ -354,93 +342,94 @@ async def test_favoriting_a_station_persists_across_reopening_the_screen():
         assert app.screen.favorites == {0}
 
 
-# -- Vinyl-spin visual -- purely decorative, soft dependency (textual-image +
-# Pillow). extract_vinyl_frames() runs the real, bundled, ~5s clip through the
-# real ffmpeg (fast and deterministic -- confirmed by hand, ~0.1s -- so this
-# is tested for real rather than mocked, same as this file already does for
-# other cheap/local/deterministic pieces). Playback itself is still mocked
-# throughout, as everywhere else in this file.
+# -- Shine-sweep art (radio_screen.py) -- replaces the earlier real-video
+# vinyl-spin attempt the user found looked bad. No subprocess/network
+# involved at all here, just pure text/color logic.
 
-def test_has_vinyl_support_reflects_ffmpeg_and_the_bundled_asset():
-    with patch("shutil.which", return_value=None):
-        assert radio.has_vinyl_support() is False
-    with patch("shutil.which", return_value="/opt/homebrew/bin/ffmpeg"), \
-         patch("mtdo.radio.os.path.exists", return_value=False):
-        assert radio.has_vinyl_support() is False
+from mtdo import radio_screen
 
 
-def test_has_vinyl_support_false_without_textual_image_or_pillow():
-    import builtins
-    real_import = builtins.__import__
+def test_render_shine_art_highlights_a_band_around_the_given_position():
+    text = radio_screen._render_shine_art(0)
+    plain_rows = text.plain.split("\n")[:-1]
+    assert plain_rows == radio_screen._SHINE_ART
 
-    def blocked_import(name, *args, **kwargs):
-        if name in ("textual_image", "PIL"):
-            raise ImportError(f"simulated missing {name}")
-        return real_import(name, *args, **kwargs)
+    spans = text.spans
+    row_len = radio_screen._SHINE_WIDTH + 1  # +1 for the row's trailing "\n"
+    first_row_spans = [s for s in spans if s.start < row_len]
+    highlighted_cols = set()
+    for span in first_row_spans:
+        if span.style == radio_screen._SHINE_HIGHLIGHT_COLOR:
+            highlighted_cols.update(range(span.start, min(span.end, radio_screen._SHINE_WIDTH)))
 
-    with patch("builtins.__import__", side_effect=blocked_import):
-        assert radio.has_vinyl_support() is False
-
-
-@_needs_vinyl_support
-def test_extract_vinyl_frames_returns_real_cached_pil_images():
-    frames = radio.extract_vinyl_frames()
-    assert len(frames) > 0
-    assert all(hasattr(f, "size") for f in frames)  # genuine PIL Images, not paths/bytes
-
-    with patch("mtdo.radio.subprocess.run") as mock_run:
-        cached = radio.extract_vinyl_frames()
-        mock_run.assert_not_called()
-    assert len(cached) == len(frames)
+    half = radio_screen._SHINE_BAND_HALF_WIDTH
+    assert highlighted_cols == set(range(0, half + 1)) | set(range(
+        radio_screen._SHINE_WIDTH - half, radio_screen._SHINE_WIDTH
+    ))
 
 
-@_needs_vinyl_support
-def test_extract_vinyl_frames_raises_and_cleans_up_on_real_extraction_failure():
-    shutil.rmtree(radio._vinyl_cache_key(), ignore_errors=True)
-    with patch("mtdo.radio.subprocess.run", return_value=type(
-        "R", (), {"returncode": 1, "stdout": b"", "stderr": b"boom"},
-    )()):
-        with pytest.raises(RuntimeError):
-            radio.extract_vinyl_frames()
-    assert not os.path.isdir(radio._vinyl_cache_key())
-    radio.extract_vinyl_frames()  # leaves a real, working cache behind for later tests
+def test_render_shine_art_band_wraps_seamlessly_across_the_edge():
+    """Sweeping past the last column must wrap the highlight band back around
+    to column 0 with no gap/jump -- this is the whole point of the circular
+    `min(dist, width - dist)` distance calculation, not a plain linear one."""
+    position = radio_screen._SHINE_WIDTH - 1
+    text = radio_screen._render_shine_art(position)
+    plain_rows = text.plain.split("\n")[:-1]
+    row_len = radio_screen._SHINE_WIDTH + 1
+    first_row_spans = [s for s in text.spans if s.start < row_len]
+    highlighted_cols = set()
+    for span in first_row_spans:
+        if span.style == radio_screen._SHINE_HIGHLIGHT_COLOR:
+            highlighted_cols.update(range(span.start, min(span.end, radio_screen._SHINE_WIDTH)))
+
+    half = radio_screen._SHINE_BAND_HALF_WIDTH
+    expected = {(position + offset) % radio_screen._SHINE_WIDTH for offset in range(-half, half + 1)}
+    assert highlighted_cols == expected
+    assert 0 in highlighted_cols  # confirms the wrap actually reached column 0
 
 
-async def test_radio_screen_omits_vinyl_widget_when_unsupported():
+async def test_shine_sweep_advances_while_playing_freezes_on_pause_parks_on_stop():
+    """Drives _advance_shine directly rather than relying on the real
+    set_interval-driven timer's exact call count -- the screen's own
+    background interval (also ticking during every `await pilot.pause()`
+    above) would otherwise race these manual calls and make exact position
+    values flaky. What matters -- and what's asserted here -- is the
+    interaction logic: advances while playing, frozen in place on pause,
+    resumes on unpause, parks at 0 once stopped."""
     app = TodoApp()
     async with app.run_test() as pilot:
         await _dismiss_first_run_prompts(pilot, app)
-        with patch("mtdo.radio.has_mpv", return_value=True), \
-             patch("mtdo.radio.has_vinyl_support", return_value=False):
-            await pilot.press("R")
-            await pilot.pause()
-        assert app.screen.vinyl_widget is None
 
-
-@_needs_vinyl_support
-async def test_vinyl_spins_while_playing_freezes_on_pause_parks_on_stop():
-    """Real frame data (radio.extract_vinyl_frames()), but a fake player
-    object standing in for the real one -- this only needs to exercise
-    RadioScreen._advance_vinyl's own logic, not actual mpv/ffmpeg playback."""
-    app = TodoApp()
-    async with app.run_test() as pilot:
-        await _dismiss_first_run_prompts(pilot, app)
         with patch("mtdo.radio.has_mpv", return_value=True):
             await pilot.press("R")
             await pilot.pause()
         screen = app.screen
-        assert screen._vinyl_frames, "vinyl support is available in this test environment"
+        assert screen._shine_position == 0
 
-        with patch.object(screen.player, "is_playing", return_value=True):
-            screen._last_paused = False
-            screen._vinyl_frame_index = 0
-            screen._advance_vinyl()
-            assert screen._vinyl_frame_index == 1
+        item = screen.list_view.children[0]
+        with patch("mtdo.radio.has_mpv", return_value=True), \
+             patch("mtdo.radio.subprocess.Popen", side_effect=_mock_popen_pair()), \
+             patch("mtdo.radio.threading.Thread"):
+            screen.on_list_view_selected(_FakeSelected(item))
 
-            screen._last_paused = True
-            screen._advance_vinyl()
-            assert screen._vinyl_frame_index == 1, "must freeze in place while paused"
+        screen._last_paused = False
+        baseline = screen._shine_position
+        screen._advance_shine()
+        assert screen._shine_position == (baseline + radio_screen._SHINE_STEP) % radio_screen._SHINE_WIDTH
 
-        with patch.object(screen.player, "is_playing", return_value=False):
-            screen._advance_vinyl()
-            assert screen._vinyl_frame_index == 0, "must park back on frame 0 once stopped"
+        # frozen while paused
+        screen._last_paused = True
+        position_while_paused = screen._shine_position
+        screen._advance_shine()
+        screen._advance_shine()
+        assert screen._shine_position == position_while_paused
+
+        # resumes advancing once unpaused
+        screen._last_paused = False
+        screen._advance_shine()
+        assert screen._shine_position == (position_while_paused + radio_screen._SHINE_STEP) % radio_screen._SHINE_WIDTH
+
+        # parks back at 0 once stopped
+        app.radio_player.stop()
+        screen._advance_shine()
+        assert screen._shine_position == 0

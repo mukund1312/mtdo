@@ -14,6 +14,11 @@ honestly ("EQ [Live]") rather than a fake preset name. Everything else in the
 mockup that had no real backing data in this app (a "SRC 1/9" source
 counter, a "SPD [1x]"/bandwidth footer) was dropped rather than faked.
 
+The header art above the transport controls is a static Braille-block ASCII
+image the user supplied directly, animated by a sweeping color highlight (see
+the `_SHINE_ART` block below for why -- this replaced an earlier real-video
+vinyl-spin attempt the user found looked bad).
+
 A full Screen (VaultScreen's pattern), not a ModalScreen or docked panel --
 pushed via a keybinding/click from TodoApp, popped with q/Escape. Closing this
 screen does NOT stop playback: this is meant to be a "session" you can dip in
@@ -35,7 +40,6 @@ from . import radio
 _BAR_ROWS = 6
 _REPEAT_CYCLE = ["off", "all", "one"]
 _VOL_BAR_WIDTH = 28
-_VINYL_WIDGET_WIDTH = 18
 
 _GREEN_BRIGHT = "#39ff8a"
 _GREEN_MID = "#1f7a4d"
@@ -45,6 +49,81 @@ _ORANGE = "#ffb454"
 _DIM = "#7c8c83"
 _BOX_BORDER = "#1f4d33"
 _PANEL_BG = "#0a0f0c"
+
+# -- Shine-sweep art -- replaces an earlier real-video vinyl-spin attempt the
+# user found looked bad (garbled/blocky rendering). This is a single static
+# piece of Braille-block ASCII art the user provided directly, with no source
+# frames to play -- so "looping" it means synthesizing motion on top of a
+# fixed character grid, not decoding real video. Chose a sweeping highlight
+# band (the user's own pick among a few options) over reshaping/rotating the
+# art itself: pure color modulation over an unchanged grid can never distort
+# or garble it, which a rotate/scale attempt on pre-rendered block characters
+# generally can. No textual-image/Pillow/ffmpeg needed at all for this --
+# genuinely simpler than the vinyl attempt, plain text the whole way.
+_SHINE_ART = [
+    "⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⡿⠟⠛⠉⢋⡛⠛⢿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿",
+    "⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⠟⠉⡴⠎⠹⣿⣷⣾⣿⣶⣬⠙⢿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿",
+    "⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⡿⠋⣰⣵⣶⣶⣦⡈⣿⣿⣿⣿⡏⣄⠸⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿",
+    "⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⡿⢁⣼⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⡄⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿",
+    "⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣧⡀⢉⣿⣿⣿⣿⣿⡿⠟⠃⣹⣿⣿⣿⣧⠘⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿",
+    "⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⠗⠐⠉⠉⠻⠿⠥⠤⠒⠛⣋⠉⢻⣿⠏⢠⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿",
+    "⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⠏⣸⣿⣿⣿⣿⣿⣿⣿⣿⣿⡿⠀⢀⠁⠐⢸⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿",
+    "⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⠰⠿⠿⠛⠛⠛⠿⠿⣿⡿⠟⢁⣴⡿⠀⢁⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿",
+    "⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣶⣿⣿⢠⣤⠄⠀⢀⠀⣀⣴⣿⣿⠇⡀⠘⠿⠿⠿⠛⠛⠛⢛⡋⠙⠻⢿⣿⣿⣿⣿",
+    "⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣆⠻⣄⠛⣋⣴⣿⣿⠟⠁⣰⣿⠆⠀⣰⣶⣶⣶⣾⣿⣿⣦⣤⡈⢿⣿⣿⣿",
+    "⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⠿⠛⣋⠉⠁⣀⠙⡤⠀⢲⡿⠃⠀⣰⣿⠖⢀⡜⣿⣿⣿⣿⣿⣿⣿⣿⣿⣧⠈⣿⣿⣿",
+    "⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⡿⠉⣡⣴⣾⣿⠉⠐⠇⠀⣆⠈⠋⠩⠀⠀⣴⠟⢁⣤⡾⣡⣾⣿⣿⣿⣿⣿⣿⣿⣿⣿⠀⣿⣿⣿",
+    "⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⡟⠀⢺⣿⣿⣿⣿⣿⣿⡁⠀⠀⡑⠄⡀⠀⢈⣤⡶⠟⣡⣴⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⠟⠀⣿⣿⣿",
+    "⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⠀⢺⣿⣿⣿⣿⣿⡏⣿⣷⣤⡀⠁⠀⠚⣋⣡⡴⠾⢋⣡⣀⣀⣉⣻⣿⣿⣿⠛⠉⠀⣸⠀⣿⣿⣿",
+    "⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⡄⠸⣿⣿⣿⣿⣿⠇⠉⢉⣡⣤⣴⣶⣿⣿⣿⣷⣶⣿⣿⣿⣿⣿⣿⣿⡿⠛⠁⢠⣾⣿⠀⣿⣿⣿",
+    "⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣇⠀⠻⡿⠟⠛⣁⣤⣤⡀⠙⠻⢿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⡿⠛⠉⠀⠀⣴⣿⣿⠇⠀⣿⣿⣿",
+    "⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⠿⠿⠛⢋⣉⣠⣴⣶⣶⣾⣿⣿⣿⣿⠦⠀⠀⠈⠙⠻⢿⣿⡿⠟⠻⠋⠁⠀⠀⠀⣠⣾⣿⣿⠏⡀⢰⣿⣿⣿",
+    "⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⠿⢀⣤⣶⣾⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣷⣤⠀⠀⠀⠀⠚⠁⠀⠀⠀⠀⢀⣾⡿⢿⣿⡟⣴⠃⣸⣿⣿⣿",
+    "⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⡿⠟⢁⣴⣿⠃⣿⣿⠿⠿⠿⠿⠿⠿⠿⠿⠿⠛⠛⠉⠥⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣠⠿⣋⣴⡿⢋⣴⠋⣠⣿⣿⣿⣿",
+    "⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⡿⠟⢩⣤⣾⣿⠿⢋⣼⠁⣶⣶⣶⣶⡆⠰⣶⣦⣤⣤⣀⡀⠀⠀⠀⣀⣠⣤⣤⣖⣠⣶⣿⣦⡄⠀⣠⣾⡿⠋⣠⣿⠏⣴⣿⣿⣿⣿⣿",
+    "⣿⣿⣿⣿⣿⣿⣿⣿⠿⠛⠛⠛⠛⠛⠛⠛⡁⢰⠟⠋⠉⠀⠾⣿⣿⠀⣿⣿⣿⣿⣧⠀⣿⣿⣿⠿⠟⠛⠛⠓⠂⠈⠻⣿⣿⣿⣿⣿⡟⢉⣴⣾⣿⠟⣡⣾⣿⡏⢰⣿⣿⣿⣿⣿⣿",
+    "⣿⣿⡿⠛⠉⠀⠀⠀⠀⠀⠀⠀⠀⠰⠶⠋⢡⠏⠀⠀⠀⠀⠀⠈⠻⠄⠉⠛⠿⣿⣿⣆⠈⢻⡿⠀⠀⠀⢀⣠⣤⣤⡀⠙⣿⠿⠋⢀⣴⣿⣿⠟⣡⣾⣿⣿⡿⠀⣿⣿⣿⣿⣿⣿⣿",
+    "⣿⣏⠀⠀⠀⠐⠒⠒⠒⠚⠛⠛⠉⠀⠀⠐⠁⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⡸⠻⢿⣿⣄⠁⠀⠀⠘⠻⣿⣿⣿⣿⡄⠀⢀⣴⣿⣿⣿⣷⣾⣿⣿⣿⣿⡇⣤⣿⣿⣿⣿⣿⣿⣿",
+    "⣙⠻⠷⡀⠄⣀⡀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠐⠄⠀⠀⠀⠀⠀⠀⡀⠠⠄⠊⠁⠀⠀⢻⣿⣧⣄⠀⠀⠀⠈⠻⣿⣿⣿⣦⡀⠉⠛⠻⠿⢿⣿⣿⣿⣿⣿⡇⢻⣿⣿⣿⣿⣿⣿⣿",
+    "⣿⣷⣦⣌⠐⠠⣍⠀⠐⠒⠒⠐⠀⠀⠀⣤⣤⡤⠀⠰⡆⠂⡂⠀⠥⠄⠒⠒⠀⠉⠀⠈⠉⠀⠀⠀⠀⠀⠀⠀⠀⠹⣿⣿⣿⣿⣶⣤⡁⠒⠦⠬⣍⡙⠛⢿⣿⡈⢿⣿⣿⣿⣿⣿⣿",
+    "⣿⣿⣿⣿⣿⣶⣤⣉⠐⠤⣀⠀⠀⠀⢦⠀⠈⢳⡀⠀⠉⠁⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠸⠀⠀⠀⠀⠈⢻⣿⠻⡟⠻⣿⣦⣀⠲⢤⡬⠉⠲⢤⣅⣈⣛⢿⣿⣿⣿⣿",
+    "⣿⣿⣿⣿⣿⣿⣿⣿⣿⣦⣄⣉⠐⠤⣀⠁⠀⠈⠀⠀⠀⠀⠒⠒⠋⠈⠉⠉⠁⠉⠉⠈⠈⠀⠀⠀⠀⠀⠀⡀⠀⠀⠀⢸⡏⠀⡇⠀⢻⡇⠙⠻⣦⣄⡀⠀⠀⣿⣿⣿⣿⣿⡿⠿⠋",
+    "⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣷⣦⣤⣈⠒⠨⢦⣀⡀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠁⠂⠀⠀⢸⠇⠀⣿⠀⠀⠻⡄⠀⠀⠀⢀⣠⣴⠿⠟⠛⠉⠀⢀⣠⣴",
+    "⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣷⣦⣤⣈⠙⠓⠶⣤⣤⣤⣀⣀⡀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠈⠀⠀⠘⣃⣀⣤⣤⡤⠶⠚⠋⠉⠀⢀⣠⣤⣴⣾⣿⣿⣿",
+    "⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣶⣦⣄⡉⠛⠻⢿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⡿⠟⠛⠋⢉⣁⣠⣤⣤⣶⣶⣿⣿⣿⣿⣿⣿⣿⣿⣿",
+    "⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣷⣶⣄⣈⠙⠻⢿⣿⣿⣿⣿⣿⡿⠿⢿⣿⣿⣿⣿⣿⣷⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿",
+    "⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣶⣤⣌⡙⠛⠉⠁⢠⣶⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿",
+    "⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⡷⠀⣀⣴⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿",
+]
+_SHINE_WIDTH = len(_SHINE_ART[0])
+_SHINE_BASE_COLOR = "#a8b0ac"
+_SHINE_HIGHLIGHT_COLOR = "#c8ffe0"
+_SHINE_BAND_HALF_WIDTH = 6
+_SHINE_STEP = 2
+_SHINE_TICK = 1 / 20
+
+
+def _render_shine_art(position):
+    """Renders _SHINE_ART with a bright highlight band swept across it at
+    `position` (a column index, wrapping circularly so the loop never jumps
+    or restarts visibly). Built row by row with run-length-grouped spans
+    (not one .append() per character) -- cheap enough to redraw at _SHINE_TICK
+    even for a 65-wide, 33-row grid."""
+    text = Text()
+    for row in _SHINE_ART:
+        run_style = None
+        run_start = 0
+        for col in range(_SHINE_WIDTH):
+            dist = abs(col - position)
+            dist = min(dist, _SHINE_WIDTH - dist)
+            style = _SHINE_HIGHLIGHT_COLOR if dist <= _SHINE_BAND_HALF_WIDTH else _SHINE_BASE_COLOR
+            if style != run_style:
+                if run_style is not None:
+                    text.append(row[run_start:col], style=run_style)
+                run_style, run_start = style, col
+        text.append(row[run_start:], style=run_style)
+        text.append("\n")
+    return text
 
 
 def _fmt_mmss(seconds):
@@ -120,10 +199,8 @@ class RadioScreen(Screen):
     #radio-prompt {{ width: 1fr; color: {_TEAL}; }}
     #radio-tty {{ width: auto; color: {_DIM}; }}
     #radio-panel {{ margin: 1 2 1 2; border: round {_BOX_BORDER}; background: {_PANEL_BG}; padding: 0 2 1 2; height: 1fr; }}
-    #radio-header-row {{ height: auto; margin-top: 1; }}
-    #radio-vinyl {{ width: {_VINYL_WIDGET_WIDTH}; height: auto; margin-right: 2; }}
-    #radio-info-col {{ width: 1fr; height: auto; }}
-    #radio-title-row {{ height: 1; }}
+    #radio-shine {{ height: auto; margin-top: 1; margin-bottom: 1; }}
+    #radio-title-row {{ height: 1; margin-top: 1; }}
     #radio-cliamp {{ width: 1fr; color: {_TEAL}; text-style: bold; }}
     #radio-playlist-tag {{ width: auto; color: {_DIM}; }}
     #radio-now {{ color: white; text-style: bold; height: 1; margin-top: 1; }}
@@ -146,9 +223,7 @@ class RadioScreen(Screen):
         self.favorites = set(radio_state["favorites"])
         self.shuffle = radio_state["shuffle"]
         self.repeat = radio_state["repeat"]
-        self.vinyl_widget = None
-        self._vinyl_frames = None
-        self._vinyl_frame_index = 0
+        self._shine_position = 0
         self._last_paused = False
 
     def compose(self) -> ComposeResult:
@@ -161,32 +236,18 @@ class RadioScreen(Screen):
             self.topbar_state = Static("■  tty1", id="radio-tty")
             yield self.topbar_state
         with Vertical(id="radio-panel"):
-            with Horizontal(id="radio-header-row"):
-                if radio.has_vinyl_support():
-                    # HalfcellImage specifically, not AutoImage -- confirmed
-                    # by hand this renders correctly (real color, no garbled
-                    # output) on any terminal, since it's plain Unicode half-
-                    # block characters + ANSI color, no Kitty/iTerm2/Sixel
-                    # graphics protocol support required. AutoImage would
-                    # look sharper on a terminal that does support one of
-                    # those, but there's no way to verify that actually
-                    # renders correctly for everyone from this environment,
-                    # and a broken/blank image would be a worse outcome than
-                    # a slightly-blockier-but-guaranteed-working one.
-                    from textual_image.widget import HalfcellImage
-                    self.vinyl_widget = HalfcellImage(id="radio-vinyl")
-                    yield self.vinyl_widget
-                with Vertical(id="radio-info-col"):
-                    with Horizontal(id="radio-title-row"):
-                        yield Static("C L I A M P", id="radio-cliamp")
-                        yield Static("[Playlist]", id="radio-playlist-tag")
-                    self.now_line = Static("♪ Nothing playing -- Enter to start a station", id="radio-now")
-                    yield self.now_line
-                    with Horizontal(id="radio-time-row"):
-                        self.time_line = Static("--:-- / LIVE", id="radio-time")
-                        yield self.time_line
-                        self.state_line = Static("■ Stopped", id="radio-state")
-                        yield self.state_line
+            self.shine_widget = Static(_render_shine_art(0), id="radio-shine")
+            yield self.shine_widget
+            with Horizontal(id="radio-title-row"):
+                yield Static("C L I A M P", id="radio-cliamp")
+                yield Static("[Playlist]", id="radio-playlist-tag")
+            self.now_line = Static("♪ Nothing playing -- Enter to start a station", id="radio-now")
+            yield self.now_line
+            with Horizontal(id="radio-time-row"):
+                self.time_line = Static("--:-- / LIVE", id="radio-time")
+                yield self.time_line
+                self.state_line = Static("■ Stopped", id="radio-state")
+                yield self.state_line
             self.visualizer = Static("", id="radio-visualizer")
             yield self.visualizer
             self.stream_divider = Static("", id="radio-stream-divider")
@@ -217,39 +278,21 @@ class RadioScreen(Screen):
         # if mpv is ever slow to respond.
         self.set_interval(1 / 12, self._redraw_visualizer)
         self.set_interval(0.5, self._update_status)
-        if self.vinyl_widget is not None:
-            self._load_vinyl_frames()
+        self.set_interval(_SHINE_TICK, self._advance_shine)
 
-    def _load_vinyl_frames(self):
-        try:
-            self._vinyl_frames = radio.extract_vinyl_frames()
-        except RuntimeError:
-            # Extraction genuinely failed (corrupt asset, ffmpeg misbehaving)
-            # -- has_vinyl_support() already confirmed the happy path should
-            # work, so this is a real, if rare, failure. Drop the widget
-            # rather than leave a broken/blank image box sitting in the
-            # layout for the rest of the session.
-            self.vinyl_widget.remove()
-            self.vinyl_widget = None
-            return
-        self.vinyl_widget.image = self._vinyl_frames[0]
-        self.set_interval(1 / radio._VINYL_FPS, self._advance_vinyl)
-
-    def _advance_vinyl(self):
-        """Only actually spins while a station is genuinely playing --
-        freezes in place on pause (like a real turntable's needle stopping
-        where it is, not resetting), and parks back on frame 0 once nothing
-        is playing at all. Reads self._last_paused (cached by _update_status)
-        rather than querying the mpv IPC socket itself -- see that method's
-        comment for why this ticks too often for a fresh round trip each
-        time."""
-        if not self._vinyl_frames:
-            return
+    def _advance_shine(self):
+        """Only actually sweeps while a station is genuinely playing --
+        freezes in place on pause (mirrors the same "freeze, don't reset"
+        interaction the earlier vinyl-spin attempt used), and parks back at
+        position 0 once nothing is playing at all. Reads self._last_paused
+        (cached by _update_status) rather than querying the mpv IPC socket
+        itself -- see that method's comment for why this ticks too often for
+        a fresh round trip each time."""
         if not self.player.is_playing():
-            self._vinyl_frame_index = 0
+            self._shine_position = 0
         elif not self._last_paused:
-            self._vinyl_frame_index = (self._vinyl_frame_index + 1) % len(self._vinyl_frames)
-        self.vinyl_widget.image = self._vinyl_frames[self._vinyl_frame_index]
+            self._shine_position = (self._shine_position + _SHINE_STEP) % _SHINE_WIDTH
+        self.shine_widget.update(_render_shine_art(self._shine_position))
 
     def _render_help(self):
         text = Text()
@@ -295,7 +338,7 @@ class RadioScreen(Screen):
         station = self.player.current_station()
         playing = self.player.is_playing()
         paused = playing and self.player.is_paused()
-        # Cached for _advance_vinyl, which ticks at _VINYL_FPS (8/sec) --
+        # Cached for _advance_shine, which ticks at 1 / _SHINE_TICK (20/sec) --
         # querying mpv's IPC socket for is_paused() that often, instead of
         # reusing this slower (0.5/sec) poll's already-fetched value, would
         # reintroduce the same "frequent blocking round trip on Textual's
