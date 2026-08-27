@@ -260,13 +260,21 @@ async def test_radio_screen_opens_via_keybinding_and_plays_on_enter():
 
         with patch("mtdo.radio.has_mpv", return_value=True):
             await pilot.press("R")
-        await pilot.pause()
+            await pilot.pause()
         assert isinstance(app.screen, RadioScreen)
 
+        # ListView's Enter -> its own internal handling -> a Selected message
+        # -> on_list_view_selected is (at least) two message-pump hops, not
+        # one -- confirmed on CI (Linux): patching only around press("enter")
+        # let the second hop's actual player.start() call land *after* the
+        # patch context had already exited, silently falling through to a
+        # real, unmocked subprocess.Popen(["mpv", ...]) (which doesn't exist
+        # on a CI runner). The patch has to cover pilot.pause() too, not just
+        # press(), for any binding that isn't a single direct key->action hop.
         with patch("mtdo.radio.subprocess.Popen", side_effect=_mock_popen_pair()), \
              patch("mtdo.radio.threading.Thread"):
             await pilot.press("enter")
-        await pilot.pause()
+            await pilot.pause()
 
         assert app.radio_player.is_playing() is True
         assert app.radio_player.current_station() == radio.STATIONS[0]
@@ -287,7 +295,7 @@ async def test_radio_keybinding_without_mpv_toasts_and_does_not_open():
 
         with patch("mtdo.radio.has_mpv", return_value=False):
             await pilot.press("R")
-        await pilot.pause()
+            await pilot.pause()
 
         assert not isinstance(app.screen, RadioScreen)
         assert "mpv" in app.query_one(ToastLine).content.plain.lower()
@@ -300,7 +308,7 @@ async def test_favoriting_a_station_persists_across_reopening_the_screen():
 
         with patch("mtdo.radio.has_mpv", return_value=True):
             await pilot.press("R")
-        await pilot.pause()
+            await pilot.pause()
         await pilot.press("f")
         await pilot.pause()
         assert app.screen.favorites == {0}
@@ -309,5 +317,5 @@ async def test_favoriting_a_station_persists_across_reopening_the_screen():
         await pilot.pause()
         with patch("mtdo.radio.has_mpv", return_value=True):
             await pilot.press("R")
-        await pilot.pause()
+            await pilot.pause()
         assert app.screen.favorites == {0}
