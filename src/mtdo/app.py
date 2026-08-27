@@ -20,11 +20,13 @@ from . import ai_backend
 from . import ai_ask
 from . import youtube_notes
 from . import music
+from . import radio
 from . import plan_wizard
 from . import bug_log
 from . import profiles as pf
 from .claude_panel import ClaudePanel
 from .practice_lab_panel import PracticeLabPanel
+from .radio_screen import RadioScreen
 from .errorlog import LOG_PATH, log as app_log
 
 from textual.app import App, ComposeResult
@@ -2736,6 +2738,8 @@ class TodoApp(App):
     KanbanColumnList { height: 1fr; padding: 0 1; }
     #right-col { width: 1fr; overflow-y: auto; }
     PomodoroPanel, ActiveTaskPanel, NowPlayingPanel { height: auto; }
+    #enter-radio-btn { width: 100%; height: 3; background: #1a0d2e; color: #ff2d95; border: round #7c5cff; }
+    #enter-radio-btn:hover { background: #2a1550; }
     StatsPanel, CalendarPanel { height: auto; }
     #stats-scroll, #calendar-scroll { height: auto; max-height: 8; }
     #coach-claude-row { height: 1fr; }
@@ -2770,6 +2774,7 @@ class TodoApp(App):
         ("g", "plan_wizard", "Setup Plan"),
         ("S", "save_ai_transcript", "Save AI Transcript"),
         ("T", "toggle_practice_terminal", "Practice Lab"),
+        ("R", "open_radio", "Radio"),
     ] + ([("B", "report_bug", "Report Bug")] if SANDBOX_INSTANCE_MODE else [])
 
     def __init__(self):
@@ -2810,6 +2815,13 @@ class TodoApp(App):
             self._goals_mtime = os.path.getmtime(appconfig.GOALS_PATH)
         except OSError:
             self._goals_mtime = None
+        # One shared RadioPlayer for the whole app run, owned here (not by
+        # RadioScreen) specifically so playback survives closing and reopening
+        # that screen -- it's a "session" you dip in and out of, not something
+        # tied to the screen's own lifetime. Stopped explicitly on quit (see
+        # _stop_claude_and_exit) so mpv/ffmpeg never survive as orphaned
+        # background processes after mtdo exits.
+        self.radio_player = radio.RadioPlayer()
 
     def compose(self) -> ComposeResult:
         yield ClockHeader()
@@ -2832,6 +2844,7 @@ class TodoApp(App):
                 yield self.pomo_panel
                 self.music_panel = NowPlayingPanel()
                 yield self.music_panel
+                yield Button("🎧 Enter Radio Session", id="enter-radio-btn")
                 with Horizontal(id="coach-claude-row"):
                     self.coach_scroll = VerticalScroll(id="coach-scroll")
                     with self.coach_scroll:
@@ -3413,6 +3426,10 @@ class TodoApp(App):
             self.claude_panel.stop()
         except Exception:
             app_log.exception("failed to stop claude panel on quit")
+        try:
+            self.radio_player.stop()
+        except Exception:
+            app_log.exception("failed to stop radio player on quit")
         self.exit()
 
     def _on_save_instance_choice(self, result):
@@ -3442,6 +3459,19 @@ class TodoApp(App):
 
     def action_open_vault(self):
         self.push_screen(VaultScreen(self), callback=lambda _r=None: self.refresh_side_panels())
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "enter-radio-btn":
+            self.action_open_radio()
+
+    def action_open_radio(self):
+        if not radio.has_mpv():
+            self.toast(
+                f"Radio needs mpv -- run `{radio.MPV_INSTALL_HINT}`, then try again.",
+                style="bold red",
+            )
+            return
+        self.push_screen(RadioScreen(self.radio_player))
 
     def _refresh_profile_footer(self):
         if self.profile_footer is not None:

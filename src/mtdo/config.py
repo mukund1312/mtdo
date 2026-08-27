@@ -23,6 +23,35 @@ STATE_PATH = os.path.join(APP_DIR, "state.json")
 REPORTS_DIR = os.path.join(APP_DIR, "reports")
 ONBOARDED_PATH = os.path.join(APP_DIR, "onboarded")
 USER_NAME_PATH = os.path.join(APP_DIR, "user_name")
+RADIO_STATE_PATH = os.path.join(APP_DIR, "radio_state.json")
+
+_EMPTY_RADIO_STATE = {"favorites": [], "last_station": None, "shuffle": False, "repeat": "off"}
+
+
+def load_radio_state():
+    """Favorites/last-played/shuffle/repeat for the internal radio player
+    (radio.py) -- a plain JSON blob, not a marker file (has_onboarded()'s
+    pattern doesn't fit a list+index+enum shape) and not state.json (that's
+    reserved for real tracked task/streak data, not a UI preference). Missing
+    or unreadable returns a fresh empty state rather than raising -- this is
+    convenience data, not something a corrupt file should ever block the app
+    over."""
+    if not os.path.exists(RADIO_STATE_PATH):
+        return copy.deepcopy(_EMPTY_RADIO_STATE)
+    try:
+        with open(RADIO_STATE_PATH) as f:
+            data = json.load(f)
+    except (OSError, ValueError):
+        return copy.deepcopy(_EMPTY_RADIO_STATE)
+    state = copy.deepcopy(_EMPTY_RADIO_STATE)
+    state.update({k: v for k, v in data.items() if k in state})
+    return state
+
+
+def save_radio_state(state):
+    os.makedirs(APP_DIR, exist_ok=True)
+    with open(RADIO_STATE_PATH, "w") as f:
+        json.dump(state, f, indent=2)
 
 
 def get_user_name():
