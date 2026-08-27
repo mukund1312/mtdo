@@ -192,6 +192,33 @@ def _parse_mediaremote_timestamp(value):
 # repeatedly (every second, from TodoApp's own tick) by the one running process.
 _fallback_snapshot = {"identifier": None, "elapsed": None, "seen_at": None}
 
+# gh55: apps we can ask directly, via AppleScript, for their real play/pause
+# state -- keyed by the ClientBundleIdentifier MediaRemote reports. Used only
+# when PlaybackRate is absent (see _nowplaying_cli_info) to override the
+# "assume playing" guess below with ground truth for these two.
+_APPLESCRIPT_PLAYER_APPS = {
+    "com.spotify.client": "Spotify",
+    "com.apple.Music": "Music",
+}
+
+
+def _apple_script_is_playing(bundle_id):
+    """True/False if `bundle_id` is a known app we can directly ask for its real
+    player state -- None if it's some other app we have no such query for, or the
+    query itself fails (e.g. the app quit despite still being MediaRemote's
+    last-known Now Playing owner). Only called when PlaybackRate is absent."""
+    app_name = _APPLESCRIPT_PLAYER_APPS.get(bundle_id)
+    if app_name is None:
+        return None
+    try:
+        state = subprocess.check_output(
+            ["osascript", "-e", f'tell application "{app_name}" to player state as string'],
+            stderr=subprocess.DEVNULL, timeout=3,
+        ).decode().strip()
+    except Exception:
+        return None
+    return state == "playing"
+
 
 def _nowplaying_cli_info():
     """Uses `get-raw` (the full MediaRemote dict), not `get --json <keys>` -- confirmed
@@ -208,11 +235,21 @@ def _nowplaying_cli_info():
     sources, e.g. YouTube Music web, never publish one), fall back to extrapolating
     from our own wall clock instead, using the moment we first observed the current
     elapsed value as the substitute timestamp (see _fallback_snapshot above) --
-    same idea, just backed by our own clock rather than the source's. Spotify's own
-    entries include neither Timestamp nor a useful Rate for this (confirmed by hand),
-    but the fallback path still applies there via the identifier+elapsed tracking,
-    so this also fixes what used to be Spotify-specific staleness between its own
-    snapshot pushes, not just the WebKit case gh18 actually reported."""
+    same idea, just backed by our own clock rather than the source's.
+
+    gh55: PlaybackRate being absent does NOT reliably mean "this source never
+    publishes one" (gh18's original assumption, based on Spotify never including
+    it either at the time) -- confirmed live that Spotify (via nowplaying-cli)
+    actually publishes Rate:1 while genuinely playing and drops the key entirely
+    while paused, so treating "absent" as "assume playing" made the position keep
+    ticking forward via the fallback clock for the entire time the track was
+    actually paused, then visibly jump back down to the real position on resume
+    (exactly the reported bug: "even when i stop the music player... the time
+    goes on... when i play the song again the timer... back where it paused").
+    For the two apps we can directly ask (_APPLESCRIPT_PLAYER_APPS), that real
+    state now overrides the guess; for anything else (e.g. a WebKit tab with
+    truly no Rate field even while playing, gh18's actual original case) the old
+    "assume playing" guess is the only option left and is unchanged."""
     try:
         result = subprocess.run(
             ["nowplaying-cli", "get-raw"], capture_output=True, text=True, timeout=3,
@@ -229,7 +266,12 @@ def _nowplaying_cli_info():
     rate = data.get("kMRMediaRemoteNowPlayingInfoPlaybackRate")
     timestamp = data.get("kMRMediaRemoteNowPlayingInfoTimestamp")
     identifier = data.get("kMRMediaRemoteNowPlayingInfoUniqueIdentifier")
-    playing = rate is None or float(rate) > 0  # no rate published (e.g. Spotify) -- assume playing
+    playing = rate is None or float(rate) > 0  # no rate published -- assume playing, unless...
+    if rate is None:
+        bundle_id = data.get("kMRMediaRemoteNowPlayingInfoClientBundleIdentifier")
+        known_state = _apple_script_is_playing(bundle_id)
+        if known_state is not None:
+            playing = known_state  # ...we can just ask this app directly (gh55)
 
     position = elapsed
     used_source_timestamp = False
