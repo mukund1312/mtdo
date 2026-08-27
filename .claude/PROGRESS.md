@@ -9,6 +9,52 @@ Add each session's PROGRESS.md entry to the same branch as the code it describes
 
 ---
 
+## 2026-08-27 (bug gh55, GH mukund1312/mtdo-bugs#55, PR https://github.com/mukund1312/mtdo/pull/42) -- now-playing timer kept advancing while paused, then jumped back on resume
+
+Bug, verbatim: "even when i stop the music player by pressing m the time goes
+on and then when i play the song again the timer again back where it paused
+previously and then start playing the time has to stop when i pause and start
+when i play."
+
+Root-caused live against a real, currently-playing Spotify session -- not
+simulated. `nowplaying-cli get-raw`'s `PlaybackRate` key is present (e.g. `1`)
+while genuinely playing and **disappears from the payload entirely** while
+paused, confirmed by toggling real play/pause via `nowplaying-cli` and diffing
+`get-raw`'s output each time. gh18's fallback-clock logic (2026-08-25) treated
+a missing `PlaybackRate` as "assume playing," based on that commit's own
+hand-testing at the time concluding Spotify never publishes one at all --
+apparently true then, not true now (a Spotify update, a macOS change, or just
+incomplete original testing; either way, today's ground truth is what matters).
+That "assume playing" default made the position keep advancing via our own
+gh18 extrapolation clock for the entire time a track was actually paused --
+`m` correctly paused real playback but the *displayed* timer had no idea --
+then visibly snapped back down to the real position once a fresh, correct
+elapsed value arrived on resume. Exactly the reported symptom, reproduced
+byte-for-byte before writing any fix.
+
+**Fix (`music.py`):** added `_APPLESCRIPT_PLAYER_APPS` (Spotify, Apple Music)
+and `_apple_script_is_playing(bundle_id)`, which asks the app directly via
+`player state as string` -- confirmed live this correctly reports "paused" and
+"playing" at the exact moments `get-raw`'s own payload can't tell the
+difference. `_nowplaying_cli_info()` now calls this only when `PlaybackRate` is
+absent, overriding the "assume playing" guess with real ground truth for these
+two apps; anything else (e.g. a WebKit browser tab -- gh18's actual original
+case, no AppleScript equivalent to ask) keeps the old guess unchanged, since
+there's genuinely no better signal available for it.
+
+**Tested:** live end-to-end against the real, currently-playing Spotify
+session: paused via `music.play_pause()`, polled `music.now_playing()` every
+~2s for 10s -- position stayed frozen exactly (previously climbed
+continuously) -- then resumed and confirmed it continued from that exact
+frozen point with no backward jump. Added 6 new regression tests to
+`test_music.py`, matching its existing mocked style (real playback state isn't
+reproducible in CI): `_apple_script_is_playing`'s three outcomes, paused-
+Spotify-freezes, resumed-Spotify-advances, and unknown-app-still-assumes-
+playing (confirms gh18's original WebKit case is unaffected). Full suite: 69
+passed, 1 skipped, in a scratch venv.
+
+---
+
 ## 2026-08-27 (bug gh53, GH mukund1312/mtdo-bugs#53, PR https://github.com/mukund1312/mtdo/pull/41) -- offer to save the recovery code locally, protected or not
 
 Bug, verbatim: "user should be given choice to save the recovery code in local
