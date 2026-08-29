@@ -16,6 +16,7 @@ import datetime
 import json
 import os
 
+from . import analytics
 from . import config as appconfig
 
 DAY_NAMES = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
@@ -366,6 +367,19 @@ def advance_status(state, date_key, category, idx):
     blk["status"] = new_status
     if new_status == STATUS_DONE and category == "jobs":
         _maybe_link_job_to_crm(state, blk)
+    if new_status != cur:
+        ref = analytics.task_ref(date_key, category, idx)
+        if new_status == STATUS_DONE:
+            analytics.record(
+                "task_completed", task_ref=ref,
+                elapsed_seconds=blk.get("elapsed_seconds", 0),
+                was_carried_from_backlog=bool(blk.get("claimed")),
+            )
+        else:
+            analytics.record(
+                "task_advanced", task_ref=ref, from_status=cur, to_status=new_status,
+                carried=bool(blk.get("claimed")),
+            )
     return new_status
 
 
@@ -410,6 +424,11 @@ def regress_status(state, date_key, category, idx):
         blk["started_at"] = datetime.datetime.now().isoformat()
         blk["completed_at"] = None
     blk["status"] = new_status
+    if new_status != cur:
+        analytics.record(
+            "task_regressed", task_ref=analytics.task_ref(date_key, category, idx),
+            from_status=cur, to_status=new_status,
+        )
     return new_status
 
 

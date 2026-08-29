@@ -40,6 +40,10 @@ Already have everything installed and would rather do it by hand?
 pip install -e .          # from a clone of this repo
 ```
 
+On first run, mtdo asks once whether to turn on local, opt-in usage analytics
+(off by default, never sent anywhere) -- see [PRIVACY.md](PRIVACY.md) for exactly
+what that does and doesn't collect.
+
 ## Quickstart
 
 ```bash
