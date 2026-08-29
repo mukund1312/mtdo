@@ -1,0 +1,1377 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>mtdo Live Terminal</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  /* mtdo is a single dark terminal world by design (matches the shipped docs/index.html
+     brand) — no light variant, background/colors are always painted explicitly. */
+  :root {
+    --bg: #060807; --panel: #0c0f0d; --panel-2: #0a0c0b; --panel-raise: #0f1614;
+    --border: #1c2622; --border-soft: #141a17;
+    --text: #d8ded9; --text-dim: #7c8c83; --text-dimmer: #46524b;
+    --accent: #39ff88; --accent-soft: #1f6b45; --accent-glow: rgba(57,255,136,0.18);
+    --cyan: #5fb3d9; --gold: #e0b34d; --violet: #a684e8; --red: #ff6b6b;
+    --font-mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    --font-sans: "IBM Plex Sans", -apple-system, "Segoe UI", sans-serif;
+    color-scheme: dark;
+  }
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  html, body { background: var(--bg); }
+  body {
+    margin: 0; color: var(--text); font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased; overflow-x: hidden;
+  }
+  ::selection { background: var(--accent-soft); color: #fff; }
+  a { color: inherit; }
+  h1, h2, h3 { font-family: var(--font-mono); text-wrap: balance; margin: 0; }
+  p { margin: 0; }
+
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }
+    html { scroll-behavior: auto; }
+  }
+
+  /* page-wide scanline texture, subtle */
+  .scan { position: fixed; inset: 0; pointer-events: none; z-index: 60; }
+  .scan::before {
+    content: ""; position: absolute; inset: 0;
+    background: repeating-linear-gradient(to bottom, rgba(255,255,255,0.012) 0px, rgba(255,255,255,0.012) 1px, transparent 1px, transparent 3px);
+    mix-blend-mode: overlay;
+  }
+
+  .eyebrow { font-family: var(--font-mono); font-size: 11.5px; letter-spacing: .14em; color: var(--accent); text-transform: uppercase; }
+  .kbd { display: inline-block; font-family: var(--font-mono); font-size: 11px; color: var(--accent); background: rgba(57,255,136,0.08); border: 1px solid var(--accent-soft); padding: 1px 6px; border-radius: 4px; }
+
+  /* ---------- reveal-on-scroll ---------- */
+  .reveal { opacity: 0; transform: translateY(14px); transition: opacity .6s ease, transform .6s ease; }
+  .reveal.in { opacity: 1; transform: translateY(0); }
+
+  /* ---------- nav ---------- */
+  .topnav {
+    position: sticky; top: 0; z-index: 40; display: flex; align-items: center; justify-content: space-between;
+    padding: 16px clamp(20px, 5vw, 64px); background: rgba(6,8,7,0.82); backdrop-filter: blur(8px);
+    border-bottom: 1px solid var(--border-soft);
+  }
+  .brand { font-family: var(--font-mono); font-weight: 600; font-size: 16px; text-decoration: none; color: var(--text); letter-spacing: .01em; }
+  .brand span { color: var(--accent); }
+  .navlinks { display: flex; align-items: center; gap: 28px; font-family: var(--font-mono); font-size: 13px; }
+  .navlinks a { text-decoration: none; color: var(--text-dim); transition: color .15s ease; }
+  .navlinks a:hover, .navlinks a:focus-visible { color: var(--accent); }
+  .navlinks a:focus-visible { outline: 1px solid var(--accent-soft); outline-offset: 4px; }
+
+  /* ---------- hero ---------- */
+  .hero {
+    max-width: 880px; margin: 0 auto; padding: clamp(56px, 10vw, 108px) 24px clamp(40px, 6vw, 72px);
+    text-align: center; display: flex; flex-direction: column; align-items: center; gap: 22px;
+    position: relative;
+  }
+  .hero::before {
+    content: ""; position: absolute; top: -10%; left: 50%; width: 640px; height: 420px; transform: translateX(-50%);
+    background: radial-gradient(ellipse at center, var(--accent-glow), transparent 68%);
+    filter: blur(10px); z-index: -1; animation: heroBloom 2.2s ease-out;
+  }
+  @keyframes heroBloom { 0% { opacity: 0; } 35% { opacity: 1; } 100% { opacity: .7; } }
+  .hero h1 { font-size: clamp(30px, 5vw, 48px); line-height: 1.2; font-weight: 600; animation: bootFlicker .7s ease-out; }
+  .hero h1 .accentText { color: var(--accent); }
+  @keyframes bootFlicker { 0% { opacity: 0; transform: translateY(6px); } 55% { opacity: 1; } 100% { opacity: 1; transform: translateY(0); } }
+  .lede { max-width: 62ch; font-size: 16px; line-height: 1.65; color: var(--text-dim); }
+  .ctaRow { display: flex; gap: 14px; flex-wrap: wrap; justify-content: center; margin-top: 6px; }
+  .btn {
+    font-family: var(--font-mono); font-size: 13.5px; padding: 11px 22px; border-radius: 7px; text-decoration: none;
+    border: 1px solid var(--border); transition: transform .15s ease, border-color .15s ease, background .15s ease;
+  }
+  .btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .btn-primary { background: var(--accent); color: #04140a; border-color: var(--accent); font-weight: 600; }
+  .btn-primary:hover { transform: translateY(-1px); box-shadow: 0 8px 24px -8px var(--accent-glow); }
+  .btn-ghost { color: var(--text-dim); }
+  .btn-ghost:hover { border-color: var(--accent-soft); color: var(--text); }
+
+  /* ---------- repl section (reused terminal chrome) ---------- */
+  .repl-section { max-width: 1080px; margin: 0 auto; padding: 0 20px 96px; }
+  .replHint { text-align: center; font-family: var(--font-mono); font-size: 12.5px; color: var(--text-dimmer); margin-bottom: 14px; }
+  .term-frame {
+    width: 100%; height: min(70vh, 620px); background: var(--panel); border: 1px solid var(--border); border-radius: 10px;
+    display: flex; flex-direction: column; overflow: hidden;
+    box-shadow: 0 40px 100px -30px rgba(0,0,0,0.8), 0 0 0 1px rgba(57,255,136,0.04), 0 0 60px -20px var(--accent-glow);
+    transition: box-shadow .3s ease;
+  }
+  .term-frame.pulse { box-shadow: 0 40px 100px -30px rgba(0,0,0,0.8), 0 0 0 1px var(--accent-soft), 0 0 90px -10px var(--accent-glow); }
+  .term-topbar { display: flex; align-items: center; gap: 10px; padding: 10px 14px; background: var(--panel-2); border-bottom: 1px solid var(--border-soft); flex-shrink: 0; }
+  .dot { width: 10px; height: 10px; border-radius: 50%; }
+  .dot.r { background: #4a2d2d; } .dot.y { background: #4a3f22; } .dot.g { background: #234a2e; }
+  .term-title { font-family: var(--font-mono); font-size: 12px; color: var(--text-dimmer); margin: 0 auto; letter-spacing: .02em; }
+  .term-clock { font-family: var(--font-mono); font-size: 11.5px; color: var(--text-dimmer); }
+  .term-output { flex: 1; overflow-y: auto; padding: 18px 22px 6px; font-family: var(--font-mono); font-size: 13px; line-height: 1.65; scrollbar-width: thin; scrollbar-color: var(--border) transparent; }
+  .term-output::-webkit-scrollbar { width: 8px; }
+  .term-output::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
+  .cmd-line { margin: 14px 0 6px; color: var(--text); }
+  .cmd-line .prompt { color: var(--accent); }
+  .cmd-line .path { color: var(--violet); }
+  .cmd-line .typed { color: var(--text); }
+  .out-block { margin: 0 0 4px; opacity: 0; transform: translateY(6px); transition: opacity .35s ease, transform .35s ease; }
+  .out-block.show { opacity: 1; transform: translateY(0); }
+  .out-block p { margin: 2px 0; color: var(--text-dim); }
+  .out-block .hl { color: var(--accent); } .out-block .hl2 { color: var(--gold); } .out-block .hl3 { color: var(--cyan); } .out-block .hl4 { color: var(--violet); }
+  .out-block .dim { color: var(--text-dimmer); } .out-block .err { color: var(--red); } .out-block b { color: var(--text); font-weight: 600; }
+  .term-inputrow { display: flex; align-items: center; gap: 8px; padding: 12px 22px 16px; flex-shrink: 0; border-top: 1px solid var(--border-soft); background: var(--panel); }
+  .term-prompt { font-family: var(--font-mono); color: var(--accent); font-size: 13px; white-space: nowrap; }
+  .term-path { font-family: var(--font-mono); color: var(--violet); font-size: 13px; }
+  #cmdInput { flex: 1; background: transparent; border: none; outline: none; color: var(--text); font-family: var(--font-mono); font-size: 13.5px; caret-color: var(--accent); }
+  #cmdInput::placeholder { color: var(--text-dimmer); }
+  .touring-badge { font-family: var(--font-mono); font-size: 11px; color: var(--gold); border: 1px solid #4a3f22; border-radius: 4px; padding: 2px 8px; white-space: nowrap; animation: pulseB 1.4s ease-in-out infinite; }
+  @keyframes pulseB { 0%,100% { opacity: .6; } 50% { opacity: 1; } }
+  .box { border: 1px solid var(--border); border-radius: 8px; overflow: hidden; margin: 10px 0 16px; background: #050706; }
+  .box-head { padding: 6px 12px; border-bottom: 1px solid var(--border-soft); color: var(--text-dimmer); font-size: 11.5px; display: flex; justify-content: space-between; }
+  .box-body { padding: 12px 14px; }
+  .kgrid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; }
+  .kcol-head { font-size: 10.5px; text-align: center; padding-bottom: 6px; text-transform: uppercase; letter-spacing: .07em; }
+  .kcol { border-radius: 5px; padding: 7px; min-height: 92px; }
+  .kcol.backlog { border: 1px solid #2a2a2a; } .kcol.backlog .kcol-head { color: #6a6a6a; }
+  .kcol.todo { border: 1px solid #145; } .kcol.todo .kcol-head { color: var(--cyan); }
+  .kcol.progress { border: 1px solid #542; } .kcol.progress .kcol-head { color: var(--gold); }
+  .kcol.done { border: 1px solid #142; } .kcol.done .kcol-head { color: var(--accent); }
+  .kcard { background: #101010; border-radius: 3px; padding: 5px 7px; margin-bottom: 5px; color: #ccc; font-size: 11px; }
+  .focusgrid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; }
+  .fpane { border: 1px solid #262626; border-radius: 6px; padding: 10px; min-height: 100px; }
+  .fpane .t { font-size: 10.5px; margin-bottom: 6px; color: var(--violet); }
+  .fpane .t.ai { color: var(--accent); } .fpane .t.pomo { color: var(--gold); }
+  .fpane div.l { font-size: 10.5px; color: #999; margin-bottom: 3px; }
+  .pipeline { display: flex; align-items: center; }
+  .pstage { flex: 1; text-align: center; padding: 9px 4px; border: 1px solid #262626; border-radius: 5px; color: #888; font-size: 11px; }
+  .pstage.on { border-color: var(--accent); color: var(--accent); box-shadow: 0 0 14px -4px var(--accent-glow); }
+  .parrow { color: var(--text-dimmer); padding: 0 6px; }
+  .typing-cursor { display: inline-block; width: 7px; height: 13px; background: var(--accent); vertical-align: -2px; animation: blink 1s steps(1) infinite; }
+  @keyframes blink { 50% { opacity: 0; } }
+  .glitch { animation: glitchOut .18s steps(2); }
+  @keyframes glitchOut { 0% { filter: none; } 40% { filter: brightness(2) hue-rotate(20deg); } 100% { filter: none; } }
+  .next { color: var(--text-dim); margin-top: 8px !important; padding-top: 8px; border-top: 1px dashed var(--border-soft); }
+  .next .arrow { color: var(--accent); }
+  .codeblock { font-size: 11.5px; line-height: 1.7; white-space: pre-wrap; }
+  .codeblock .kw { color: var(--cyan); } .codeblock .tp { color: var(--gold); } .codeblock .cm { color: var(--text-dimmer); }
+  .qa .q { color: var(--text-dim); } .qa .a { color: var(--accent); margin-left: 14px; }
+  .badge { display: inline-block; font-size: 10px; padding: 1px 6px; border-radius: 3px; text-transform: uppercase; letter-spacing: .06em; }
+  .badge.wrong { color: var(--red); border: 1px solid #4a2d2d; } .badge.right { color: var(--accent); border: 1px solid var(--accent-soft); }
+
+  /* ---------- features ---------- */
+  .features { max-width: 1140px; margin: 0 auto; padding: 40px 24px 96px; }
+  .sectionHead { text-align: center; display: flex; flex-direction: column; gap: 10px; margin-bottom: 44px; }
+  .sectionHead h2 { font-size: clamp(24px, 3.4vw, 32px); }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 18px; }
+  .feature-card {
+    background: var(--panel-raise); border: 1px solid var(--border); border-radius: 10px; padding: 18px;
+    display: flex; flex-direction: column; gap: 10px; transition: border-color .2s ease, transform .2s ease;
+  }
+  .feature-card:hover { border-color: var(--fc-accent, var(--accent-soft)); transform: translateY(-2px); }
+  .fc-head { display: flex; align-items: center; justify-content: space-between; }
+  .fc-cmd { font-family: var(--font-mono); font-size: 12px; color: var(--fc-accent, var(--accent)); }
+  .fc-tag { font-family: var(--font-mono); font-size: 9.5px; text-transform: uppercase; letter-spacing: .08em; color: var(--text-dimmer); border: 1px solid var(--border); padding: 2px 6px; border-radius: 3px; }
+  .feature-card h3 { font-size: 15.5px; }
+  .feature-card p.desc { font-family: var(--font-sans); font-size: 13.5px; line-height: 1.55; color: var(--text-dim); }
+  .fc-demo {
+    margin-top: auto; background: #050706; border: 1px solid var(--border-soft); border-radius: 6px; padding: 10px 12px;
+    font-family: var(--font-mono); font-size: 11.5px; line-height: 1.6; color: var(--text-dim); min-height: 78px;
+  }
+  .fc-demo .l1 { color: var(--fc-accent, var(--accent)); }
+  .fc-run {
+    font-family: var(--font-mono); font-size: 11.5px; background: transparent; border: 1px solid var(--border);
+    color: var(--text-dim); border-radius: 5px; padding: 6px 10px; cursor: pointer; align-self: flex-start; margin-top: 2px;
+    transition: border-color .15s ease, color .15s ease;
+  }
+  .fc-run:hover, .fc-run:focus-visible { border-color: var(--fc-accent, var(--accent)); color: var(--fc-accent, var(--accent)); }
+
+  /* ---------- install ---------- */
+  .install { max-width: 980px; margin: 0 auto; padding: 20px 24px 100px; }
+  .installGrid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-top: 30px; }
+  .installCol { display: flex; flex-direction: column; gap: 10px; }
+  .installLabel { font-family: var(--font-mono); font-size: 12px; color: var(--text-dim); }
+  .codeblock-panel { position: relative; background: #050706; border: 1px solid var(--border); border-radius: 8px; padding: 16px 44px 16px 16px; }
+  .codeblock-panel pre { margin: 0; font-family: var(--font-mono); font-size: 12.5px; line-height: 1.8; color: var(--accent); white-space: pre-wrap; overflow-x: auto; }
+  .copyBtn {
+    position: absolute; top: 10px; right: 10px; font-family: var(--font-mono); font-size: 10.5px;
+    background: transparent; color: var(--text-dimmer); border: 1px solid var(--border); border-radius: 4px;
+    padding: 4px 8px; cursor: pointer; transition: color .15s ease, border-color .15s ease;
+  }
+  .copyBtn:hover, .copyBtn:focus-visible { color: var(--accent); border-color: var(--accent-soft); }
+  .copyBtn.copied { color: var(--accent); border-color: var(--accent-soft); }
+  .installNote { font-family: var(--font-sans); font-size: 12.5px; color: var(--text-dimmer); line-height: 1.55; }
+
+  /* ---------- footer ---------- */
+  footer {
+    max-width: 1140px; margin: 0 auto; padding: 26px 24px 40px; display: flex; justify-content: space-between;
+    flex-wrap: wrap; gap: 10px; font-family: var(--font-mono); font-size: 12px; color: var(--text-dimmer);
+    border-top: 1px solid var(--border-soft);
+  }
+  footer a { text-decoration: none; color: var(--text-dim); }
+  footer a:hover { color: var(--accent); }
+
+  @media (max-width: 760px) {
+    .kgrid { grid-template-columns: repeat(2, 1fr); }
+    .focusgrid { grid-template-columns: 1fr; }
+    .term-title { display: none; }
+    .installGrid { grid-template-columns: 1fr; }
+    .navlinks { gap: 16px; font-size: 12px; }
+  }
+</style>
+</head>
+<body>
+
+<div class="scan"></div>
+
+<nav class="topnav">
+  <a class="brand" href="#top">▌<span>mtdo</span></a>
+  <div class="navlinks">
+    <a href="#features">Features</a>
+    <a href="#install">Install</a>
+    <a href="https://github.com/mukund1312/mtdo" target="_blank" rel="noopener">GitHub ↗</a>
+  </div>
+</nav>
+
+<header class="hero" id="top">
+  <p class="eyebrow">Terminal task board · deliberate practice</p>
+  <h1>Track what you study.<br>Get <span class="accentText">coached</span> through it.<br>See proof you improved.</h1>
+  <p class="lede">A terminal practice system for interview and skill prep — one keyboard-driven session instead of a to-do app, a study guide, an AI chat tab, and a code sandbox stitched together by hand. Task, coach, AI, and music all live in the same window on purpose: what actually breaks focus is switching screens, not the studying itself.</p>
+  <div class="ctaRow">
+    <a href="#live" class="btn btn-primary">Try it live ↓</a>
+    <a href="https://github.com/mukund1312/mtdo" target="_blank" rel="noopener" class="btn btn-ghost">View source ↗</a>
+  </div>
+</header>
+
+<section class="repl-section" id="live">
+  <p class="replHint">everything below is a real, working recreation — type <span class="kbd">help</span> or <span class="kbd">tour</span> to start.</p>
+  <div class="term-frame" id="frame">
+    <div class="term-topbar">
+      <span class="dot r"></span><span class="dot y"></span><span class="dot g"></span>
+      <p class="term-title">mtdo — zsh — 128×48</p>
+      <span class="term-clock" id="clock"></span>
+    </div>
+    <div class="term-output" id="output"></div>
+    <div class="term-inputrow">
+      <span class="term-prompt" id="promptA">mtdo</span><span class="term-path" id="promptB">@focus:~$</span>
+      <input id="cmdInput" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="type 'help' or 'tour'…" />
+      <span class="touring-badge" id="touringBadge" style="display:none">touring… ctrl+c to skip</span>
+    </div>
+  </div>
+</section>
+
+<section class="features reveal" id="features">
+  <div class="sectionHead">
+    <p class="eyebrow">What's inside</p>
+    <h2>Eight tools. One session.</h2>
+  </div>
+  <div class="grid">
+
+    <article class="feature-card reveal" style="--fc-accent: var(--cyan)" data-mode="auto" data-cmd="board">
+      <div class="fc-head"><span class="fc-cmd">$ board</span><span class="fc-tag">kanban</span></div>
+      <h3>Kanban Board</h3>
+      <p class="desc">Backlog → Todo → In Progress → Done — one column per field you track, prefilled from a real curriculum, not a blank list.</p>
+      <div class="fc-demo" data-auto="board"></div>
+    </article>
+
+    <article class="feature-card reveal" style="--fc-accent: var(--violet)" data-mode="auto" data-cmd="focus">
+      <div class="fc-head"><span class="fc-cmd">$ focus</span><span class="fc-tag">focus mode</span></div>
+      <h3>Focus Mode</h3>
+      <p class="desc">One key hides the board and stats, auto-starts a 45/10 pomodoro, and surfaces only the coach and AI panel for whatever you're on.</p>
+      <div class="fc-demo" data-auto="focus"></div>
+    </article>
+
+    <article class="feature-card reveal" style="--fc-accent: var(--gold)" data-mode="auto" data-cmd="coach">
+      <div class="fc-head"><span class="fc-cmd">$ coach dsa</span><span class="fc-tag">learning coach</span></div>
+      <h3>Learning Coach</h3>
+      <p class="desc">Generates a real DSA or SQL problem for whatever's in progress, then rations hints one at a time instead of handing you the answer.</p>
+      <div class="fc-demo" data-auto="coach"></div>
+    </article>
+
+    <article class="feature-card reveal" style="--fc-accent: var(--red)" data-mode="auto" data-cmd="lab">
+      <div class="fc-head"><span class="fc-cmd">$ lab python</span><span class="fc-tag">practice lab</span></div>
+      <h3>Practice Lab</h3>
+      <p class="desc">Real execution — Python, Java, C, C++, SQL — against a real sqlite3 database, linked to whatever the coach just generated.</p>
+      <div class="fc-demo" data-auto="lab"></div>
+    </article>
+
+    <article class="feature-card reveal" style="--fc-accent: var(--accent)" data-mode="click" data-cmd="ai why is my query slow">
+      <div class="fc-head"><span class="fc-cmd">$ ai …</span><span class="fc-tag">ai assistant</span></div>
+      <h3>AI Assistant</h3>
+      <p class="desc">An embedded panel that already knows the task, field, and problem you're on — instructed once to teach with questions, not hand over the fix.</p>
+      <div class="fc-demo">
+        <p class="l1">you › why is my query slow</p>
+        <p>mtdo-ai › what's making that comparison expensive on every row?</p>
+      </div>
+      <button class="fc-run" type="button">▶ run in terminal above</button>
+    </article>
+
+    <article class="feature-card reveal" style="--fc-accent: var(--cyan)" data-mode="click" data-cmd="crm">
+      <div class="fc-head"><span class="fc-cmd">$ crm</span><span class="fc-tag">career crm</span></div>
+      <h3>Career CRM</h3>
+      <p class="desc">Applied → OA → Interview → Offer — one pipeline for every application, wired up automatically by the setup wizard for a job-switch or college plan.</p>
+      <div class="fc-demo">
+        <p class="l1">Razorpay · SDE1</p>
+        <p>Applied → OA → [Interview] → Offer</p>
+      </div>
+      <button class="fc-run" type="button">▶ run in terminal above</button>
+    </article>
+
+    <article class="feature-card reveal" style="--fc-accent: var(--violet)" data-mode="click" data-cmd="vault">
+      <div class="fc-head"><span class="fc-cmd">$ vault</span><span class="fc-tag">knowledge vault</span></div>
+      <h3>Knowledge Vault</h3>
+      <p class="desc">A second brain, separate from any one task — searchable notes on system design, behavioral prep, SQL internals, whatever you've picked up.</p>
+      <div class="fc-demo">
+        <p class="l1">System design: rate limiter</p>
+        <p>token bucket vs sliding window</p>
+      </div>
+      <button class="fc-run" type="button">▶ run in terminal above</button>
+    </article>
+
+    <article class="feature-card reveal" style="--fc-accent: var(--gold)" data-mode="click" data-cmd="keys">
+      <div class="fc-head"><span class="fc-cmd">$ keys</span><span class="fc-tag">pomodoro + streaks</span></div>
+      <h3>Pomodoro &amp; Streaks</h3>
+      <p class="desc">A 45/10 pomodoro auto-starts with Focus Mode; streaks and a GitHub-style heatmap track whether you actually showed up.</p>
+      <div class="fc-demo">
+        <p class="l1">p/x  start-pause · reset</p>
+        <p>m  play/pause · [ / ]  prev/next track</p>
+      </div>
+      <button class="fc-run" type="button">▶ run in terminal above</button>
+    </article>
+
+    <article class="feature-card reveal" style="--fc-accent: var(--accent)" data-mode="auto" data-cmd="music">
+      <div class="fc-head"><span class="fc-cmd">$ music</span><span class="fc-tag">lock in</span></div>
+      <h3>Music, Without Leaving</h3>
+      <p class="desc">Universal now-playing controls for whatever's already going — YouTube Music in a tab, Apple Music, Spotify, anything — plus paste a Spotify link to jump straight there. Lives inside Focus Mode so you never alt-tab to hit pause.</p>
+      <div class="fc-demo" data-auto="music"></div>
+    </article>
+
+    <article class="feature-card reveal" style="--fc-accent: var(--gold)" data-mode="click" data-cmd="youtube https://youtu.be/xxxxxxxxxxx">
+      <div class="fc-head"><span class="fc-cmd">$ youtube …</span><span class="fc-tag">no rabbit holes</span></div>
+      <h3>YouTube → Notes &amp; Quiz</h3>
+      <p class="desc">Paste a tutorial link — the AI turns its captions into study notes plus 5–8 active-recall questions, saved to the Vault and yours to edit. Built for the habit of rewatching three videos and assuming you understood the first one.</p>
+      <div class="fc-demo">
+        <p class="l1">## Questions</p>
+        <p>1. Base case checked after the recursive call — what breaks?</p>
+      </div>
+      <button class="fc-run" type="button">▶ run in terminal above</button>
+    </article>
+
+    <article class="feature-card reveal" style="--fc-accent: var(--red)" data-mode="click" data-cmd="profile">
+      <div class="fc-head"><span class="fc-cmd">$ profile</span><span class="fc-tag">security</span></div>
+      <h3>Password-Protected Profiles</h3>
+      <p class="desc">Separate, isolated profiles for a shared machine or separate tracks of your own life — each optionally locked with real local encryption and a one-time recovery code, never a server.</p>
+      <div class="fc-demo">
+        <p class="l1">● DSA Track (active)</p>
+        <p>Job Search 🔒 · Janhvi's Plan 🔒</p>
+      </div>
+      <button class="fc-run" type="button">▶ run in terminal above</button>
+    </article>
+
+  </div>
+</section>
+
+<section class="install reveal" id="install">
+  <div class="sectionHead">
+    <p class="eyebrow">Get it running</p>
+    <h2>$ install</h2>
+  </div>
+  <div class="installGrid">
+    <div class="installCol">
+      <p class="installLabel">Recommended — handles prerequisites for you</p>
+      <div class="codeblock-panel">
+        <button class="copyBtn" type="button" data-copy="git clone https://github.com/mukund1312/mtdo.git&#10;cd mtdo&#10;./install.sh">copy</button>
+        <pre>$ git clone https://github.com/mukund1312/mtdo.git
+$ cd mtdo
+$ ./install.sh</pre>
+      </div>
+      <p class="installNote">checks git, Python 3.10+, sqlite3 (and Xcode Command Line Tools on macOS) up front, with a specific fix for whichever's missing — and sets up its own <span class="kbd">.venv</span> rather than touching your system Python.</p>
+    </div>
+    <div class="installCol">
+      <p class="installLabel">Already have everything installed</p>
+      <div class="codeblock-panel">
+        <button class="copyBtn" type="button" data-copy="pip install -e .">copy</button>
+        <pre>$ pip install -e .</pre>
+      </div>
+      <p class="installNote">from a clone of the repo, then just run <span class="kbd">mtdo</span> — first run auto-creates <span class="kbd">~/.mtdo/config.yaml</span> from the demo plan.</p>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <div>mtdo — terminal task board. MIT licensed.</div>
+  <a href="https://github.com/mukund1312/mtdo" target="_blank" rel="noopener">github.com/mukund1312/mtdo ↗</a>
+</footer>
+
+<script>
+(function(){
+  const output = document.getElementById('output');
+  const input = document.getElementById('cmdInput');
+  const touringBadge = document.getElementById('touringBadge');
+  const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  const state = {
+    mode: null, coachTopic: null, hintsRevealed: 0,
+    labLang: 'python', labStage: 'blank',
+    touring: false, history: [], histIdx: -1,
+  };
+
+  const escapeHtml = (s) => s.replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  const cleanArg = (s) => (s || '').replace(/^[<\[('"]+|[>\])'"]+$/g, '').trim();
+  const next = (t) => `<p class="next"><span class="arrow">→ next:</span> ${t}</p>`;
+
+  function scrollBottom() { output.scrollTop = output.scrollHeight; }
+
+  function promptLabel() {
+    if (state.mode === 'lab') return { a: 'mtdo', b: `@lab:${state.labLang}$` };
+    if (state.mode === 'coach') return { a: 'mtdo', b: `@coach:${state.coachTopic}$` };
+    if (state.mode === 'focus') return { a: 'mtdo', b: '@focus:~$' };
+    return { a: 'mtdo', b: '@focus:~$' };
+  }
+  function refreshPrompt() {
+    const p = promptLabel();
+    document.getElementById('promptA').textContent = p.a;
+    document.getElementById('promptB').textContent = p.b;
+  }
+
+  function printCommandLine(cmd) {
+    const p = promptLabel();
+    const div = document.createElement('div');
+    div.className = 'cmd-line';
+    div.innerHTML = `<span class="prompt">${p.a}</span><span class="path">${p.b}</span> <span class="typed">${escapeHtml(cmd)}</span>`;
+    output.appendChild(div);
+  }
+
+  function printBlock(html) {
+    const div = document.createElement('div');
+    div.className = 'out-block';
+    div.innerHTML = html;
+    output.appendChild(div);
+    requestAnimationFrame(() => div.classList.add('show'));
+    scrollBottom();
+    return div;
+  }
+
+  function typeLines(lines, onDone) {
+    let li = 0;
+    const container = document.createElement('div');
+    container.className = 'out-block show';
+    output.appendChild(container);
+    function step() {
+      if (li >= lines.length) { if (onDone) onDone(); scrollBottom(); return; }
+      const p = document.createElement('p');
+      p.className = lines[li].cls || '';
+      container.appendChild(p);
+      const text = lines[li].t;
+      let ci = 0;
+      const speed = lines[li].speed || 16;
+      const iv = setInterval(() => {
+        p.textContent = text.slice(0, ci + 1);
+        ci++;
+        scrollBottom();
+        if (ci >= text.length) { clearInterval(iv); li++; setTimeout(step, 120); }
+      }, speed);
+    }
+    step();
+  }
+
+  function boxOpen(title, right) {
+    return `<div class="box"><div class="box-head"><span>${title}</span><span>${right || ''}</span></div><div class="box-body">`;
+  }
+  const boxClose = `</div></div>`;
+
+  function helpScreen() {
+    const rows = [
+      ['plan [persona]', "the setup wizard — AI turns a Q&A into your goals.json"],
+      ['about', "what mtdo is, and the philosophy behind it"],
+      ['board', "the kanban board — backlog / todo / in progress / done"],
+      ['focus', "what happens when you press f"],
+      ['coach dsa', "the learning coach on a generated DSA problem"],
+      ['coach sql', "the learning coach on a generated SQL problem"],
+      ['hint', "reveal the next hint (after 'coach')"],
+      ['ai <message>', "ask the embedded AI panel something"],
+      ['lab <language>', "open the practice lab — try: lab python / lab java / lab sql"],
+      ['run', "execute the current lab buffer"],
+      ['complexity', "AI estimate / real query plan for the lab buffer"],
+      ['review', "AI points out what's wrong — not the fix, a nudge"],
+      ['fix', "reveal the corrected approach, once you're ready"],
+      ['done', "mark the task done — unlocks the full coaching notes"],
+      ['crm', "the career CRM pipeline"],
+      ['vault [search <term>]', "the knowledge vault"],
+      ['music', "now-playing controls for whatever's already playing — any service"],
+      ['youtube <url>', "turn a tutorial into notes + an active-recall quiz, saved to the vault"],
+      ['profile', "switch between password-protected profiles"],
+      ['keys', "full keybinding cheat sheet"],
+      ['install', "how to actually install mtdo"],
+      ['tour', "sit back — a guided walkthrough of the whole app"],
+      ['clear', "clear the screen"],
+    ];
+    let s = `<p>mtdo — terminal task board. type a command below.</p><p>&nbsp;</p>`;
+    rows.forEach(([c,d]) => { s += `<p><span class="kbd" style="min-width:190px;display:inline-block;text-align:left">${c}</span>  <span class="dim">${d}</span></p>`; });
+    s += `<p>&nbsp;</p><p class="dim">this whole panel is a fake terminal — nothing here reaches a real machine. the real app runs in yours.</p>`;
+    s += next(`<span class="kbd">plan</span> to see how a board gets built, or <span class="kbd">tour</span> to sit back and watch the whole thing.`);
+    return s;
+  }
+
+  function aboutScreen() {
+    return `<p><b>mtdo</b> — a terminal task board built for deliberate practice, not busywork.</p>
+      <p>&nbsp;</p>
+      <p>No animation panel. No GIF viewer. No "now playing" video widget.</p>
+      <p>Every pixel either tracks your progress or makes you better at what you're actually studying.</p>
+      <p>&nbsp;</p>
+      <p class="hl">01 — No entertainment, ever</p>
+      <p class="dim">The screen space that would go to a media panel goes to coaching content instead.</p>
+      <p>&nbsp;</p>
+      <p class="hl">02 — Teach, don't just answer</p>
+      <p class="dim">The AI panel is instructed once: guide with questions before handing over an answer.</p>
+      <p>&nbsp;</p>
+      <p class="hl">03 — Your plan, your file</p>
+      <p class="dim">Categories and curriculum live in goals.json, not in code. Edit it, or hand it to an AI.</p>
+      <p>&nbsp;</p>
+      <p class="hl">04 — One window, not eleven</p>
+      <p class="dim">Task, coach, AI, and music live in the same screen — Focus Mode exists so you're never one tab-switch away from losing the thread.</p>` +
+      next(`<span class="kbd">plan</span> to see rule 03 in action — the AI builds that file for you.`);
+  }
+
+  const PERSONAS = {
+    'school': {
+      label: 'School',
+      qs: [['Grade / exam board?', '11th, CBSE'], ['Weakest subject right now?', 'Physics — mechanics'], ['Weeks until the next exam?', '6']],
+      cats: ['physics', 'chemistry', 'math'],
+      note: `a straight study plan — no Job Search or CRM needed here.`,
+    },
+    'college': {
+      label: 'College Application',
+      qs: [['Target schools?', 'a mix of reach + safety'], ['Applying for?', 'CS undergrad'], ['Weeks until deadlines?', '10']],
+      cats: ['essays', 'sat_act', 'applications'],
+      note: `an "applications" field gets added — and each school you add there also shows up in the CRM (Applied → Interview → Accepted), same pipeline the job-switch persona uses.`,
+    },
+    'exam': {
+      label: 'Competitive Exam',
+      qs: [['Which exam?', 'GATE CS'], ['Current mock score?', '52 / 100'], ['Weeks until the exam?', '12']],
+      cats: ['dsa', 'core_subjects', 'mock_tests'],
+      note: `curriculum gets sequenced week by week toward the exam date.`,
+    },
+    'job-switch': {
+      label: 'Job Switch',
+      qs: [['Target role?', 'Backend SWE'], ['Strongest skill / weakest area?', 'Python — weak on system design'], ['Weeks until interview-ready?', '8'], ['Companies you\'re already talking to?', 'Razorpay, Stripe']],
+      cats: ['dsa', 'system_design', 'sql_theory', 'jobs'],
+      note: `a "jobs" field gets added, and Razorpay / Stripe land straight on the Career CRM pipeline — type 'crm' after this to see them.`,
+    },
+  };
+
+  function planScreen(args) {
+    const key = cleanArg(args[0] || '').toLowerCase();
+    const persona = PERSONAS[key] || null;
+    if (!persona) {
+      let s = `<p>Setup Plan Wizard (<span class="kbd">g</span> in the real app) — a short Q&A, then the AI writes your <b>goals.json</b> for you.</p><p>&nbsp;</p><p>pick who you are:</p>`;
+      Object.entries(PERSONAS).forEach(([k,v]) => { s += `<p>  <span class="kbd">plan ${k}</span>  <span class="dim">— ${v.label}</span></p>`; });
+      return s + next(`try <span class="kbd">plan job-switch</span> — or any of the others above.`);
+    }
+    let s = `<p>persona: <b>${persona.label}</b></p><p>&nbsp;</p><div class="qa">`;
+    persona.qs.forEach(([q,a],i) => { s += `<p class="q">Q${i+1}. ${q}</p><p class="a">› ${a}</p>`; });
+    s += `</div><p>&nbsp;</p><p class="dim">building a prompt from your answers, handing it to the AI panel...</p>` +
+      boxOpen('goals.json', 'written by the AI') +
+      `<p class="codeblock"><span class="cm">// excerpt</span>
+{
+  <span class="tp">"categories"</span>: [
+    ${persona.cats.map(c => `{ <span class="tp">"name"</span>: <span class="hl">"${c}"</span>, ... }`).join(',\n    ')}
+  ]
+}</p>` + boxClose +
+      `<p><span class="hl">imported</span> — your board now has ${persona.cats.length} new columns, pre-filled with a real curriculum, not a blank list.</p>
+       <p class="dim">${persona.note}</p>`;
+    return s + next(`<span class="kbd">board</span> to see it land, ${key === 'job-switch' || key === 'college' ? "or <span class=\"kbd\">crm</span> to see the pipeline it just populated." : "or <span class=\"kbd\">focus</span> to start working through it."}`);
+  }
+
+  function boardScreen() {
+    return `<p>Backlog → Todo → In Progress → Done — one column per field you track.</p>` +
+      boxOpen('kanban-board', 'Mon · Week 3 · score 82') +
+      `<div class="kgrid">
+        <div class="kcol backlog"><div class="kcol-head">Backlog</div><div class="kcard">Sliding Window</div><div class="kcard">Merge Intervals</div></div>
+        <div class="kcol todo"><div class="kcol-head">Todo</div><div class="kcard">Two Sum</div><div class="kcard">Valid Parens</div><div class="kcard">SQL Theory</div></div>
+        <div class="kcol progress"><div class="kcol-head">In Progress</div><div class="kcard">2nd Highest Salary/Dept</div></div>
+        <div class="kcol done"><div class="kcol-head">Done</div><div class="kcard">Contains Duplicate</div><div class="kcard">Group Anagrams</div></div>
+      </div>` + boxClose +
+      `<p><span class="kbd">h/l</span> columns <span class="kbd">j/k</span> cards <span class="kbd">space</span> advance <span class="kbd">u</span> send back <span class="kbd">a</span> add</p>
+      <p class="dim">a card claimed out of Backlog always lands on Todo first — never straight to In Progress.</p>` +
+      next(`<span class="kbd">focus</span> to start a deep-work session on one of these.`);
+  }
+
+  function focusScreen() {
+    state.mode = 'focus'; refreshPrompt();
+    return `<p>Focus Mode ON — board and stats hidden, 45/10 pomodoro auto-started.</p><p class="dim">your prompt just changed to <span class="kbd">focus:~$</span> — that's how you'll know you're "in" it.</p>` +
+      boxOpen('focus-mode', '44:12 remaining ●') +
+      `<div class="focusgrid">
+        <div class="fpane"><div class="t pomo">Pomodoro</div><div class="l">44:12 · work</div><div class="l dim">auto: 45/10 split</div></div>
+        <div class="fpane"><div class="t">Learning Coach</div><div class="l hl">2nd Highest Salary/Dept</div><div class="l">hints: 1 / 4 revealed</div></div>
+        <div class="fpane"><div class="t ai">AI Assistant</div><div class="l">&gt; what's slow about it?</div><div class="l dim">the self join, maybe?</div></div>
+      </div>` + boxClose +
+      `<p class="dim">nothing running gets stopped when you leave — press f again and it's all exactly where you left it.</p>` +
+      next(`<span class="kbd">coach dsa</span> or <span class="kbd">coach sql</span> to see what the Learning Coach actually shows.`);
+  }
+
+  const DSA_HINTS = [
+    "1. Think about what you'd remember as you scan the array once.",
+    "2. A hash map from value → index helps.",
+    "3. For each number, check if target − number was already seen.",
+    "4. One pass, O(n) time, O(n) space, using a hashmap of value→index.",
+  ];
+  const SQL_HINTS = [
+    "1. Salaries within the same department only — nothing crosses departments.",
+    "2. A correlated subquery or a window function both work here.",
+    "3. Compare each salary to the max strictly less than it, per department.",
+    "4. MAX(salary) WHERE salary < (SELECT MAX(salary) ...) GROUP BY department_id.",
+  ];
+
+  function coachScreen(args) {
+    const topic = (cleanArg(args[0]).toLowerCase() === 'sql') ? 'sql' : 'dsa';
+    state.mode = 'coach'; state.coachTopic = topic; state.hintsRevealed = 0;
+    state.labStage = 'blank';
+    refreshPrompt();
+    if (topic === 'sql') {
+      return `<p>generating your problem for <b>SQL Theory</b>...</p>` +
+        boxOpen('learning-coach', 'database · in_progress') +
+        `<p><b>2nd Highest Salary Per Department</b></p>
+         <p class="dim">Difficulty: Medium</p>
+         <p>Find the second-highest salary in each department.</p>
+         <p class="dim">Expected output: department_id, second_highest — one row per department.</p>` + boxClose +
+        `<p class="dim">it won't reveal the query — only hints, and only the full coaching notes once you mark it done.</p>` +
+        next(`<span class="kbd">hint</span> for a nudge (0/4 revealed), or jump straight to <span class="kbd">lab sql</span> — it already knows what problem you're on.`);
+    }
+    return `<p>generating your problem for <b>DSA</b>...</p>` +
+      boxOpen('learning-coach', 'dsa · in_progress') +
+      `<p><b>Two Sum</b></p>
+       <p class="dim">Difficulty: Easy</p>
+       <p>Given an array of integers, return indices of the two numbers that add up to a target.</p>` + boxClose +
+      `<p class="dim">it won't reveal the algorithm — only hints, and only the full coaching notes once you mark it done.</p>` +
+      next(`<span class="kbd">hint</span> for a nudge (0/4 revealed), or jump straight to <span class="kbd">lab python</span> (java/c/cpp also work) — it already knows what problem you're on.`);
+  }
+
+  function hintScreen() {
+    if (state.mode !== 'coach') return `<p class="err">nothing active — try <span class="kbd">coach dsa</span> or <span class="kbd">coach sql</span> first.</p>`;
+    const hints = state.coachTopic === 'sql' ? SQL_HINTS : DSA_HINTS;
+    if (state.hintsRevealed >= hints.length) {
+      return `<p class="dim">no more hints — solve it, then <span class="kbd">done</span> to unlock the full coaching notes (Focus On, Mental Models, all of it).</p>` +
+        next(`<span class="kbd">lab ${state.coachTopic === 'sql' ? 'sql' : 'python'}</span> to actually attempt it.`);
+    }
+    const h = hints[state.hintsRevealed];
+    state.hintsRevealed++;
+    const remaining = hints.length - state.hintsRevealed;
+    let s = `<p class="hl2">${h}</p><p class="dim">${remaining} more available — in the real app, a popup offers one every 10 minutes instead of on demand.</p>`;
+    s += next(remaining > 0
+      ? `another <span class="kbd">hint</span>, or head to <span class="kbd">lab ${state.coachTopic === 'sql' ? 'sql' : 'python'}</span> when you're ready to actually write it.`
+      : `<span class="kbd">lab ${state.coachTopic === 'sql' ? 'sql' : 'python'}</span> — you've got all the hints, time to write it.`);
+    return s;
+  }
+
+  const AI_KEYWORDS = [
+    { k: /answer|solution|solve it|just tell/i, r: "I could just tell you, but then this wouldn't stick — what have you already tried, and where did it stop working?" },
+    { k: /slow|complexity|time|performance/i, r: "What's making that comparison expensive on every row — is there something you could remember instead of re-checking?" },
+    { k: /stuck|don'?t know|no idea/i, r: "Let's back up — can you restate the problem in your own words first? Sometimes the gap is right there." },
+    { k: /hint/i, r: "Try the 'hint' command in coach mode — but here, first: what's the brute-force version look like?" },
+  ];
+  const AI_DEFAULT = [
+    "What's the brute-force approach, even if it's slow — walk me through it.",
+    "Before we go further: what does the problem actually give you, and what does it ask for?",
+    "What would you need to remember as you go, to avoid redoing work?",
+    "What's the simplest input that would break your current approach?",
+  ];
+  let aiTurn = 0;
+
+  function aiScreen(args) {
+    const msg = args.join(' ').trim();
+    if (!msg) {
+      return `<p class="err">try: <span class="kbd">ai why is my query slow</span></p>` + next(`ask it something, or <span class="kbd">lab python</span> to start coding — it can see your code too, via 'review'.`);
+    }
+    let reply = null;
+    for (const entry of AI_KEYWORDS) { if (entry.k.test(msg)) { reply = entry.r; break; } }
+    if (!reply) { reply = AI_DEFAULT[aiTurn % AI_DEFAULT.length]; aiTurn++; }
+    return `<p class="dim">[primed] task + field + generated problem already sent — you never typed that part.</p>` +
+      `<p><span class="hl4">you</span> <span class="dim">›</span> ${escapeHtml(msg)}</p>` +
+      `<p><span class="hl">mtdo-ai</span> <span class="dim">›</span> ${reply}</p>` +
+      `<p class="dim">it's told, once, how to teach: discover-before-explain, progressive hints, never the answer first.</p>` +
+      next(`ask something else, or <span class="kbd">lab ${state.coachTopic === 'sql' ? 'sql' : 'python'}</span> to start coding — try 'review' once you're there for the same treatment on real code.`);
+  }
+
+  const LANG_NAMES = { python: 'Python', java: 'Java', c: 'C', cpp: 'C++', sql: 'SQL' };
+  const LANG_ALIASES = { py: 'python', python: 'python', java: 'java', c: 'c', cpp: 'cpp', 'c++': 'cpp', sql: 'sql' };
+  const PROCEDURAL = new Set(['python','java','c','cpp']);
+
+  const DSA_CODE = {
+    python: {
+      buggy: `<span class="kw">def</span> two_sum(nums, target):
+    seen = {}
+    <span class="cm"># bug: fills the whole map before checking anything</span>
+    <span class="kw">for</span> i, n <span class="kw">in</span> enumerate(nums):
+        seen[n] = i
+    <span class="kw">for</span> i, n <span class="kw">in</span> enumerate(nums):
+        complement = target - n
+        <span class="kw">if</span> complement <span class="kw">in</span> seen:
+            <span class="kw">return</span> [i, seen[complement]]
+
+<span class="cm"># nums = [3, 2, 4], target = 6</span>`,
+      fixed: `<span class="kw">def</span> two_sum(nums, target):
+    seen = {}
+    <span class="kw">for</span> i, n <span class="kw">in</span> enumerate(nums):
+        complement = target - n
+        <span class="kw">if</span> complement <span class="kw">in</span> seen:
+            <span class="kw">return</span> [seen[complement], i]
+        seen[n] = i  <span class="cm"># only add AFTER checking</span>
+
+<span class="cm"># nums = [3, 2, 4], target = 6</span>`,
+      buggyOut: '[0, 0]', fixedOut: '[1, 2]',
+      review: `Look at when you check the complement — you build the whole lookup table first, then check every index, including itself. nums[0]=3 and target-3=3, and seen[3] is index 0 — so it matches itself. Check the complement <b>before</b> you add the current element to the map, not after.`,
+      timeExp: 'single pass over the input', spaceExp: 'the hashmap grows with input size',
+    },
+    java: {
+      buggy: `<span class="kw">import</span> java.util.*;
+<span class="kw">class</span> Solution {
+  <span class="kw">static int</span>[] twoSum(<span class="kw">int</span>[] nums, <span class="kw">int</span> target) {
+    Map&lt;Integer,Integer&gt; seen = <span class="kw">new</span> HashMap&lt;&gt;();
+    <span class="cm">// bug: fills the whole map before checking anything</span>
+    <span class="kw">for</span> (<span class="kw">int</span> i = 0; i &lt; nums.length; i++) seen.put(nums[i], i);
+    <span class="kw">for</span> (<span class="kw">int</span> i = 0; i &lt; nums.length; i++) {
+      <span class="kw">int</span> c = target - nums[i];
+      <span class="kw">if</span> (seen.containsKey(c)) <span class="kw">return new int</span>[]{i, seen.get(c)};
+    }
+    <span class="kw">return null</span>;
+  }
+}`,
+      fixed: `<span class="kw">import</span> java.util.*;
+<span class="kw">class</span> Solution {
+  <span class="kw">static int</span>[] twoSum(<span class="kw">int</span>[] nums, <span class="kw">int</span> target) {
+    Map&lt;Integer,Integer&gt; seen = <span class="kw">new</span> HashMap&lt;&gt;();
+    <span class="kw">for</span> (<span class="kw">int</span> i = 0; i &lt; nums.length; i++) {
+      <span class="kw">int</span> c = target - nums[i];
+      <span class="kw">if</span> (seen.containsKey(c)) <span class="kw">return new int</span>[]{seen.get(c), i};
+      seen.put(nums[i], i);  <span class="cm">// only add AFTER checking</span>
+    }
+    <span class="kw">return null</span>;
+  }
+}`,
+      buggyOut: '[0, 0]', fixedOut: '[1, 2]',
+      review: `Same shape as the Python version: you populate the whole HashMap before you check anything, so nums[0]=3 can match against its own entry (target-3=3, seen at index 0). Move the lookup <b>before</b> the insert.`,
+      timeExp: 'single pass over the input', spaceExp: 'the hashmap grows with input size',
+    },
+    c: {
+      buggy: `<span class="cm">// bug: inner loop starts at 0, so i can pair with itself</span>
+<span class="kw">for</span> (<span class="kw">int</span> i = 0; i &lt; n; i++) {
+  <span class="kw">for</span> (<span class="kw">int</span> j = 0; j &lt; n; j++) {
+    <span class="kw">if</span> (nums[i] + nums[j] == target) {
+      printf(<span class="hl">"[%d, %d]\\n"</span>, i, j);
+      <span class="kw">return</span>;
+    }
+  }
+}
+<span class="cm">// nums = {3, 2, 4}, target = 6</span>`,
+      fixed: `<span class="kw">for</span> (<span class="kw">int</span> i = 0; i &lt; n; i++) {
+  <span class="kw">for</span> (<span class="kw">int</span> j = i + 1; j &lt; n; j++) {  <span class="cm">// start past i</span>
+    <span class="kw">if</span> (nums[i] + nums[j] == target) {
+      printf(<span class="hl">"[%d, %d]\\n"</span>, i, j);
+      <span class="kw">return</span>;
+    }
+  }
+}
+<span class="cm">// nums = {3, 2, 4}, target = 6</span>`,
+      buggyOut: '[0, 0]', fixedOut: '[1, 2]',
+      review: `Your inner loop starts j at 0, so i and j can land on the same index — nums[0]+nums[0] = 3+3 = 6, and it returns before ever looking at a real pair. Start j one past i instead of at 0.`,
+      timeExp: 'nested loop over the input, brute force', spaceExp: 'no extra structures used',
+    },
+    cpp: {
+      buggy: `<span class="cm">// bug: inner loop starts at 0, so i can pair with itself</span>
+<span class="kw">for</span> (<span class="kw">int</span> i = 0; i &lt; n; i++) {
+  <span class="kw">for</span> (<span class="kw">int</span> j = 0; j &lt; n; j++) {
+    <span class="kw">if</span> (nums[i] + nums[j] == target) {
+      cout &lt;&lt; <span class="hl">"[" &lt;&lt; i &lt;&lt; ", " &lt;&lt; j &lt;&lt; "]"</span> &lt;&lt; endl;
+      <span class="kw">return</span> 0;
+    }
+  }
+}
+<span class="cm">// nums = {3, 2, 4}, target = 6</span>`,
+      fixed: `<span class="kw">for</span> (<span class="kw">int</span> i = 0; i &lt; n; i++) {
+  <span class="kw">for</span> (<span class="kw">int</span> j = i + 1; j &lt; n; j++) {  <span class="cm">// start past i</span>
+    <span class="kw">if</span> (nums[i] + nums[j] == target) {
+      cout &lt;&lt; <span class="hl">"[" &lt;&lt; i &lt;&lt; ", " &lt;&lt; j &lt;&lt; "]"</span> &lt;&lt; endl;
+      <span class="kw">return</span> 0;
+    }
+  }
+}
+<span class="cm">// nums = {3, 2, 4}, target = 6</span>`,
+      buggyOut: '[0, 0]', fixedOut: '[1, 2]',
+      review: `Same bug as the C version: j starts at 0 so i can pair with itself — nums[0]+nums[0]=6 matches target immediately, wrongly. Start j at i+1.`,
+      timeExp: 'nested loop over the input, brute force', spaceExp: 'no extra structures used',
+    },
+  };
+
+  const SQL_CODE = {
+    buggy: `<span class="cm">-- bug: nothing excludes the actual highest salary</span>
+<span class="kw">SELECT</span> department_id, <span class="kw">MAX</span>(salary) <span class="kw">AS</span> second_highest
+<span class="kw">FROM</span> employees
+<span class="kw">GROUP BY</span> department_id;`,
+    fixed: `<span class="kw">SELECT</span> department_id, <span class="kw">MAX</span>(salary) <span class="kw">AS</span> second_highest
+<span class="kw">FROM</span> employees e1
+<span class="kw">WHERE</span> salary &lt; (
+  <span class="kw">SELECT MAX</span>(salary) <span class="kw">FROM</span> employees e2
+  <span class="kw">WHERE</span> e2.department_id = e1.department_id
+)
+<span class="kw">GROUP BY</span> department_id;`,
+    buggyRows: [['1','155000'],['2','105000'],['3','87000'],['4','71000']],
+    fixedRows: [['1','145000'],['2','98000'],['3','82000'],['4','65000']],
+    review: `MAX(salary) grouped by department just gives you the highest salary again — there's nothing in this query excluding the actual highest. You need to compare against a value that's strictly less than the max for that department.`,
+  };
+
+  function langMismatchMsg(topic, lang) {
+    if (topic === 'dsa') return `<p class="err">Two Sum isn't a SQL problem.</p><p class="dim">the coach is on a DSA problem right now — try python, java, c, or cpp instead.</p>` + next(`<span class="kbd">lab python</span>`);
+    return `<p class="err">2nd Highest Salary is a SQL problem, not something you write in ${LANG_NAMES[lang]}.</p><p class="dim">the coach is on a SQL problem right now.</p>` + next(`<span class="kbd">lab sql</span>`);
+  }
+
+  function labScreen(args) {
+    state.mode = 'lab';
+    const rawArg = cleanArg(args[0] || '').toLowerCase();
+    if (rawArg) {
+      const resolved = LANG_ALIASES[rawArg];
+      if (!resolved) {
+        refreshPrompt();
+        return `<p class="err">unknown language "${escapeHtml(args[0])}" — keeping ${LANG_NAMES[state.labLang]}.</p>` +
+          next(`try one of: <span class="kbd">python</span> <span class="kbd">java</span> <span class="kbd">c</span> <span class="kbd">cpp</span> <span class="kbd">sql</span> — e.g. <span class="kbd">lab java</span> (no brackets, just the word).`);
+      }
+      state.labLang = resolved;
+    }
+    refreshPrompt();
+    const lang = state.labLang;
+    const topic = state.coachTopic;
+
+    if (topic === 'dsa' && lang === 'sql') return langMismatchMsg('dsa', lang);
+    if (topic === 'sql' && lang !== 'sql') return langMismatchMsg('sql', lang);
+
+    if (topic === 'dsa' && PROCEDURAL.has(lang)) {
+      state.labStage = 'buggy';
+      const c = DSA_CODE[lang];
+      return `<p>Practice Lab — <b>${LANG_NAMES[lang]}</b>, working on <b class="hl">Two Sum</b> (linked from the coach). <span class="badge wrong">has a bug</span></p>` +
+        boxOpen(`practice-lab · ${LANG_NAMES[lang]}`, 'Two Sum') +
+        `<p class="codeblock">${c.buggy}</p>` + boxClose +
+        `<p><span class="kbd">run</span> execute <span class="kbd">complexity</span> estimate <span class="kbd">review</span> AI feedback</p>` +
+        next(`<span class="kbd">run</span> it — see what happens.`);
+    }
+    if (topic === 'sql' && lang === 'sql') {
+      state.labStage = 'buggy';
+      return `<p>Practice Lab — <b>SQL</b>, working on <b class="hl">2nd Highest Salary Per Dept</b> (linked from the coach). <span class="badge wrong">has a bug</span></p>` +
+        boxOpen('practice-lab · SQL', 'sample.db') +
+        `<p class="codeblock">${SQL_CODE.buggy}</p>` + boxClose +
+        `<p><span class="kbd">run</span> execute <span class="kbd">complexity</span> real query plan <span class="kbd">review</span> AI feedback</p>` +
+        next(`<span class="kbd">run</span> it — see what happens.`);
+    }
+
+    state.labStage = 'blank';
+    const BLANK = {
+      python: `<span class="cm"># Write your solution here</span>\n\n`,
+      java: `<span class="kw">public class</span> Solution {\n    <span class="kw">public static void</span> main(String[] args) {\n        \n    }\n}`,
+      c: `#include &lt;stdio.h&gt;\n\n<span class="kw">int</span> main() {\n    \n    <span class="kw">return</span> 0;\n}`,
+      cpp: `#include &lt;iostream&gt;\n<span class="kw">using namespace</span> std;\n\n<span class="kw">int</span> main() {\n    \n    <span class="kw">return</span> 0;\n}`,
+      sql: `<span class="cm">-- sample.db: departments, employees, orders</span>\n<span class="kw">SELECT</span> * <span class="kw">FROM</span> employees <span class="kw">LIMIT</span> 5;`,
+    };
+    return `<p>Practice Lab — <b>${LANG_NAMES[lang]}</b>. real execution, not simulated.</p><p class="dim">no problem linked yet — this is just the blank starter template.</p>` +
+      boxOpen(`practice-lab · ${LANG_NAMES[lang]}`, lang === 'sql' ? 'sample.db' : '') +
+      `<p class="codeblock">${BLANK[lang]}</p>` + boxClose +
+      `<p><span class="kbd">run</span> execute <span class="kbd">complexity</span> estimate / plan <span class="kbd">review</span> AI review <span class="kbd">lab &lt;language&gt;</span> switch</p>` +
+      next(`<span class="kbd">coach dsa</span> or <span class="kbd">coach sql</span> first, so the lab has a real problem to work on — that's the actual flow.`);
+  }
+
+  function runScreen() {
+    if (state.mode !== 'lab') return `<p class="err">nothing to run — try <span class="kbd">lab python</span> first.</p>`;
+    const lang = state.labLang, topic = state.coachTopic;
+
+    if (topic === 'sql' && lang === 'sql' && state.labStage !== 'blank') {
+      const rows = state.labStage === 'fixed' ? SQL_CODE.fixedRows : SQL_CODE.buggyRows;
+      const badge = state.labStage === 'fixed' ? '<span class="badge right">correct</span>' : '<span class="badge wrong">wrong</span>';
+      let s = boxOpen('OUTPUT', badge) + `<p>$ sqlite3 sample.db</p>
+        <table style="width:100%;font-size:12px;margin-top:6px"><tr><td class="dim" style="border-bottom:1px solid #222;padding:2px 8px 4px 0">department_id</td><td class="dim" style="border-bottom:1px solid #222;padding:2px 0 4px">second_highest</td></tr>`;
+      rows.forEach(r => { s += `<tr><td style="padding:2px 8px 0 0">${r[0]}</td><td>${r[1]}</td></tr>`; });
+      s += `</table><p class="dim" style="margin-top:8px">[exit 0 in 0.021s]</p>` + boxClose;
+      if (state.labStage === 'buggy') {
+        s += `<p class="dim">runs fine, no error — but check department 1: is 155000 really the <b>second</b>-highest?</p>` + next(`<span class="kbd">review</span> to see what's actually wrong.`);
+      } else {
+        s += next(`<span class="kbd">complexity</span> to confirm the plan, then <span class="kbd">done</span>.`);
+      }
+      return s;
+    }
+
+    if (topic === 'dsa' && PROCEDURAL.has(lang) && state.labStage !== 'blank') {
+      const c = DSA_CODE[lang];
+      const cmds = { python: 'python3 solution.py', java: 'java Solution', c: './solution', cpp: './solution' };
+      const isFixed = state.labStage === 'fixed';
+      const out = isFixed ? c.fixedOut : c.buggyOut;
+      const badge = isFixed ? '<span class="badge right">correct</span>' : '<span class="badge wrong">wrong</span>';
+      let s = boxOpen('OUTPUT', badge) + `<p>$ ${cmds[lang]}</p><p class="${isFixed ? 'hl' : 'err'}">${out}</p><p class="dim">[exit 0 in 0.02${isFixed?4:6}s]</p>` + boxClose;
+      s += isFixed
+        ? `<p class="hl">expected [1, 2] — nailed it.</p>` + next(`<span class="kbd">complexity</span> to confirm, then <span class="kbd">done</span>.`)
+        : `<p class="dim">expected [1, 2] for nums=[3,2,4], target=6 — this returned ${out} instead. it ran fine, it's just wrong.</p>` + next(`<span class="kbd">review</span> to see what's actually wrong.`);
+      return s;
+    }
+
+    return `<p class="dim">$ (no linked problem — plain run, nothing to compare against)</p><p class="hl">3</p>` + next(`<span class="kbd">coach dsa</span> or <span class="kbd">coach sql</span> for the full flow.`);
+  }
+
+  function complexityScreen() {
+    if (state.mode !== 'lab') return `<p class="err">nothing active — try <span class="kbd">lab sql</span> first.</p>`;
+    const lang = state.labLang, topic = state.coachTopic;
+
+    if (topic === 'sql' && lang === 'sql' && state.labStage !== 'blank') {
+      if (state.labStage === 'buggy') {
+        return boxOpen('QUERY PLAN') + `<p>SEARCH employees USING INDEX department_id</p>` + boxClose +
+          `<p class="dim">structurally the plan is fine — this isn't a performance bug, it's a logic bug. the query just never excludes the real highest.</p>` +
+          next(`<span class="kbd">review</span> for the specific fix to think about.`);
+      }
+      return boxOpen('QUERY PLAN') + `<p>SEARCH employees USING INDEX department_id</p>` + boxClose +
+        boxOpen('ROW COUNT') + `<p class="hl">4</p>` + boxClose +
+        `<p class="dim">real sqlite3 output — no AI guess, Big-O doesn't mean much for a query.</p>` +
+        next(`<span class="kbd">done</span> — this one's correct.`);
+    }
+
+    if (topic === 'dsa' && PROCEDURAL.has(lang) && state.labStage !== 'blank') {
+      const c = DSA_CODE[lang];
+      if (state.labStage === 'buggy') {
+        return boxOpen('TIME COMPLEXITY') + `<p class="err">⚠ can't be estimated cleanly — the code doesn't produce correct output yet.</p>` + boxClose +
+          boxOpen('SPACE COMPLEXITY') + `<p class="err">⚠ same — fix the logic first, complexity of a wrong answer isn't meaningful.</p>` + boxClose +
+          next(`<span class="kbd">review</span> to find the actual bug.`);
+      }
+      const bigO = PROCEDURAL.has(lang) && (lang === 'c' || lang === 'cpp') ? 'O(n²)' : 'O(n)';
+      const spaceO = (lang === 'c' || lang === 'cpp') ? 'O(1)' : 'O(n)';
+      return boxOpen('TIME COMPLEXITY') + `<p><span class="hl">${bigO}</span>  •  ${c.timeExp}</p>` + boxClose +
+        boxOpen('SPACE COMPLEXITY') + `<p><span class="hl">${spaceO}</span>  •  ${c.spaceExp}</p>` + boxClose +
+        next(`<span class="kbd">done</span> — this one's correct.`);
+    }
+
+    return `<p class="dim">no linked problem — try <span class="kbd">coach dsa</span> or <span class="kbd">coach sql</span> first.</p>`;
+  }
+
+  function reviewScreen() {
+    if (state.mode !== 'lab') return `<p class="err">nothing active — try <span class="kbd">lab python</span> first.</p>`;
+    const lang = state.labLang, topic = state.coachTopic;
+    if (topic === 'sql' && lang === 'sql' && state.labStage !== 'blank') {
+      if (state.labStage === 'fixed') return `<p class="dim">already fixed — nothing to review.</p>` + next(`<span class="kbd">done</span>.`);
+      return `<p class="dim">sending your query to the AI panel next to it...</p><p><span class="hl">mtdo-ai</span> <span class="dim">›</span> ${SQL_CODE.review}</p><p class="dim">not the corrected query — just where to look.</p>` +
+        next(`<span class="kbd">fix</span> when you're ready to see the corrected approach.`);
+    }
+    if (topic === 'dsa' && PROCEDURAL.has(lang) && state.labStage !== 'blank') {
+      if (state.labStage === 'fixed') return `<p class="dim">already fixed — nothing to review.</p>` + next(`<span class="kbd">done</span>.`);
+      const c = DSA_CODE[lang];
+      return `<p class="dim">sending your ${LANG_NAMES[lang]} buffer to the AI panel next to it...</p><p><span class="hl">mtdo-ai</span> <span class="dim">›</span> ${c.review}</p><p class="dim">not a verdict, not a fix — a nudge toward wherever the approach is going wrong.</p>` +
+        next(`<span class="kbd">fix</span> when you're ready to see the corrected approach.`);
+    }
+    return `<p><span class="hl">mtdo-ai</span> <span class="dim">›</span> what's your current approach actually checking for, on each element?</p>` + next(`<span class="kbd">coach dsa</span> first for the full flow.`);
+  }
+
+  function fixScreen() {
+    if (state.mode !== 'lab' || state.labStage !== 'buggy') return `<p class="err">nothing to fix right now — try <span class="kbd">review</span> first.</p>`;
+    const lang = state.labLang, topic = state.coachTopic;
+    if (topic === 'sql' && lang === 'sql') {
+      state.labStage = 'fixed';
+      return `<p class="hl">here's the corrected approach:</p>` +
+        boxOpen('practice-lab · SQL', 'sample.db') + `<p class="codeblock">${SQL_CODE.fixed}</p>` + boxClose +
+        next(`<span class="kbd">run</span> to confirm it now works.`);
+    }
+    if (topic === 'dsa' && PROCEDURAL.has(lang)) {
+      state.labStage = 'fixed';
+      const c = DSA_CODE[lang];
+      return `<p class="hl">here's the corrected approach:</p>` +
+        boxOpen(`practice-lab · ${LANG_NAMES[lang]}`, 'Two Sum') + `<p class="codeblock">${c.fixed}</p>` + boxClose +
+        next(`<span class="kbd">run</span> to confirm it now works.`);
+    }
+    return `<p class="err">nothing linked — try <span class="kbd">coach dsa</span> first.</p>`;
+  }
+
+  const COACH_NOTES = {
+    dsa: {
+      focus: ['Hash maps trade space for O(1) average lookups', 'Check-before-insert avoids the self-match trap'],
+      ask: ['What is the brute-force solution?', 'Why is it slow?', 'What data structure helps?'],
+      mistake: 'Skipping the "check before insert" ordering on hashmap problems.',
+      model: 'Can you draw the hashmap state after each step, before you code it?',
+    },
+    sql: {
+      focus: ['Correlated subqueries re-run per outer row — know the cost', 'GROUP BY collapses rows; MAX() alone never excludes anything'],
+      ask: ['What is the execution plan?', 'What indexes help?', 'What happens on large datasets?'],
+      mistake: 'Assuming MAX()/GROUP BY automatically excludes the row you\'re comparing against.',
+      model: 'Can you picture the table, row by row, before writing the query?',
+    },
+  };
+
+  function doneScreen() {
+    if (state.mode !== 'lab' || state.labStage !== 'fixed') {
+      return `<p class="err">not ready yet — get to a working solution first (<span class="kbd">run</span> → <span class="kbd">review</span> → <span class="kbd">fix</span> → <span class="kbd">run</span>).</p>`;
+    }
+    const topic = state.coachTopic;
+    const notes = COACH_NOTES[topic] || COACH_NOTES.dsa;
+    let s = `<p><span class="hl">✓ marked done.</span> the full coaching notes just unlocked, for review:</p>` +
+      boxOpen('learning-coach', 'unlocked') +
+      `<p class="hl">Focus On</p>` + notes.focus.map(f => `<p>&nbsp;&nbsp;• ${f}</p>`).join('') +
+      `<p>&nbsp;</p><p class="hl">Ask Yourself</p>` + notes.ask.map(f => `<p>&nbsp;&nbsp;• ${f}</p>`).join('') +
+      `<p>&nbsp;</p><p class="hl">Common Mistake</p><p>&nbsp;&nbsp;• ${notes.mistake}</p>
+       <p>&nbsp;</p><p class="hl">Mental Model</p><p>&nbsp;&nbsp;• ${notes.model}</p>` + boxClose;
+    s += next(`<span class="kbd">coach ${topic === 'sql' ? 'dsa' : 'sql'}</span> to try the other flow, or <span class="kbd">crm</span> / <span class="kbd">vault</span> / <span class="kbd">keys</span> to keep exploring.`);
+    return s;
+  }
+
+  function crmScreen() {
+    return `<p>Career CRM — every application, one pipeline.</p>` +
+      boxOpen('career-crm', 'Razorpay · SDE1') +
+      `<div class="pipeline">
+        <div class="pstage">Applied</div><span class="parrow">→</span>
+        <div class="pstage">OA</div><span class="parrow">→</span>
+        <div class="pstage on">Interview</div><span class="parrow">→</span>
+        <div class="pstage">Offer</div>
+      </div>` + boxClose +
+      `<p><span class="kbd">space</span> advance <span class="kbd">u</span> back <span class="kbd">a</span> add <span class="kbd">n</span> notes</p>
+       <p class="dim">this is what the <b>job-switch</b> plan (see <span class="kbd">plan job-switch</span>) wires up automatically — and the <b>college-application</b> plan uses the exact same pipeline for Applied → Interview → Accepted.</p>` +
+      next(`<span class="kbd">vault</span> next.`);
+  }
+
+  const VAULT_NOTES = [
+    { t: 'System design: rate limiter', body: 'token bucket vs sliding window — token bucket allows bursts, sliding window is smoother.' },
+    { t: 'Behavioral: "tell me about a conflict"', body: 'STAR format — situation, task, action, result. keep the result quantified.' },
+    { t: 'SQL: window functions', body: 'RANK() vs DENSE_RANK() — DENSE_RANK never skips a number after a tie.' },
+  ];
+  function vaultScreen(args) {
+    if (cleanArg(args[0]) === 'search' && args[1]) {
+      const term = args.slice(1).join(' ').toLowerCase();
+      const hits = VAULT_NOTES.filter(n => (n.t + n.body).toLowerCase().includes(term));
+      if (!hits.length) return `<p class="dim">no notes match "${escapeHtml(term)}"</p>` + next(`<span class="kbd">vault</span> to see all of them.`);
+      let s = boxOpen('knowledge-vault', `search: ${escapeHtml(term)}`);
+      hits.forEach(n => { s += `<p class="hl">${n.t}</p><p class="dim">${n.body}</p><p>&nbsp;</p>`; });
+      return s + boxClose + next(`<span class="kbd">keys</span> for the full keybinding list.`);
+    }
+    let s = `<p>Knowledge Vault — a second brain, separate from any one card.</p>` + boxOpen('knowledge-vault', VAULT_NOTES.length + ' notes');
+    VAULT_NOTES.forEach(n => { s += `<p class="hl">${n.t}</p><p class="dim">${n.body}</p><p>&nbsp;</p>`; });
+    return s + boxClose + `<p><span class="kbd">/</span> search live <span class="kbd">e</span> edit <span class="kbd">a</span> add · try <span class="kbd">vault search rank</span></p>` +
+      next(`<span class="kbd">keys</span> for the full keybinding list.`);
+  }
+
+  function keysScreen() {
+    const groups = [
+      ['Global', [['f','Toggle Focus Mode'],['C','Start/focus the AI panel'],['T','Toggle the Practice Lab'],['c','Career CRM'],['v','Knowledge Vault'],['g','Setup Plan Wizard'],['?','Full cheat sheet']]],
+      ['Practice Lab', [['^R','Run'],['^B','Complexity / query plan'],['^A','AI code review'],['^N','Reset template']]],
+      ['Kanban', [['h/l','Columns'],['j/k','Cards'],['space','Advance'],['a','Add / open menu']]],
+      ['Pomodoro & Music', [['p/x','Start-pause / reset'],['m','Play/pause'],['[ / ]','Prev / next track']]],
+    ];
+    let s = '';
+    groups.forEach(([title, rows]) => {
+      s += `<p class="hl">${title}</p>`;
+      rows.forEach(([k,d]) => { s += `<p><span class="kbd" style="min-width:60px;display:inline-block;text-align:center">${k}</span>  <span class="dim">${d}</span></p>`; });
+      s += `<p>&nbsp;</p>`;
+    });
+    return s + next(`<span class="kbd">install</span> when you're ready to actually set this up.`);
+  }
+
+  function musicScreen() {
+    return `<p>Now Playing — works with whatever already owns "Now Playing": YouTube Music in a browser tab, Apple Music, VLC, Spotify, anything.</p>` +
+      boxOpen('now-playing', 'playing ▶') +
+      `<p><b>Lo-fi Study Mix</b></p><p class="dim">0:42 / 3:15</p>` + boxClose +
+      `<p><span class="kbd">m</span> play/pause <span class="kbd">[</span> prev <span class="kbd">]</span> next <span class="kbd">+/-</span> volume</p>
+       <p class="dim">volume nudges the system's actual output when this universal path is active — there's no per-app volume in that framework, so it affects whatever's really playing, not just one app.</p>
+       <p>&nbsp;</p>
+       <p><span class="kbd">P</span> paste a Spotify playlist/album/track link and it plays immediately — the one Spotify-specific shortcut here, since there's no universal "jump straight to this link" across services.</p>` +
+      next(`this panel lives inside <span class="kbd">focus</span> too — task, pomodoro, coach, AI, and music, one screen, so you never alt-tab just to hit pause.`);
+  }
+
+  function youtubeScreen(args) {
+    const url = args.join(' ').trim();
+    if (!url) {
+      return `<p class="err">try: <span class="kbd">youtube https://youtu.be/xxxxxxxxxxx</span></p>` +
+        next(`paste any captioned tutorial link.`);
+    }
+    return `<p class="dim">fetching captions (yt-dlp, no video download)...</p><p class="dim">writing notes + a question bank...</p>` +
+      boxOpen('knowledge-vault · from youtube', 'editable') +
+      `<p class="hl">Recursion, the Actual Mental Model</p>
+       <p class="dim">## Notes</p>
+       <p>• A recursive call needs a base case AND a case that shrinks toward it — skip either and it's a loop with extra steps that eventually crashes.</p>
+       <p>• The call stack IS the memory — you don't need your own stack structure if you trust the language's.</p>
+       <p class="dim">## Questions</p>
+       <p>1. What breaks if the base case is checked after the recursive call, not before?</p>
+       <p>2. Could this be rewritten with an explicit stack? What would you lose?</p>` + boxClose +
+      `<p class="dim">saved to the vault, and yours to edit. the questions aren't graded — they're there so you find out whether you actually understood it before opening tutorial #4 on the same topic.</p>` +
+      next(`<span class="kbd">vault</span> to see it sitting alongside your other notes.`);
+  }
+
+  function profileScreen() {
+    return `<p>Multiple named profiles, each fully separate — its own goals, its own history, its own streaks. One shared machine, or one person splitting DSA grind from college apps.</p>` +
+      boxOpen('profiles') +
+      `<p><span class="hl">● DSA Track</span> <span class="dim">(active)</span></p><p>Job Search — 🔒 protected</p><p>Janhvi's Plan — 🔒 protected</p>` + boxClose +
+      `<p><span class="kbd">U</span> opens this menu in the real app · <span class="kbd">mtdo profile create/switch/list</span> from the CLI</p>
+       <p>&nbsp;</p>
+       <p class="hl2">password protection is real, local encryption</p>
+       <p class="dim">a protected profile's goals + history are encrypted under a key wrapped by your password AND, separately, a one-time recovery code shown once at creation:</p>` +
+      boxOpen('recovery code — shown once, never stored') + `<p class="hl3">K7X9-QM3P-8LDF-2H6W</p>` + boxClose +
+      `<p class="dim">either the password or the recovery code unlocks it independently — lose both and it's genuinely gone, by design. nothing is ever stored anywhere that alone could decrypt your data, and nothing leaves your machine.</p>` +
+      next(`<span class="kbd">install</span> to actually set this up, or <span class="kbd">tour</span> to replay everything.`);
+  }
+
+  function installScreen() {
+    return boxOpen('quickstart') +
+      `<p class="dim"># from a clone of the repo</p><p>$ pip install -e .</p><p>&nbsp;</p>
+       <p class="dim"># first run auto-creates ~/.mtdo/config.yaml from the demo plan</p><p>$ mtdo</p>` + boxClose +
+      `<p>two ways to make it yours:</p>
+       <p>&nbsp;</p>
+       <p class="hl">1. by hand</p>
+       <p class="dim">&nbsp;&nbsp;$ mtdo template goals.json   <span class="cm"># writes a filled-out example</span></p>
+       <p class="dim">&nbsp;&nbsp;... edit goals.json yourself ...</p>
+       <p class="dim">&nbsp;&nbsp;$ mtdo import goals.json</p>
+       <p>&nbsp;</p>
+       <p class="hl">2. let the AI do it — the Plan Wizard</p>
+       <p class="dim">&nbsp;&nbsp;press <span class="kbd">g</span> in the real app → answer a few questions → the AI</p>
+       <p class="dim">&nbsp;&nbsp;writes goals.json for you → imported automatically (see <span class="kbd">plan</span> above)</p>
+       <p>&nbsp;</p>
+       <p class="dim">either way, when you open the AI panel (<span class="kbd">C</span>) you choose the backend:
+       Claude Code if it's installed, a local Ollama model, or a direct API chat
+       (Claude / ChatGPT / Gemini) — your call, remembered for next time. see the ↓ Install section on this page for the full setup command.</p>` +
+      next(`<span class="kbd">tour</span> to replay everything from the start.`);
+  }
+
+  function run(raw) {
+    const trimmed = raw.trim();
+    if (!trimmed) return;
+    printCommandLine(raw);
+    state.history.push(raw); state.histIdx = state.history.length;
+    const [cmd, ...args] = trimmed.split(/\s+/);
+    const c = cmd.toLowerCase();
+
+    switch (c) {
+      case 'help': case '?': printBlock(helpScreen()); break;
+      case 'about': printBlock(aboutScreen()); break;
+      case 'plan': case 'wizard': printBlock(planScreen(args)); break;
+      case 'board': case 'kanban': printBlock(boardScreen()); break;
+      case 'focus': printBlock(focusScreen()); break;
+      case 'coach': printBlock(coachScreen(args)); break;
+      case 'hint': printBlock(hintScreen()); break;
+      case 'ai': printBlock(aiScreen(args)); break;
+      case 'lab': printBlock(labScreen(args)); break;
+      case 'run': printBlock(runScreen()); break;
+      case 'complexity': printBlock(complexityScreen()); break;
+      case 'review': printBlock(reviewScreen()); break;
+      case 'fix': printBlock(fixScreen()); break;
+      case 'done': printBlock(doneScreen()); break;
+      case 'crm': printBlock(crmScreen()); break;
+      case 'vault': printBlock(vaultScreen(args)); break;
+      case 'music': printBlock(musicScreen()); break;
+      case 'youtube': printBlock(youtubeScreen(args)); break;
+      case 'profile': case 'profiles': printBlock(profileScreen()); break;
+      case 'keys': case 'keybinds': printBlock(keysScreen()); break;
+      case 'install': printBlock(installScreen()); break;
+      case 'tour': startTour(); break;
+      case 'clear': case 'cls': clearScreen(); break;
+      case 'exit': case 'quit': case 'q':
+        printBlock(`<p>there's no quitting deliberate practice. (closing the tab won't help either)</p>`); break;
+      case 'whoami': printBlock(`<p>mtdo-user  <span class="dim">(probably prepping for an interview)</span></p>`); break;
+      case 'ls': printBlock(`<p>kanban.board  learning.coach  ai.panel  practice.lab  career.crm  knowledge.vault</p>`); break;
+      case 'pwd': printBlock(`<p>/focus-mode/deliberate-practice</p>`); break;
+      case 'sudo': printBlock(`<p class="err">nice try. this terminal can't rm -rf your grind.</p>`); break;
+      case 'date': printBlock(`<p>${new Date().toString()}</p>`); break;
+      default:
+        printBlock(`<p class="err">command not found: ${escapeHtml(c)}</p><p class="dim">type <span class="kbd">help</span> for the list, or <span class="kbd">tour</span> for a guided walkthrough.</p>`);
+    }
+    input.value = '';
+  }
+
+  function clearScreen() {
+    document.getElementById('frame').classList.add('glitch');
+    setTimeout(() => document.getElementById('frame').classList.remove('glitch'), 200);
+    output.innerHTML = '';
+    state.mode = null; refreshPrompt();
+  }
+
+  function simType(cmd, delay) {
+    return new Promise(resolve => {
+      let i = 0;
+      input.value = '';
+      const iv = setInterval(() => {
+        if (!state.touring) { clearInterval(iv); resolve(); return; }
+        input.value = cmd.slice(0, i + 1);
+        i++;
+        if (i >= cmd.length) {
+          clearInterval(iv);
+          setTimeout(() => { run(cmd); setTimeout(resolve, delay || 2800); }, 420);
+        }
+      }, 55);
+    });
+  }
+
+  async function startTour() {
+    if (state.touring) return;
+    state.touring = true;
+    input.disabled = true;
+    touringBadge.style.display = 'inline-block';
+    printBlock(`<p class="dim">— starting the guided tour, sit back and actually read each screen (Ctrl+C to skip) —</p>`);
+    await new Promise(r => setTimeout(r, 1100));
+    const steps = [
+      ['about', 3600], ['plan job-switch', 4400], ['board', 3600], ['focus', 3600], ['music', 3200],
+      ['coach dsa', 3200], ['hint', 2800], ['hint', 2800],
+      ['lab python', 3200], ['run', 3200], ['review', 3800], ['fix', 3200], ['run', 2800], ['complexity', 3200], ['done', 3800],
+      ['coach sql', 3200], ['hint', 2800],
+      ['lab sql', 3200], ['run', 3200], ['review', 3800], ['fix', 3200], ['run', 2800], ['complexity', 3200], ['done', 3800],
+      ['youtube https://youtu.be/xxxxxxxxxxx', 4400],
+      ['crm', 3200], ['vault', 3200], ['profile', 3600], ['keys', 3600], ['install', 2400],
+    ];
+    for (const [cmd, delay] of steps) {
+      if (!state.touring) break;
+      await simType(cmd, delay);
+    }
+    if (state.touring) {
+      printBlock(`<p class="hl">— that's the whole walkthrough —</p><p class="dim">type <span class="kbd">help</span> to explore on your own, or <span class="kbd">tour</span> to replay it.</p>`);
+    }
+    state.touring = false;
+    input.disabled = false;
+    touringBadge.style.display = 'none';
+    input.focus();
+  }
+
+  function boot() {
+    typeLines([
+      { t: 'mtdo v2.4.0 — terminal task board', speed: 22 },
+      { t: 'loading ~/.mtdo/config.yaml ...', cls: 'dim', speed: 10 },
+      { t: 'loading ~/.mtdo/state.json ...', cls: 'dim', speed: 10 },
+      { t: 'ready.', cls: 'hl', speed: 30 },
+    ], () => {
+      printBlock(`<p class="dim">this is an interactive recreation — type real commands below. try <span class="kbd">help</span> or <span class="kbd">tour</span>.</p>`);
+    });
+  }
+
+  input.addEventListener('keydown', (e) => {
+    if (state.touring) { return; }
+    if (e.key === 'Enter') { run(input.value); }
+    else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      if (state.histIdx > 0) { state.histIdx--; input.value = state.history[state.histIdx] || ''; }
+    } else if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      if (state.histIdx < state.history.length) { state.histIdx++; input.value = state.history[state.histIdx] || ''; }
+    } else if (e.ctrlKey && e.key.toLowerCase() === 'l') {
+      e.preventDefault(); clearScreen();
+    }
+  });
+  document.addEventListener('keydown', (e) => {
+    if (e.ctrlKey && e.key === 'c' && state.touring) { state.touring = false; }
+  });
+  document.getElementById('frame').addEventListener('click', () => { if (!state.touring) input.focus(); });
+
+  function tickClock() {
+    document.getElementById('clock').textContent = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+  }
+  tickClock(); setInterval(tickClock, 1000);
+
+  boot();
+
+  /* ================= landing-page chrome (new, not part of the reused REPL) ================= */
+
+  // scroll-reveal
+  const revealTargets = document.querySelectorAll('.reveal');
+  if ('IntersectionObserver' in window && !reduceMotion) {
+    const io = new IntersectionObserver((entries) => {
+      entries.forEach(en => { if (en.isIntersecting) { en.target.classList.add('in'); io.unobserve(en.target); } });
+    }, { threshold: 0.12 });
+    revealTargets.forEach(el => io.observe(el));
+  } else {
+    revealTargets.forEach(el => el.classList.add('in'));
+  }
+
+  // feature-card autoplay demos
+  const AUTO_DEMOS = {
+    board: [
+      { t: '$ board', cls: 'l1' },
+      { t: 'Mon · Week 3 · score 82' },
+      { t: 'Todo: Two Sum · Valid Parens · SQL Theory' },
+      { t: '→ h/l columns · j/k cards · space advance' },
+    ],
+    focus: [
+      { t: '$ focus', cls: 'l1' },
+      { t: 'Focus Mode ON — 44:12 remaining' },
+      { t: 'Learning Coach: 2nd Highest Salary/Dept' },
+      { t: 'AI Assistant: "what\'s slow about it?"' },
+    ],
+    coach: [
+      { t: '$ coach dsa', cls: 'l1' },
+      { t: 'Two Sum — Easy · hints: 0/4' },
+      { t: '$ hint' },
+      { t: '1. Think about what you\'d remember as you scan once.' },
+    ],
+    lab: [
+      { t: '$ lab python', cls: 'l1' },
+      { t: '$ run' },
+      { t: '[1, 2]  expected [1, 2] — nailed it.' },
+      { t: '$ complexity → O(n) time · O(n) space' },
+    ],
+    music: [
+      { t: '$ music', cls: 'l1' },
+      { t: '▶ Lo-fi Study Mix — 0:42 / 3:15' },
+      { t: 'm play/pause · [ / ] skip · +/- volume' },
+      { t: 'P paste a Spotify link → jumps straight there' },
+    ],
+  };
+
+  function typeLoop(el, lines) {
+    if (reduceMotion) {
+      el.innerHTML = lines.map(l => `<p class="${l.cls||''}">${escapeHtml(l.t)}</p>`).join('');
+      return;
+    }
+    let li = 0;
+    el.innerHTML = '';
+    function typeLine() {
+      if (li >= lines.length) { setTimeout(() => { el.innerHTML = ''; li = 0; typeLine(); }, 3600); return; }
+      const p = document.createElement('p');
+      p.className = lines[li].cls || '';
+      el.appendChild(p);
+      const text = lines[li].t;
+      let ci = 0;
+      const iv = setInterval(() => {
+        p.textContent = text.slice(0, ci + 1);
+        ci++;
+        if (ci >= text.length) { clearInterval(iv); li++; setTimeout(typeLine, 620); }
+      }, 32);
+    }
+    typeLine();
+  }
+
+  document.querySelectorAll('.fc-demo[data-auto]').forEach(el => {
+    const key = el.getAttribute('data-auto');
+    const lines = AUTO_DEMOS[key];
+    if (!lines) return;
+    const kick = () => { typeLoop(el, lines); };
+    if ('IntersectionObserver' in window) {
+      const io2 = new IntersectionObserver((entries) => {
+        entries.forEach(en => { if (en.isIntersecting) { kick(); io2.disconnect(); } });
+      }, { threshold: 0.3 });
+      io2.observe(el);
+    } else { kick(); }
+  });
+
+  // clickable feature cards: scroll to the live terminal and run the real command
+  document.querySelectorAll('.feature-card[data-mode="click"]').forEach(card => {
+    const btn = card.querySelector('.fc-run');
+    if (!btn) return;
+    btn.addEventListener('click', () => {
+      const cmd = card.getAttribute('data-cmd');
+      document.getElementById('live').scrollIntoView({ behavior: reduceMotion ? 'auto' : 'smooth', block: 'start' });
+      const frame = document.getElementById('frame');
+      frame.classList.add('pulse');
+      setTimeout(() => frame.classList.remove('pulse'), 1400);
+      setTimeout(() => { run(cmd); input.focus(); }, reduceMotion ? 0 : 550);
+    });
+  });
+
+  // install code copy buttons
+  document.querySelectorAll('.copyBtn').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const text = (btn.getAttribute('data-copy') || '').replace(/&#10;/g, '\n');
+      try {
+        await navigator.clipboard.writeText(text);
+      } catch (e) {
+        const ta = document.createElement('textarea');
+        ta.value = text; document.body.appendChild(ta); ta.select();
+        try { document.execCommand('copy'); } catch (e2) {}
+        document.body.removeChild(ta);
+      }
+      btn.textContent = 'copied'; btn.classList.add('copied');
+      setTimeout(() => { btn.textContent = 'copy'; btn.classList.remove('copied'); }, 1600);
+    });
+  });
+})();
+</script>
+</body>
+</html>
