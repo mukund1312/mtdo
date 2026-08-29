@@ -1,0 +1,35 @@
+# Automated AI code review on every PR, via the open-source PR-Agent (the
+# engine behind Qodo Merge) -- self-hosted here with our own Anthropic key
+# rather than a Qodo account, so this needs no third-party service beyond
+# GitHub + Anthropic. Runs alongside, not instead of, the pytest CI job in
+# ci.yml: this is a review/suggestions pass, not a merge gate.
+#
+# Pinned to a specific commit (not @main) so the action's own code can't
+# change under us without a deliberate bump here.
+name: PR-Agent
+
+on:
+  pull_request:
+    types: [opened, reopened, synchronize]
+
+permissions:
+  issues: write
+  pull-requests: write
+  contents: read
+
+jobs:
+  pr_agent:
+    if: github.event.sender.type != 'Bot'
+    runs-on: ubuntu-latest
+    name: AI code review (PR-Agent)
+    steps:
+      - name: PR Agent action step
+        uses: The-PR-Agent/pr-agent@41c738ec70d63dd08440b6a86c3d6ba85e1723a3 # main, pinned 2026-08-30
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CONFIG.MODEL: claude-sonnet-5
+          CONFIG.FALLBACK_MODELS: '["claude-sonnet-5"]'
+          GITHUB_ACTION_CONFIG.AUTO_REVIEW: true
+          GITHUB_ACTION_CONFIG.AUTO_IMPROVE: true
+          GITHUB_ACTION_CONFIG.AUTO_DESCRIBE: false

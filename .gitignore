@@ -3,6 +3,7 @@ __pycache__/
 *.egg-info/
 .venv/
 venv/
+.pr-agent-venv/
 build/
 dist/
 .DS_Store
