@@ -30,13 +30,6 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           CONFIG.MODEL: claude-sonnet-5
           CONFIG.FALLBACK_MODELS: '["claude-sonnet-5"]'
-          # Our Anthropic key is identity-linked (acts across multiple
-          # workspaces), which Anthropic requires an explicit
-          # anthropic-workspace-id header for on every request -- confirmed
-          # live via the action's own error log (litellm.BadRequestError:
-          # "anthropic-workspace-id is required when authenticating with an
-          # identity-linked API key"), not something documented up front.
-          LITELLM.EXTRA_HEADERS: '{"anthropic-workspace-id": "${{ secrets.ANTHROPIC_WORKSPACE_ID }}"}'
           GITHUB_ACTION_CONFIG.AUTO_REVIEW: true
           GITHUB_ACTION_CONFIG.AUTO_IMPROVE: true
           GITHUB_ACTION_CONFIG.AUTO_DESCRIBE: false
