@@ -433,3 +433,145 @@ async def test_shine_sweep_advances_while_playing_freezes_on_pause_parks_on_stop
         app.radio_player.stop()
         screen._advance_shine()
         assert screen._shine_position == 0
+
+
+# -- Dense "skyline" visualizer (radio_screen.py) -- sits beside the
+# shine-sweep art rather than stacked below it. _interpolate_bars/
+# _gradient_color/_render_visualizer are pure functions of their inputs (no
+# player/screen access needed), so their span/color logic is tested directly
+# here rather than only through a rendered screenshot.
+
+def test_interpolate_bars_reproduces_real_band_values_at_their_own_positions():
+    """At the exact fractional position of a real band (i * (num_bands-1) /
+    (num_bars-1) landing on an integer), the Catmull-Rom spline must
+    reproduce that band's own real (normalized) value exactly -- confirms
+    the interpolation is anchored to genuine data, not just plausible-looking
+    curvature untethered from it."""
+    levels = [-60.0, -50.0, -40.0, -30.0, -20.0, -10.0, -5.0, 0.0]  # 8 real bands, quiet to loud
+    norms = [max(0.0, min(1.0, (lvl + 60.0) / 60.0)) for lvl in levels]
+    num_bars = 15  # (num_bars - 1) is a multiple of (len(levels) - 1) == 7
+    bars = radio_screen._interpolate_bars(levels, num_bars)
+    assert len(bars) == num_bars
+    for band_index, expected in enumerate(norms):
+        bar_index = band_index * (num_bars - 1) // (len(levels) - 1)
+        assert bars[bar_index] == pytest.approx(expected, abs=1e-9)
+
+
+def test_interpolate_bars_stays_in_unit_range_and_is_flat_for_uniform_levels():
+    flat = radio_screen._interpolate_bars([-30.0] * 8, 24)
+    assert len(flat) == 24
+    assert all(v == pytest.approx(0.5, abs=1e-9) for v in flat)
+
+    loud = radio_screen._interpolate_bars([0.0] * 8, 24)
+    assert all(0.0 <= v <= 1.0 for v in loud)
+    assert all(v == pytest.approx(1.0, abs=1e-9) for v in loud)
+
+
+def test_interpolate_bars_produces_more_resolution_than_the_8_real_bands():
+    """The whole point of interpolating -- a monotonically increasing real
+    signal across the 8 real bands must not just repeat 8 flat chunks once
+    subdivided into more bars."""
+    levels = [-60.0, -50.0, -40.0, -30.0, -20.0, -10.0, -5.0, 0.0]
+    bars = radio_screen._interpolate_bars(levels, radio_screen._VIS_BARS)
+    assert len(bars) == radio_screen._VIS_BARS
+    assert len(set(round(v, 6) for v in bars)) > len(levels)
+
+
+def test_gradient_color_matches_stops_at_their_own_fracs_and_clamps_outside_0_1():
+    assert radio_screen._gradient_color(0.0) == radio_screen._VIS_CYAN
+    assert radio_screen._gradient_color(1.0) == radio_screen._VIS_CORAL
+    assert radio_screen._gradient_color(0.35) == radio_screen._GREEN_BRIGHT
+    assert radio_screen._gradient_color(0.85) == radio_screen._ORANGE
+    # out-of-range fracs clamp to the end stops rather than extrapolating
+    assert radio_screen._gradient_color(-5.0) == radio_screen._gradient_color(0.0)
+    assert radio_screen._gradient_color(5.0) == radio_screen._gradient_color(1.0)
+
+
+def test_gradient_color_is_monotonic_in_each_rgb_channel_within_a_stop_span():
+    """Cheap sanity check that a mid-span frac is genuinely between its two
+    bracketing stops in RGB space, not some interpolation-math typo."""
+    low = radio_screen._hex_to_rgb(radio_screen._gradient_color(0.0))
+    mid = radio_screen._hex_to_rgb(radio_screen._gradient_color(0.17))  # halfway to the mint stop
+    high = radio_screen._hex_to_rgb(radio_screen._gradient_color(0.35))
+    for lo, m, hi in zip(low, mid, high):
+        assert min(lo, hi) <= m <= max(lo, hi)
+
+
+def _row_spans(text, row, width):
+    """Extracts the (start, end, style) spans belonging to one rendered row
+    of a _render_visualizer() Text, given every row is `width` chars plus a
+    trailing newline."""
+    row_start = row * (width + 1)
+    row_end = row_start + width
+    return [s for s in text.spans if s.start < row_end and s.end > row_start]
+
+
+def test_render_visualizer_silence_is_all_unlit():
+    text = radio_screen._render_visualizer([-60.0] * 8)
+    plain_rows = text.plain.split("\n")[:-1]
+    assert len(plain_rows) == radio_screen._VIS_ROWS
+    assert all(ch == "░" for row in plain_rows for ch in row)
+    bottom_row_spans = _row_spans(text, radio_screen._VIS_ROWS - 1, radio_screen._VIS_BARS)
+    assert all(s.style == radio_screen._VIS_OFF for s in bottom_row_spans)
+
+
+def test_render_visualizer_full_volume_lights_every_row_with_the_gradient():
+    """0 dBFS on every real band normalizes to 1.0 everywhere, so every bar
+    should be lit its full height -- bottom row cyan, top row coral, per the
+    low-to-high color ramp."""
+    text = radio_screen._render_visualizer([0.0] * 8)
+    plain_rows = text.plain.split("\n")[:-1]
+    assert len(plain_rows) == radio_screen._VIS_ROWS
+    assert all(ch == "█" for row in plain_rows for ch in row)
+
+    # row 0 in the rendered Text is the TOP of the bar (rows are emitted
+    # top-down); the bottom row is printed last.
+    top_spans = _row_spans(text, 0, radio_screen._VIS_BARS)
+    bottom_spans = _row_spans(text, radio_screen._VIS_ROWS - 1, radio_screen._VIS_BARS)
+    assert all(s.style == radio_screen._VIS_CORAL for s in top_spans)
+    assert all(s.style == radio_screen._VIS_CYAN for s in bottom_spans)
+
+
+async def test_visualizer_freezes_on_pause_parks_on_stop_resumes_on_play():
+    """Same freeze/park pattern as the shine-sweep test above, and for the
+    same reason: the screen's own real set_interval would otherwise race
+    these manual _redraw_visualizer() calls, so this drives it directly and
+    asserts relative behavior rather than exact tick counts."""
+    app = TodoApp()
+    async with app.run_test() as pilot:
+        await _dismiss_first_run_prompts(pilot, app)
+
+        with patch("mtdo.radio.has_mpv", return_value=True):
+            await pilot.press("R")
+            await pilot.pause()
+        screen = app.screen
+        assert screen._last_vis_levels == [0.0] * radio.NUM_BANDS
+
+        item = screen.list_view.children[0]
+        with patch("mtdo.radio.has_mpv", return_value=True), \
+             patch("mtdo.radio.subprocess.Popen", side_effect=_mock_popen_pair()), \
+             patch("mtdo.radio.threading.Thread"):
+            screen.on_list_view_selected(_FakeSelected(item))
+
+        # genuinely playing, not paused -- pulls fresh real levels
+        screen._last_paused = False
+        with patch.object(app.radio_player, "get_levels", return_value=[-10.0] * radio.NUM_BANDS):
+            screen._redraw_visualizer()
+        assert screen._last_vis_levels == [-10.0] * radio.NUM_BANDS
+
+        # frozen while paused -- must NOT pick up this new (also real) value
+        screen._last_paused = True
+        with patch.object(app.radio_player, "get_levels", return_value=[-1.0] * radio.NUM_BANDS):
+            screen._redraw_visualizer()
+        assert screen._last_vis_levels == [-10.0] * radio.NUM_BANDS
+
+        # resumes pulling fresh real levels once unpaused
+        screen._last_paused = False
+        with patch.object(app.radio_player, "get_levels", return_value=[-1.0] * radio.NUM_BANDS):
+            screen._redraw_visualizer()
+        assert screen._last_vis_levels == [-1.0] * radio.NUM_BANDS
+
+        # parks at the rest baseline once stopped
+        app.radio_player.stop()
+        screen._redraw_visualizer()
+        assert screen._last_vis_levels == [0.0] * radio.NUM_BANDS

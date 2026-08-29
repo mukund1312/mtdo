@@ -37,7 +37,6 @@ from rich.text import Text
 from . import config as appconfig
 from . import radio
 
-_BAR_ROWS = 6
 _REPEAT_CYCLE = ["off", "all", "one"]
 _VOL_BAR_WIDTH = 28
 
@@ -60,7 +59,7 @@ _PANEL_BG = "#0a0f0c"
 # or garble it, which a rotate/scale attempt on pre-rendered block characters
 # generally can. No textual-image/Pillow/ffmpeg needed at all for this --
 # genuinely simpler than the vinyl attempt, plain text the whole way.
-_SHINE_ART = [
+_SHINE_ART_FULL = [
     "⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⡿⠟⠛⠉⢋⡛⠛⢿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿",
     "⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⠟⠉⡴⠎⠹⣿⣷⣾⣿⣶⣬⠙⢿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿",
     "⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⡿⠋⣰⣵⣶⣶⣦⡈⣿⣿⣿⣿⡏⣄⠸⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿",
@@ -95,12 +94,143 @@ _SHINE_ART = [
     "⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣶⣤⣌⡙⠛⠉⠁⢠⣶⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿",
     "⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⡷⠀⣀⣴⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿",
 ]
+
+# Cropped to the center _SHINE_DISPLAY_WIDTH columns of the 65-wide source
+# art -- this screen now puts the visualizer BESIDE the art (not stacked
+# below it), and the two need to share one ~80-col terminal's worth of
+# horizontal room (same working assumption other screens in this app make,
+# and the same real-estate tradeoff PR #48/#49's shine-sweep/scrolling work
+# already had to reason about for this exact panel). At the panel's actual
+# content width (80 - 2*1 margin - 2*1 border - 2*2 padding = 70 cols) the
+# full 65-wide art plus any real visualizer simply doesn't fit -- narrowing
+# the art (rather than shrinking the visualizer down to the few columns that
+# would otherwise be left) is the one that keeps the new "skyline" dense
+# enough to read as dozens of bars. Cropped from the center, not an edge, on
+# the assumption the art's focal point is centered like most portrait-style
+# ASCII art -- _SHINE_ART_FULL is kept above uncropped in case a future
+# session wants to re-tune this.
+_SHINE_CROP_START = 11
+_SHINE_DISPLAY_WIDTH = 42
+_SHINE_ART = [row[_SHINE_CROP_START:_SHINE_CROP_START + _SHINE_DISPLAY_WIDTH] for row in _SHINE_ART_FULL]
 _SHINE_WIDTH = len(_SHINE_ART[0])
 _SHINE_BASE_COLOR = "#a8b0ac"
 _SHINE_HIGHLIGHT_COLOR = "#c8ffe0"
 _SHINE_BAND_HALF_WIDTH = 6
 _SHINE_STEP = 2
 _SHINE_TICK = 1 / 20
+
+# -- Dense "skyline" visualizer -- sits beside the shine-sweep art (not
+# stacked below it) inside the same ~70-col content budget accounted for
+# above: _SHINE_DISPLAY_WIDTH (42) + _VIS_GAP (2) + _VIS_BARS (24) = 68,
+# leaving a couple of spare columns for VerticalScroll's own scrollbar when
+# the panel's content overflows a short terminal (see PR #49). Height
+# matches the art's row count exactly so the two sit as one aligned block.
+#
+# Still real-data-only, same "EQ honesty" line the rest of this file holds
+# to (see module docstring): radio.py's RadioPlayer.get_levels() is the only
+# real audio data that exists, and it is only ever NUM_BANDS=8 values wide.
+# Going from 8 real bands to _VIS_BARS=24 dense bars is spline interpolation
+# across those 8 real values (_interpolate_bars, below), not decoration --
+# a Catmull-Rom spline's curvature between control points is itself derived
+# from the real neighboring bands' values, so the "skyline" texture between
+# bars is real spectral shape, not randomness standing in for it.
+_VIS_BARS = 24
+_VIS_GAP = 2
+_VIS_ROWS = len(_SHINE_ART)
+_VIS_OFF = "#16241c"
+_VIS_CYAN = "#00ffd0"
+_VIS_GOLD = "#ffd166"
+_VIS_CORAL = "#ff5f56"
+# Low-to-high color ramp: neon cyan (bass) -> glowing mint -> warm gold ->
+# orange -> hot coral only at the very top peaks, matching the retro CRT/
+# synthwave palette the rest of this screen already uses (reuses
+# _GREEN_BRIGHT for the mint stop and _ORANGE for the orange stop rather
+# than inventing near-duplicate colors).
+_VIS_GRADIENT_STOPS = [
+    (0.0, _VIS_CYAN),
+    (0.35, _GREEN_BRIGHT),
+    (0.62, _VIS_GOLD),
+    (0.85, _ORANGE),
+    (1.0, _VIS_CORAL),
+]
+
+
+def _hex_to_rgb(hex_color):
+    hex_color = hex_color.lstrip("#")
+    return tuple(int(hex_color[i:i + 2], 16) for i in (0, 2, 4))
+
+
+def _gradient_color(frac):
+    """One color along the _VIS_GRADIENT_STOPS ramp at `frac` (0 = bottom of
+    a bar, 1 = top), linearly interpolated in RGB between the two bracketing
+    stops. Depends only on row position, never on live audio data, so it's
+    computed once into _VIS_ROW_COLORS at import time rather than per frame."""
+    frac = max(0.0, min(1.0, frac))
+    for (f0, c0), (f1, c1) in zip(_VIS_GRADIENT_STOPS, _VIS_GRADIENT_STOPS[1:]):
+        if frac <= f1:
+            r0, g0, b0 = _hex_to_rgb(c0)
+            r1, g1, b1 = _hex_to_rgb(c1)
+            span = f1 - f0
+            t = (frac - f0) / span if span else 0.0
+            r = round(r0 + (r1 - r0) * t)
+            g = round(g0 + (g1 - g0) * t)
+            b = round(b0 + (b1 - b0) * t)
+            return f"#{r:02x}{g:02x}{b:02x}"
+    return _VIS_GRADIENT_STOPS[-1][1]
+
+
+_VIS_ROW_COLORS = [_gradient_color(row / (_VIS_ROWS - 1)) for row in range(_VIS_ROWS)]
+
+
+def _interpolate_bars(levels, num_bars):
+    """Subdivides `levels` (real per-band dBFS values -- only NUM_BANDS=8 of
+    them exist, see radio.py) into `num_bars` normalized 0..1 heights via
+    Catmull-Rom spline interpolation between the real band values. Chosen
+    over plain linear interpolation specifically because a spline's natural
+    curvature between control points comes from the real slope/difference
+    between neighboring bands -- it gives the 'skyline' its irregular
+    per-bar variation honestly, from real spectral shape, rather than via
+    decorative randomness (see this file's module docstring on EQ honesty)."""
+    norms = [max(0.0, min(1.0, (lvl + 60.0) / 60.0)) for lvl in levels]
+    n = len(norms)
+    if n == 0:
+        return [0.0] * num_bars
+    if n == 1:
+        return [norms[0]] * num_bars
+    bars = []
+    for i in range(num_bars):
+        u = i / (num_bars - 1) * (n - 1) if num_bars > 1 else 0.0
+        k = int(u)
+        frac = u - k
+        p0 = norms[max(k - 1, 0)]
+        p1 = norms[k]
+        p2 = norms[min(k + 1, n - 1)]
+        p3 = norms[min(k + 2, n - 1)]
+        t, t2 = frac, frac * frac
+        t3 = t2 * t
+        value = 0.5 * (
+            2 * p1
+            + (-p0 + p2) * t
+            + (2 * p0 - 5 * p1 + 4 * p2 - p3) * t2
+            + (-p0 + 3 * p1 - 3 * p2 + p3) * t3
+        )
+        bars.append(max(0.0, min(1.0, value)))
+    return bars
+
+
+def _render_visualizer(levels):
+    """Renders the dense skyline visualizer from real per-band `levels`.
+    Pure function of its input (no player/screen access) so the
+    interpolation and gradient-color logic can be unit-tested directly by
+    span/color inspection, same pattern as _render_shine_art above."""
+    heights = [round(v * _VIS_ROWS) for v in _interpolate_bars(levels, _VIS_BARS)]
+    text = Text()
+    for row in range(_VIS_ROWS - 1, -1, -1):
+        color = _VIS_ROW_COLORS[row]
+        for height in heights:
+            text.append("█" if height > row else "░", style=color if height > row else _VIS_OFF)
+        text.append("\n")
+    return text
 
 
 def _render_shine_art(position):
@@ -199,7 +329,9 @@ class RadioScreen(Screen):
     #radio-prompt {{ width: 1fr; color: {_TEAL}; }}
     #radio-tty {{ width: auto; color: {_DIM}; }}
     #radio-panel {{ margin: 1 2 1 2; border: round {_BOX_BORDER}; background: {_PANEL_BG}; padding: 0 2 1 2; height: 1fr; }}
-    #radio-shine {{ height: auto; margin-top: 1; margin-bottom: 1; }}
+    #radio-hero {{ height: auto; margin-top: 1; margin-bottom: 1; }}
+    #radio-shine {{ width: auto; height: auto; }}
+    #radio-visualizer {{ width: {_VIS_BARS}; height: {_VIS_ROWS}; margin-left: {_VIS_GAP}; background: {_GREEN_BG}; }}
     #radio-title-row {{ height: 1; margin-top: 1; }}
     #radio-cliamp {{ width: 1fr; color: {_TEAL}; text-style: bold; }}
     #radio-playlist-tag {{ width: auto; color: {_DIM}; }}
@@ -207,7 +339,6 @@ class RadioScreen(Screen):
     #radio-time-row {{ height: 1; margin-bottom: 1; }}
     #radio-time {{ width: 1fr; color: {_DIM}; }}
     #radio-state {{ width: auto; color: {_DIM}; }}
-    #radio-visualizer {{ height: {_BAR_ROWS}; background: {_GREEN_BG}; margin-bottom: 1; }}
     #radio-stream-divider {{ color: {_ORANGE}; text-align: center; height: 1; margin-bottom: 1; }}
     #radio-eq {{ height: 1; }}
     #radio-vol {{ height: 1; margin-bottom: 1; }}
@@ -225,6 +356,7 @@ class RadioScreen(Screen):
         self.repeat = radio_state["repeat"]
         self._shine_position = 0
         self._last_paused = False
+        self._last_vis_levels = [0.0] * radio.NUM_BANDS
 
     def compose(self) -> ComposeResult:
         with Horizontal(id="radio-topbar"):
@@ -236,8 +368,11 @@ class RadioScreen(Screen):
             self.topbar_state = Static("■  tty1", id="radio-tty")
             yield self.topbar_state
         with VerticalScroll(id="radio-panel"):
-            self.shine_widget = Static(_render_shine_art(0), id="radio-shine")
-            yield self.shine_widget
+            with Horizontal(id="radio-hero"):
+                self.shine_widget = Static(_render_shine_art(0), id="radio-shine")
+                yield self.shine_widget
+                self.visualizer = Static(_render_visualizer(self._last_vis_levels), id="radio-visualizer")
+                yield self.visualizer
             with Horizontal(id="radio-title-row"):
                 yield Static("C L I A M P", id="radio-cliamp")
                 yield Static("[Playlist]", id="radio-playlist-tag")
@@ -248,8 +383,6 @@ class RadioScreen(Screen):
                 yield self.time_line
                 self.state_line = Static("■ Stopped", id="radio-state")
                 yield self.state_line
-            self.visualizer = Static("", id="radio-visualizer")
-            yield self.visualizer
             self.stream_divider = Static("", id="radio-stream-divider")
             yield self.stream_divider
             self.eq_line = Static("", id="radio-eq")
@@ -380,24 +513,19 @@ class RadioScreen(Screen):
         self.vol_line.update(bar)
 
     def _redraw_visualizer(self):
-        self.visualizer.update(self._render_visualizer())
-
-    def _render_visualizer(self):
-        levels = self.player.get_levels()
-        heights = []
-        for level in levels:
-            norm = max(0.0, min(1.0, (level + 60.0) / 60.0))
-            heights.append(round(norm * _BAR_ROWS))
-        text = Text()
-        col_width = 3
-        for row in range(_BAR_ROWS - 1, -1, -1):
-            for height in heights:
-                if height > row:
-                    text.append("█" * col_width, style=_GREEN_BRIGHT)
-                else:
-                    text.append("░" * col_width, style=_GREEN_MID)
-            text.append("\n")
-        return text
+        """Same freeze/park-on-pause/stop semantics as _advance_shine above,
+        deliberately mirrored: while genuinely playing, pull fresh real
+        levels; frozen exactly in place on pause (radio.py's analysis
+        ffmpeg process keeps reading the stream independently of mpv's own
+        pause state, so without this the visualizer would otherwise keep
+        moving to audio the user can no longer hear); parked at an explicit
+        rest baseline once stopped, rather than trusting RadioPlayer's own
+        internal level reset to land at the same moment this redraws."""
+        if not self.player.is_playing():
+            self._last_vis_levels = [0.0] * radio.NUM_BANDS
+        elif not self._last_paused:
+            self._last_vis_levels = self.player.get_levels()
+        self.visualizer.update(_render_visualizer(self._last_vis_levels))
 
     # -- actions --------------------------------------------------------
 

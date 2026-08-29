@@ -9,6 +9,112 @@ Add each session's PROGRESS.md entry to the same branch as the code it describes
 
 ---
 
+## 2026-08-30 (PR pending) -- visualizer moved beside the DJ art, made much denser
+
+Real feature request: put the audio visualizer BESIDE the shine-sweep "DJ" art
+(`_SHINE_ART`) instead of stacked below it, and make it much richer/denser --
+"dozens of narrow vertical bars," a smooth cyan-to-coral color gradient,
+LED-matrix block feel.
+
+**Width constraint, and the call made:** at the panel's real content width
+(80 - 2 margin*2 - 2 border - 4 padding = 70 cols, same 80-col terminal
+assumption PR #48/#49 already worked under for this same panel), the
+original 65-wide art plus any real visualizer simply doesn't fit side by
+side. Chose to narrow the art rather than starve the visualizer down to a
+few columns -- cropped `_SHINE_ART` to its center 42 columns (kept the full
+65-wide `_SHINE_ART_FULL` around uncropped, in case a future session wants
+to re-tune the crop). Gave the visualizer 24 bars (1 char each, no gaps --
+"two dozen," matching "dozens" pretty literally) plus a 2-col gap: 42 + 2 +
+24 = 68, leaving 2 spare columns for VerticalScroll's own scrollbar when the
+panel overflows a short terminal. Visualizer height set to match the art's
+row count exactly (33 rows, `_VIS_ROWS = len(_SHINE_ART)`) so the two read
+as one aligned block. Net effect on total panel height: slightly SHORTER
+than before, since the old standalone 6-row visualizer block (plus its own
+margin) is gone entirely, not added on top of the hero row.
+
+**Cropping the art data itself, not just the widget's rendered width,**
+was deliberate: _render_shine_art's circular-wrap sweep math is defined in
+terms of the art's own width, so cropping only the display (e.g. via a
+fixed-width Static and CSS overflow) would have made the highlight band
+invisible most of the time -- it would sweep in and out of a narrower
+visible window rather than always being on-screen. Cropping `_SHINE_ART`
+itself keeps the existing sweep logic correct by construction, and (since
+the existing shine-sweep tests all read live off `radio_screen._SHINE_ART`/
+`_SHINE_WIDTH` rather than hardcoded literals) needed zero test changes to
+stay green.
+
+**Density, without faking anything:** `radio.py`'s `RadioPlayer.get_levels()`
+is still the only real audio data that exists -- 8 bands, no finer real
+signal to read. Subdividing 8 real values into 24 dense bars uses Catmull-
+Rom spline interpolation (`_interpolate_bars`), not linear -- a spline's
+curvature between control points is itself derived from the real
+neighboring bands' slopes, so the "skyline" texture between bars comes
+honestly from real spectral shape rather than decorative randomness (kept
+this reasoning in the module comments, matching the file's existing "EQ
+honesty" standard). Verified directly: at a bar position that lands exactly
+on a real band, the spline reproduces that band's own value exactly
+(`test_interpolate_bars_reproduces_real_band_values_at_their_own_positions`).
+
+**Color:** new `_gradient_color()` linearly interpolates RGB across five
+stops -- neon cyan (`_VIS_CYAN`, bottom) -> mint (`_GREEN_BRIGHT`, reused)
+-> gold (`_VIS_GOLD`) -> orange (`_ORANGE`, reused) -> hot coral
+(`_VIS_CORAL`, only the very top row) -- precomputed once per row into
+`_VIS_ROW_COLORS` at import time (color depends only on row position, never
+on live data, so no reason to recompute per frame). Character-wise: kept
+this file's existing █ (lit) / ░ (unlit) convention rather than inventing a
+new one.
+
+**Freeze/pause/stop semantics, mirrored from the shine-sweep exactly:**
+while genuinely playing, pull fresh real levels each redraw; frozen in
+place on pause; parked at an explicit all-zero rest baseline once stopped.
+Turned out this needed a real fix, not just cosmetic parity: `radio.py`'s
+analysis ffmpeg process reads the stream independently of mpv's own pause
+IPC command, so `get_levels()` keeps returning fresh real values even while
+audibly paused -- without explicit freeze logic the visualizer would keep
+moving to sound the user can no longer hear. `_redraw_visualizer` now caches
+`self._last_vis_levels` and only refreshes it when actually playing and
+unpaused, same `self._last_paused` cache `_advance_shine` already reads.
+
+**Tested:** full pytest suite green, 103 passed + 1 skipped (the pre-existing
+vinyl-extra skip), in a scratch venv built from `pip install -e ".[dev]"`.
+`python3 -m py_compile` clean. New unit tests in `tests/test_radio.py`
+directly exercise `_interpolate_bars` (exact reproduction at real band
+positions, unit-range clamping, flat-input flatness, more-resolution-than-8-
+bands) and `_gradient_color`/`_render_visualizer` (span/color inspection at
+known fracs, silence-is-all-unlit, full-volume-lights-every-row-cyan-to-
+coral) as pure functions -- no player/screen mocking needed for that layer.
+A screen-level test (`test_visualizer_freezes_on_pause_parks_on_stop_resumes_on_play`)
+drives `_redraw_visualizer()` directly and asserts relative before/after
+behavior across play -> pause -> resume -> stop, same pattern the existing
+shine-sweep screen test already uses (the screen's own real `set_interval`
+races manual calls, so relative deltas are asserted, not exact tick counts).
+
+Also captured real headless Pilot screenshots (`App.export_screenshot()`)
+across genuine wall-clock ticks (`asyncio.sleep` + `pilot.pause()`, not a
+manual `.update()` poke -- PR #48 already found that shortcut produces
+false-negative identical screenshots) while feeding synthetic-but-realistic
+varying 8-band levels through the real `RadioPlayer._levels` list. Confirmed
+by hand: the visualizer sits cleanly beside the cropped art at the same
+height inside the panel border with no clipping; the "skyline" shows a real
+irregular dip driven by a real quiet band in one frame, not a flat repeated-
+chunk look; cyan at the bottom shading up through mint (gold/orange/coral
+didn't appear in these particular synthetic frames since none of the test
+levels sustained a true 0dBFS peak long enough -- expected, matches the
+"coral only at the very top peaks" design intent, not a bug). Four
+screenshots across the level-change sequence all hashed different from each
+other, confirming genuine per-tick redraws through the real render path.
+
+**Next / open items:** the crop offset (`_SHINE_CROP_START = 11`) was chosen
+by centering, not by inspecting what the art actually depicts at that
+position -- worth a human glance to confirm nothing important got cropped
+off. Gold/orange/coral stops are unverified against a real loud stream (only
+exercised via synthetic level injection here, since real mpv/ffmpeg aren't
+available in this sandboxed dev environment) -- worth a quick live look once
+merged. PR not yet opened as of writing this entry; branch is
+`feature/mu/UAT-radio-visualizer-beside-art`.
+
+---
+
 ## 2026-08-27 (PR https://github.com/mukund1312/mtdo/pull/49) -- radio panel scrolling
 
 Follow-up to PR #48: the shine-sweep art is 33 rows tall on its own, and once
