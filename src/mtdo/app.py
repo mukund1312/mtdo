@@ -12,8 +12,10 @@ import os
 import re
 import subprocess
 import threading
+import time
 
 from . import core as tc
+from . import analytics
 from . import config as appconfig
 from . import coaching
 from . import ai_backend
@@ -2046,10 +2048,20 @@ class OnboardingScreen(ModalScreen):
     def _refresh(self):
         self.query_one("#onboarding-box", Static).update(self._render_step())
 
+    def on_mount(self):
+        self._record_step_viewed()
+
+    def _record_step_viewed(self):
+        analytics.record(
+            "onboarding_step_viewed", step_index=self.step,
+            step_title=ONBOARDING_STEPS[self.step][0], total_steps=len(ONBOARDING_STEPS),
+        )
+
     def action_next(self):
         if self.step < len(ONBOARDING_STEPS) - 1:
             self.step += 1
             self._refresh()
+            self._record_step_viewed()
         else:
             self.dismiss()
 
@@ -2059,6 +2071,7 @@ class OnboardingScreen(ModalScreen):
             self._refresh()
 
     def action_skip(self):
+        analytics.record("onboarding_skipped", step_index=self.step)
         self.dismiss()
 
 
@@ -2779,6 +2792,7 @@ class TodoApp(App):
 
     def __init__(self):
         super().__init__()
+        self._session_started = time.monotonic()
         self.today = tc.get_today()
         self.state = tc.load_state()
         self.state = tc.ensure_day_registered(self.state, self.today)
@@ -2874,6 +2888,7 @@ class TodoApp(App):
         self._finish_startup()
 
     def _finish_startup(self):
+        analytics.prune_older_than(days=180)
         saved = tc.maybe_autosave_daily_report(self.state, self.today)
         self.refresh_side_panels()
         messages, style = [], "bold cyan"
@@ -2882,6 +2897,7 @@ class TodoApp(App):
         if self.today.weekday() == 5:  # Saturday -- the week's completion checkpoint
             check, all_done = self._weekly_check_summary()
             report_path = tc.save_weekly_report_txt(self.state, self.today)
+            analytics.record("weekly_report_generated", all_done=all_done)
             messages.append(f"{check}  (full report -> {report_path})")
             style = "bold green" if all_done else "bold yellow"
         if messages:
@@ -2893,8 +2909,11 @@ class TodoApp(App):
             def after_onboarding(_r=None):
                 appconfig.mark_onboarded()
                 if not appconfig.has_configured_plan():
-                    self._begin_setup_flow(step_offset=1, total_steps=3)
-            self.push_screen(OnboardingScreen(step_label="Setup 1 of 3"), callback=after_onboarding)
+                    self._begin_setup_flow(step_offset=1)
+            walkthrough_total = 1 + self._setup_sequence_length()
+            self.push_screen(
+                OnboardingScreen(step_label=f"Setup 1 of {walkthrough_total}"), callback=after_onboarding,
+            )
         elif not appconfig.has_configured_plan():
             # Onboarded before, but never actually ran the setup flow (e.g. upgraded
             # from an older mtdo, or a saved instance from before this existed) --
@@ -3090,6 +3109,7 @@ class TodoApp(App):
             else:
                 if not self.pomo_panel.on_break:
                     tc.increment_pomodoro(self.state, self.today)
+                    analytics.record("pomodoro_completed", duration_seconds=self.pomo_panel.work_minutes * 60)
                     self.pomo_panel.on_break = True
                     self.pomo_panel.remaining = self.pomo_panel.break_minutes * 60
                 else:
@@ -3193,6 +3213,8 @@ class TodoApp(App):
 
     def action_toggle_pomodoro(self):
         self.pomo_panel.running = not self.pomo_panel.running
+        if self.pomo_panel.running:
+            analytics.record("pomodoro_started", duration_seconds=self.pomo_panel.work_minutes * 60)
         self.pomo_panel.render_panel(tc.get_pomodoro_count(self.state, self.today))
 
     def action_reset_pomodoro(self):
@@ -3268,6 +3290,7 @@ class TodoApp(App):
                     self.screen.set_focus(None)
             self.toast("Focus Mode ON -- 45/10 pomodoro started, press f to exit" if self.focus_mode else "Focus Mode off",
                        style="bold bright_green" if self.focus_mode else "dim")
+            analytics.record("focus_mode_toggled", enabled=self.focus_mode)
             self.refresh_side_panels()
             self._prime_ai_context_if_needed()
         except Exception:
@@ -3300,6 +3323,8 @@ class TodoApp(App):
                         self.claude_panel.focus()
                         self._prime_ai_context_if_needed()
                         return
+                    was_running = self.claude_panel.is_running
+                    prev_label = self.claude_panel._chosen_label
                     ai_backend.save_choice(command, label)
                     if self.claude_panel.is_running:
                         self.claude_panel.stop()
@@ -3307,6 +3332,17 @@ class TodoApp(App):
                     self.claude_panel.start_with(command, label)
                     self.claude_panel.focus()
                     self._prime_ai_context_if_needed()
+                    if was_running:
+                        analytics.record(
+                            "ai_panel_backend_switch",
+                            from_backend=analytics.classify_ai_backend(prev_label),
+                            to_backend=analytics.classify_ai_backend(label),
+                        )
+                    else:
+                        analytics.record(
+                            "ai_panel_backend_started",
+                            backend=analytics.classify_ai_backend(label), auto_detected=False,
+                        )
                 except Exception:
                     app_log.exception("starting chosen AI backend failed")
                     self.toast(f"Claude Code panel hit an error -- see {LOG_PATH}", style="bold red")
@@ -3422,6 +3458,10 @@ class TodoApp(App):
         self._stop_claude_and_exit()
 
     def _stop_claude_and_exit(self):
+        analytics.record(
+            "app_exited", quit_via="q",
+            session_seconds=round(time.monotonic() - self._session_started),
+        )
         try:
             self.claude_panel.stop()
         except Exception:
@@ -3452,12 +3492,19 @@ class TodoApp(App):
         shows, since that screen (and its traceback) disappears the moment the
         terminal's alternate screen buffer closes."""
         app_log.error("mtdo crashed", exc_info=error)
+        analytics.record("error_shown_to_user", error_type=type(error).__name__, context="app_crash")
+        analytics.record(
+            "app_exited", quit_via="crash",
+            session_seconds=round(time.monotonic() - self._session_started),
+        )
         super()._handle_exception(error)
 
     def action_open_career(self):
+        analytics.record("screen_opened", screen="career")
         self.push_screen(CareerScreen(self), callback=lambda _r=None: self.refresh_side_panels())
 
     def action_open_vault(self):
+        analytics.record("screen_opened", screen="vault")
         self.push_screen(VaultScreen(self), callback=lambda _r=None: self.refresh_side_panels())
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
@@ -3471,6 +3518,7 @@ class TodoApp(App):
                 style="bold red",
             )
             return
+        analytics.record("screen_opened", screen="radio")
         self.push_screen(RadioScreen(self.radio_player))
 
     def _refresh_profile_footer(self):
@@ -3616,6 +3664,7 @@ class TodoApp(App):
         self.toast(f"Switched to profile '{target['name']}'", style="bold green")
 
     def action_open_profile_menu(self):
+        analytics.record("screen_opened", screen="profile_menu")
         self.push_screen(ProfileMenuScreen())
 
     def action_create_profile(self):
@@ -3848,6 +3897,7 @@ class TodoApp(App):
         self.push_screen(LocalRecoveryCodeViewScreen(code))
 
     def action_open_help(self):
+        analytics.record("help_opened", context="focus_mode" if self.focus_mode else "board")
         self.push_screen(HelpScreen())
 
     def action_replay_walkthrough(self):
@@ -3856,11 +3906,20 @@ class TodoApp(App):
     def action_plan_wizard(self):
         self._begin_setup_flow()
 
-    def _begin_setup_flow(self, step_offset=0, total_steps=2):
+    def _setup_sequence_length(self):
+        """How many steps _begin_setup_flow's own sequence has THIS run: profile +
+        populate-method, plus the analytics opt-in only if it hasn't been answered
+        yet. Computed fresh each call (not a constant) so a re-run after analytics
+        is already decided displays an accurate total instead of counting a
+        step that _prompt_analytics_optin will silently skip."""
+        return 2 if appconfig.load_analytics_settings()["decided_at"] is not None else 3
+
+    def _begin_setup_flow(self, step_offset=0):
         """Entry point for the whole setup wizard: Profiles Section -> "how do you want
-        to build your plan" (Manual vs Guided setup). Triggered automatically right
-        after the feature walkthrough on a genuine first run (see on_mount), or any time
-        via 'g' (action_plan_wizard) to re-run it.
+        to build your plan" (Manual vs Guided setup) -> analytics opt-in (skipped if
+        already answered). Triggered automatically right after the feature walkthrough
+        on a genuine first run (see on_mount), or any time via 'g' (action_plan_wizard)
+        to re-run it.
 
         Reworked 2026-08-24 (gh47): previously asked for a name, then a persona, then
         (for guided setup) walked a persona-specific Q&A before building an AI prompt.
@@ -3879,13 +3938,10 @@ class TodoApp(App):
         with the rest of this wizard: skippable at every step, the board starts (and
         stays, if you cancel out) genuinely empty either way.
 
-        step_offset/total_steps (gh28): this method is always 2 of the sequence's
-        steps (profile, then populate-method) -- step_offset shifts the displayed
-        numbers when a walkthrough precedes it (on_mount passes offset=1, total=3),
-        and total_steps=2 (the default) covers every other entry point, where this
-        method's own 2 steps are the whole sequence: a manual re-run via 'g'
-        (action_plan_wizard), or "onboarded before, never configured" (on_mount's
-        other branch) which skips the walkthrough entirely."""
+        step_offset (gh28): shifts the displayed numbers when a walkthrough precedes
+        this (on_mount passes offset=1). total_steps is always computed here, not
+        passed in, via _setup_sequence_length() -- see its docstring for why."""
+        total_steps = step_offset + self._setup_sequence_length()
         profile_step, populate_step = step_offset + 1, step_offset + 2
         if not pf.list_profiles():
             def on_created(result):
@@ -3904,7 +3960,7 @@ class TodoApp(App):
                 lambda _result: self._pick_populate_method(populate_step, total_steps),
             )
 
-    def _pick_populate_method(self, step=2, total=2):
+    def _pick_populate_method(self, step=2, total=3):
         options = [
             "Manual -- I'll build it myself in the app (press 'a' to add fields)",
             "Guided setup -- export a template, hand it to any AI, import the result",
@@ -3912,20 +3968,47 @@ class TodoApp(App):
 
         def on_choice(choice):
             if choice is None:
+                self._prompt_analytics_optin(step + 1, total)
                 return
             appconfig.mark_plan_configured()
             if choice.startswith("Manual"):
+                analytics.record("plan_setup_completed", method="manual")
                 self.toast(
                     "Okay -- your board is empty. Press 'a' any time to add a field, "
                     "then start adding cards to it.",
                     style="bold cyan",
                 )
-                return
-            self.push_screen(GuidedSetupScreen())
+            else:
+                analytics.record("plan_setup_completed", method="guided")
+                self.push_screen(GuidedSetupScreen())
+            self._prompt_analytics_optin(step + 1, total)
 
         self.push_screen(
             ChoicePickScreen(
                 "How do you want to build your plan?", options,
+                step_label=f"Setup {step} of {total}",
+            ),
+            on_choice,
+        )
+
+    def _prompt_analytics_optin(self, step, total):
+        """Last step of the setup sequence -- ask once whether to turn on local usage
+        analytics (see analytics.py, PRIVACY.md). Never re-asked once answered:
+        set_analytics_local_enabled always stamps decided_at, even on "No" or
+        Escape, same as every other step in this wizard being freely skippable."""
+        if appconfig.load_analytics_settings()["decided_at"] is not None:
+            return
+        options = [
+            "Yes -- help improve mtdo (stays on this machine, see PRIVACY.md)",
+            "No thanks",
+        ]
+
+        def on_choice(choice):
+            appconfig.set_analytics_local_enabled(bool(choice) and choice.startswith("Yes"))
+
+        self.push_screen(
+            ChoicePickScreen(
+                "Turn on local usage analytics?", options,
                 step_label=f"Setup {step} of {total}",
             ),
             on_choice,
@@ -3996,6 +4079,9 @@ def run_app(cfg):
     the user's config, then runs the TUI. This is the one entry point cli.py calls."""
     tc.configure(cfg)
     CATEGORY_COLORS.update(_build_category_colors())
+    import platform
+    from . import __version__
+    analytics.record("app_launched", version=__version__, platform=platform.system())
     TodoApp().run()
 
 

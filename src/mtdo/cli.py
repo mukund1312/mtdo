@@ -220,6 +220,99 @@ def cmd_snapshot_diff(args):
     print(json.dumps(snapshot, indent=2))
 
 
+def cmd_analytics_on(_args):
+    appconfig.set_analytics_local_enabled(True)
+    print("Local analytics turned on -- stays on this machine. See PRIVACY.md for exactly what's collected.")
+    print(f"Run `{_PROG} analytics status` any time to check, `{_PROG} analytics show` to see it, `{_PROG} analytics off` to stop.")
+
+
+def cmd_analytics_off(_args):
+    appconfig.set_analytics_local_enabled(False)
+    print("Local analytics turned off. Previously recorded events are untouched -- run "
+          f"`{_PROG} analytics purge` to delete them too.")
+
+
+def cmd_analytics_status(_args):
+    from . import analytics
+    settings = appconfig.load_analytics_settings()
+    print(f"Local analytics: {'on' if settings['local_enabled'] else 'off'}")
+    if settings["decided_at"]:
+        print(f"Decided at: {settings['decided_at']}")
+    if settings["local_enabled"]:
+        s = analytics.summary()
+        print(f"Events stored: {s['count']}")
+        if s["count"]:
+            print(f"Date range: {s['oldest']} .. {s['newest']}")
+            print(f"Sessions: {s['sessions']}")
+        install_id = appconfig.get_install_id()
+        print(f"Install ID: {install_id[:8]}... (random, not tied to your name or profiles)")
+    print("Remote sync: not built yet -- planned for once mtdo has a real external install base.")
+    print(f"\nRun `{_PROG} analytics show` to see everything stored, or `{_PROG} analytics purge` to delete it.")
+
+
+def cmd_analytics_show(args):
+    from . import analytics
+    events = analytics.query_events(limit=args.limit)
+    print(json.dumps(events, indent=2))
+
+
+def cmd_analytics_purge(args):
+    from . import analytics
+    s = analytics.summary()
+    if s["count"] == 0:
+        print("Nothing stored -- nothing to purge.")
+        return
+    if not args.force:
+        confirm = input(f"Delete all {s['count']} stored events? Type 'purge' to confirm: ")
+        if confirm.strip() != "purge":
+            print("Not purging.")
+            return
+    analytics.purge_all()
+    print("All locally stored analytics events deleted.")
+
+
+def cmd_analytics_help(_args):
+    print(f"Usage: {_PROG} analytics <on|off|status|show|purge> ...")
+    print(f"Run `{_PROG} analytics <subcommand> --help` for details.")
+
+
+def cmd_insights(_args):
+    from . import analytics
+    settings = appconfig.load_analytics_settings()
+    if not settings["local_enabled"]:
+        print(f"Analytics is off -- nothing to show. Run `{_PROG} analytics on` to start collecting locally.")
+        return
+    s = analytics.summary()
+    if s["count"] == 0:
+        print("No events recorded yet -- use mtdo a bit, then check back.")
+        return
+
+    print("## mtdo usage insights (local only -- never leaves this machine)\n")
+    print(f"Sessions tracked: {s['sessions']}")
+    print(f"Events recorded: {s['count']} (since {s['oldest']})")
+    print(f"Help opened: {analytics.count_events(event_name='help_opened')} times total")
+    print(f"Focus Mode toggles: {analytics.count_events(event_name='focus_mode_toggled')}")
+    print(f"Practice Lab runs: {analytics.count_events(event_name='practice_lab_run')}")
+    print(f"AI backend switches: {analytics.count_events(event_name='ai_panel_backend_switch')}")
+
+    print("\n### Friction signals")
+    signals = [
+        ("Sessions with 3+ Help opens within 15 minutes", analytics.friction_repeated_help()),
+        ("Sessions with rapid task status flapping", analytics.friction_task_flapping()),
+        ("Sessions with a 20+ minute mid-session gap", analytics.friction_long_inactivity()),
+        ("Sessions with AI backend-switch churn", analytics.friction_backend_churn()),
+        ("Sessions with repeated failed Practice Lab runs", analytics.friction_failed_practice_runs()),
+        ("Onboarding walkthroughs abandoned", analytics.friction_abandoned_onboarding()),
+    ]
+    found_any = False
+    for label, rows in signals:
+        if rows:
+            found_any = True
+            print(f"  - {label}: {len(rows)}")
+    if not found_any:
+        print("  (none detected)")
+
+
 class _AuthFailed(Exception):
     pass
 
@@ -641,6 +734,30 @@ def main():
     )
     p_profile_view_recovery.add_argument("name")
     p_profile_view_recovery.set_defaults(func=cmd_profile_view_recovery_code)
+
+    p_analytics = sub.add_parser("analytics", help="Manage local usage analytics (opt-in, stays on this machine)")
+    p_analytics.set_defaults(func=cmd_analytics_help)
+    analytics_sub = p_analytics.add_subparsers(dest="analytics_command")
+
+    p_analytics_on = analytics_sub.add_parser("on", help="Turn on local analytics")
+    p_analytics_on.set_defaults(func=cmd_analytics_on)
+
+    p_analytics_off = analytics_sub.add_parser("off", help="Turn off local analytics")
+    p_analytics_off.set_defaults(func=cmd_analytics_off)
+
+    p_analytics_status = analytics_sub.add_parser("status", help="Show on/off state and a summary of what's stored")
+    p_analytics_status.set_defaults(func=cmd_analytics_status)
+
+    p_analytics_show = analytics_sub.add_parser("show", help="Dump every stored event as JSON")
+    p_analytics_show.add_argument("--limit", type=int, default=None)
+    p_analytics_show.set_defaults(func=cmd_analytics_show)
+
+    p_analytics_purge = analytics_sub.add_parser("purge", help="Permanently delete all stored events")
+    p_analytics_purge.add_argument("--force", action="store_true", help="Skip the type-to-confirm prompt")
+    p_analytics_purge.set_defaults(func=cmd_analytics_purge)
+
+    p_insights = sub.add_parser("insights", help="Local usage-insights report (requires `mtdo analytics on`)")
+    p_insights.set_defaults(func=cmd_insights)
 
     p_reset = sub.add_parser(
         "reset",

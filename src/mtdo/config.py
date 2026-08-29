@@ -3,6 +3,7 @@ import copy
 import json
 import os
 import shutil
+import uuid
 from datetime import datetime
 
 import yaml
@@ -52,6 +53,69 @@ def save_radio_state(state):
     os.makedirs(APP_DIR, exist_ok=True)
     with open(RADIO_STATE_PATH, "w") as f:
         json.dump(state, f, indent=2)
+
+
+ANALYTICS_SETTINGS_PATH = os.path.join(APP_DIR, "analytics.json")
+INSTALL_ID_PATH = os.path.join(APP_DIR, "install_id")
+
+_EMPTY_ANALYTICS_SETTINGS = {
+    "local_enabled": False, "remote_enabled": False,
+    "decided_at": None, "privacy_version": 1,
+}
+
+
+def load_analytics_settings():
+    """Opt-in usage-analytics settings (see analytics.py, PRIVACY.md) -- a JSON blob,
+    not a marker file, since local_enabled/remote_enabled are two independently
+    revocable consents plus metadata (decided_at, privacy_version), not a single
+    existence-check bit like has_onboarded()/practice_terminal_enabled() below.
+    Missing or unreadable fails open toward LESS data collection, not more -- the
+    opposite direction from load_radio_state()'s fail-open, since this one carries
+    privacy stakes rather than just UI convenience."""
+    if not os.path.exists(ANALYTICS_SETTINGS_PATH):
+        return copy.deepcopy(_EMPTY_ANALYTICS_SETTINGS)
+    try:
+        with open(ANALYTICS_SETTINGS_PATH) as f:
+            data = json.load(f)
+    except (OSError, ValueError):
+        return copy.deepcopy(_EMPTY_ANALYTICS_SETTINGS)
+    settings = copy.deepcopy(_EMPTY_ANALYTICS_SETTINGS)
+    settings.update({k: v for k, v in data.items() if k in settings})
+    return settings
+
+
+def save_analytics_settings(settings):
+    os.makedirs(APP_DIR, exist_ok=True)
+    with open(ANALYTICS_SETTINGS_PATH, "w") as f:
+        json.dump(settings, f, indent=2)
+
+
+def set_analytics_local_enabled(enabled):
+    """The single entry point for turning local analytics on/off -- from the
+    onboarding opt-in step, `mtdo analytics on/off`, or a future in-app toggle.
+    Generates install_id the first time analytics is turned on (never before, and
+    never for an install that keeps it off forever -- see get_install_id)."""
+    settings = load_analytics_settings()
+    settings["local_enabled"] = enabled
+    settings["decided_at"] = datetime.now().isoformat(timespec="seconds")
+    save_analytics_settings(settings)
+    if enabled:
+        get_install_id()
+
+
+def get_install_id():
+    """A random, anonymous per-install identifier -- one per ~/.mtdo (or MTDO_HOME),
+    shared across every profile on it. Lazily created on first call (normally the
+    moment analytics is first turned on, see set_analytics_local_enabled), never at
+    import time -- unlinkable to any profile name or goals content, consistent with
+    profiles.py's "no server-side escrow" ethos. Not sent anywhere today; sits ready
+    for a future opt-in remote-sync path to reference."""
+    if not os.path.exists(INSTALL_ID_PATH):
+        os.makedirs(APP_DIR, exist_ok=True)
+        with open(INSTALL_ID_PATH, "w") as f:
+            f.write(uuid.uuid4().hex)
+    with open(INSTALL_ID_PATH) as f:
+        return f.read().strip()
 
 
 def get_user_name():

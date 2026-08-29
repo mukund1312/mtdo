@@ -47,6 +47,7 @@ from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.widgets import Static, TextArea, Button, Rule
 
 from . import ai_ask
+from . import analytics
 from . import coaching
 from . import code_runner
 from .errorlog import LOG_PATH, log as app_log
@@ -211,6 +212,7 @@ class PracticeLabPanel(Vertical):
             )
             return
         self.app._prime_ai_context_if_needed()  # safety net if it somehow hasn't been primed yet
+        analytics.record("practice_lab_evaluate_requested", language=self.language)
         language_label = code_runner.LANGUAGE_LABELS[self.language]
         message = coaching.build_code_review_message(language_label, code)
         self.app.claude_panel.send_text_when_idle(message, flatten=False)
@@ -278,11 +280,17 @@ class PracticeLabPanel(Vertical):
             result = code_runner.run(language, code)
         except Exception as e:
             app_log.exception("PracticeLabPanel run failed")
+            analytics.record("practice_lab_run", language=language, success=False, error_type="run_failed", duration_ms=None)
             self.app.call_from_thread(self._show_run_error, str(e))
             return
         self.app.call_from_thread(self._show_run_result, language, result)
 
     def _show_run_result(self, language, result):
+        analytics.record(
+            "practice_lab_run", language=language, success=result.ok,
+            error_type=None if result.ok else "nonzero_exit",
+            duration_ms=round(result.elapsed * 1000),
+        )
         status_color = "#00ff66" if result.ok else "#e06c75"
         self.output_panel.update(Group(
             Text("OUTPUT", style="bold #6a6a6a"),
@@ -331,6 +339,7 @@ class PracticeLabPanel(Vertical):
             self.time_panel.update(self._complexity_message(cap1, empty_msg))
             self.space_panel.update(self._complexity_message(cap2, empty_msg))
             return
+        analytics.record("practice_lab_complexity_requested", language=self.language)
         if self.language == "sql":
             self.time_panel.update(self._complexity_message(cap1, "Running EXPLAIN QUERY PLAN..."))
             self.space_panel.update(self._complexity_message(cap2, "Counting rows..."))
