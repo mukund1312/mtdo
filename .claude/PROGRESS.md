@@ -9,6 +9,38 @@ Add each session's PROGRESS.md entry to the same branch as the code it describes
 
 ---
 
+## 2026-08-30 (PR https://github.com/mukund1312/mtdo/pull/72) -- dashboard freeze: editable controls had no data-id
+
+Directly user-reported ("when i click postpont in the dashboard the netire
+dashboard freezes"), not a tracker bug -- no gh<N> issue filed.
+
+**The bug:** the dashboard's status/assign/comment-thread click handlers
+address elements via `.dataset.id` (e.g. `target: c.dataset.id`) when
+building `api.edit(ops)` calls against the live-doc artifact capability, but
+`render_html()` never set a `data-id` attribute on any of the elements those
+handlers target -- every edit's `target` was `undefined`. Confirmed by
+fetching the real published artifact HTML: exactly one `data-id="..."`
+occurrence existed in the whole 371KB page, and it was literal source text
+inside the platform's own minified runtime JS (`document.querySelector('[data-id="${o.target}"]')`),
+not an attribute on any actual element. This affects all four edit
+handlers equally (status, assignment, and posting a thread note), not just
+Postpone -- the user likely just happened to try that control first.
+
+**Fix:** added real, unique `data-id` values to the status/assign controls
+(the row copy and issue-detail copy are separate elements per issue kept in
+sync by the same handler, so each needs its own id: `status-row-<n>` /
+`status-detail-<n>` etc.), the `<tr>` row (`row-<n>`), and the comment
+thread div (`thread-<n>`, alongside its existing real `id`).
+
+Added `test_render_html_gives_every_editable_control_a_real_data_id` to
+`tests/test_dashboard_generate.py` (previously only covered `generate()`'s
+gh-CLI-failure resilience, not the HTML/JS content itself). Verified against
+the real sandbox dashboard.html after regenerating: 670 `data-id` attributes
+across 67 live issues, all unique, all 10 expected ids present per issue.
+Republished to the live artifact.
+
+---
+
 ## 2026-08-30 (PR pending) -- gh74: plan_wizard.py checks pbcopy's real return code
 
 Ninth and final bug in the autonomous fix-everything-assigned-to-mukund1312
