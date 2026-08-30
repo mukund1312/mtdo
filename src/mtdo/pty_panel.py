@@ -220,6 +220,16 @@ class PtyPanel(Widget):
                 cwd=self._cwd(),
                 close_fds=True,
             )
+        except BaseException:
+            # gh65: master_fd used to leak here -- this except only closed
+            # slave_fd (via the finally below), and self._master_fd wasn't
+            # assigned until after this whole try/finally, so a failed Popen
+            # (e.g. the resolved command isn't on PATH) left master_fd open
+            # for the life of the process with nothing tracking it. start()
+            # already catches and reports this failure to the user -- the
+            # leak was purely in the fd itself, not in error visibility.
+            os.close(master_fd)
+            raise
         finally:
             os.close(slave_fd)
         self._proc = proc

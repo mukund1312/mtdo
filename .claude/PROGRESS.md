@@ -9,6 +9,35 @@ Add each session's PROGRESS.md entry to the same branch as the code it describes
 
 ---
 
+## 2026-08-30 (PR pending) -- gh65: pty_panel.py master_fd leak on failed Popen
+
+Second bug in the autonomous fix-everything-assigned-to-mukund1312 batch (see
+the gh63 entry just below for how this batch works and why).
+
+**The bug:** `_start_impl()` opens a pty pair (`master_fd`, `slave_fd`) before
+spawning the resolved command via `subprocess.Popen`. If Popen raises (most
+commonly: the resolved command isn't on PATH -- e.g. a misconfigured AI backend
+command), the original code's `finally` only closed `slave_fd`; `self._master_fd`
+wasn't assigned until after the whole try/finally, so `master_fd` itself was
+never closed on this failure path and leaked for the life of the process.
+`start()` already caught and reported the failure to the user, so this was a
+pure resource leak, not a visible/crashing bug -- easy to miss without counting
+fds, which is presumably how it survived a full manual audit pass unnoticed
+until this one.
+
+**Fix:** added an `except BaseException: os.close(master_fd); raise` around the
+`Popen` call, alongside the existing `finally: os.close(slave_fd)`.
+
+Added `tests/test_pty_panel_fd_leak.py` (zero prior coverage of this whole
+class): spies on `os.openpty()` to capture the real fd number, forces a Popen
+failure via `ClaudePanel(command="/definitely/not/a/real/binary-gh65")`, and
+asserts `os.fstat()` on the captured fd raises `OSError` afterward -- confirms
+the fd was actually closed, not just that the error was reported. Chose
+`os.fstat()` over reading `/proc/self/fd` for portability (this repo's CI runs
+Ubuntu, but tests should hold locally too, and macOS has no `/proc`).
+
+---
+
 ## 2026-08-30 (PR pending) -- gh63: profile-switch epoch guard for in-flight AI generation
 
 Fourth fix from the full-codebase audit (see the gh59 entry further down). This
