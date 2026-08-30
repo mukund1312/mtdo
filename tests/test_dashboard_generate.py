@@ -52,6 +52,45 @@ def test_generate_returns_none_triaged_when_list_all_fails_partway_through():
         assert f.read() == "<html>still here</html>"
 
 
+def test_render_html_gives_every_editable_control_a_real_data_id():
+    """Regression test: the status/assign/comment-thread edit handlers in the
+    dashboard's client-side script address elements via `.dataset.id` (which reads an
+    element's data-id attribute) when building `api.edit(ops)` calls -- e.g.
+    `target: c.dataset.id`. render_html() never actually set a data-id attribute on
+    any of those elements, so every edit's target was undefined; the live-doc edit
+    API silently couldn't find a target to patch, which is what made clicking
+    Postpone (or Fixed, reassigning, or posting a note -- all four handlers share
+    this exact pattern) freeze the dashboard instead of applying the change.
+
+    The status/assign controls are rendered twice per issue (once in the issues
+    table row, once on the issue detail page, kept in sync by the same click
+    handler) so each copy needs its own distinct id -- checked here too."""
+    issue = {
+        "number": 42,
+        "title": "Sample bug",
+        "body": "description",
+        "author": {"login": "mukund1312"},
+        "assignees": [],
+        "state": "OPEN",
+        "createdAt": "2026-01-01T00:00:00Z",
+        "closedAt": None,
+        "updatedAt": "2026-01-01T00:00:00Z",
+        "labels": [],
+        "comments": [],
+    }
+    content = dashboard.render_html([issue], {})
+
+    for expected_id in [
+        "row-42",
+        "status-row-42", "status-row-label-42",
+        "status-detail-42", "status-detail-label-42",
+        "assign-row-42", "assign-row-label-42",
+        "assign-detail-42", "assign-detail-label-42",
+        "thread-42",
+    ]:
+        assert f'data-id="{expected_id}"' in content, f"missing data-id={expected_id!r}"
+
+
 def test_generate_writes_fresh_content_and_returns_real_triage_dict_on_success():
     with patch("mtdo.dashboard.bug_sync.sync_dashboard_overrides"), \
          patch("mtdo.dashboard.bug_sync.auto_triage_pending", return_value={}), \

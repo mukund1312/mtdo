@@ -208,18 +208,25 @@ def _bug_git_activity(issue_number):
     return {"branches": branches, "commits": commits}
 
 
-def _render_assign_control(issue_number, current_login):
+def _render_assign_control(issue_number, current_login, variant):
     """One editable "assigned to" control -- reused for both the issues table row and the
     issue detail page for the same bug. Clicking a name in the dropdown fires an explicit
     `artifact.edit()` call (see the script) that updates every copy of this control for
-    this issue at once, so the table and the detail page never disagree."""
+    this issue at once, so the table and the detail page never disagree.
+
+    `variant` ("row" or "detail") keeps the two copies' data-id values distinct -- the
+    live-doc edit API addresses elements by data-id (see the frame runtime's own
+    patch-application code, which looks elements up via `[data-id="..."]`), so each
+    copy needs its own id even though both share the same data-issue."""
     current_name = _display_name(current_login) if current_login else "Unassigned"
     options = "".join(
         f'<button type="button" class="assign-option" data-login="{login}">{html.escape(_display_name(login))}</button>'
         for login in PEOPLE
     )
-    return f"""<div class="assign-control edit-affordance" data-issue="{issue_number}" data-assigned-to="{html.escape(current_login or '')}">
-      <button type="button" class="assign-current">{html.escape(current_name)}</button>
+    control_id = f"assign-{variant}-{issue_number}"
+    label_id = f"assign-{variant}-label-{issue_number}"
+    return f"""<div class="assign-control edit-affordance" data-id="{control_id}" data-issue="{issue_number}" data-assigned-to="{html.escape(current_login or '')}">
+      <button type="button" class="assign-current" data-id="{label_id}">{html.escape(current_name)}</button>
       <div class="assign-menu">
         {options}
         <button type="button" class="assign-option" data-login="">Unassign</button>
@@ -231,20 +238,25 @@ _STATUS_LABELS = {"open": "Open", "postponed": "Postponed", "fixed": "Fixed"}
 _STATUS_PILL_CLASS = {"open": "pill-open", "postponed": "pill-postponed", "fixed": "pill-fixed"}
 
 
-def _render_status_control(issue_number, status):
+def _render_status_control(issue_number, status, variant):
     """One editable status control (Open / Postponed / Fixed), same live-doc pattern
     as _render_assign_control -- reused for both the issues table row and the issue
     detail page. Clicking an option here only changes what's shown live on the page
     immediately (see the script); the real GitHub state (close/reopen the issue,
     add/remove the postponed label) is applied the next time someone runs
     dashboard.generate() with this page's current overrides -- see
-    bug_sync.sync_dashboard_overrides."""
+    bug_sync.sync_dashboard_overrides.
+
+    `variant` ("row" or "detail") keeps the two copies' data-id values distinct --
+    see _render_assign_control's docstring for why data-id is required at all."""
     options = "".join(
         f'<button type="button" class="status-option" data-status="{key}">{label}</button>'
         for key, label in _STATUS_LABELS.items()
     )
-    return f"""<div class="status-control edit-affordance" data-issue="{issue_number}" data-status="{status}">
-      <button type="button" class="status-current pill {_STATUS_PILL_CLASS[status]}">{_STATUS_LABELS[status].upper()}</button>
+    control_id = f"status-{variant}-{issue_number}"
+    label_id = f"status-{variant}-label-{issue_number}"
+    return f"""<div class="status-control edit-affordance" data-id="{control_id}" data-issue="{issue_number}" data-status="{status}">
+      <button type="button" class="status-current pill {_STATUS_PILL_CLASS[status]}" data-id="{label_id}">{_STATUS_LABELS[status].upper()}</button>
       <div class="status-menu">
         {options}
       </div>
@@ -290,10 +302,10 @@ def _render_issue_detail(issue, assigned_to, description, notes, priority=None, 
       <button type="button" class="back-to-issues">&larr; Back to Issues</button>
       <h1>#{number} {title}</h1>
       <div class="issue-meta">
-        <div><span class="meta-label">Status</span>{_render_status_control(number, status)}</div>
+        <div><span class="meta-label">Status</span>{_render_status_control(number, status, "detail")}</div>
         <div><span class="meta-label">Priority</span>{priority_html}</div>
         <div><span class="meta-label">Found by</span>{found_name}</div>
-        <div><span class="meta-label">Assigned to</span>{_render_assign_control(number, assigned_to)}</div>
+        <div><span class="meta-label">Assigned to</span>{_render_assign_control(number, assigned_to, "detail")}</div>
         <div><span class="meta-label">Found</span>{found_age}</div>
         {f'<div><span class="meta-label">Fixed</span>{closed_age}</div>' if closed_age else ''}
       </div>
@@ -302,7 +314,7 @@ def _render_issue_detail(issue, assigned_to, description, notes, priority=None, 
       <p class="section-label">Related git activity</p>
       {git_section}
       <p class="section-label">Conversation</p>
-      <div class="thread" id="thread-{number}">{comment_items}</div>
+      <div class="thread" id="thread-{number}" data-id="thread-{number}">{comment_items}</div>
       <div class="thread-compose edit-affordance" artifact-local>
         <input type="text" class="thread-input" data-issue="{number}" placeholder="Write a note for the other dev...">
         <button type="button" class="thread-post" data-issue="{number}">Post</button>
@@ -756,13 +768,13 @@ def render_html(issues, statuses, overrides=None):
             f'<span class="comment-badge" data-issue="{number}" hidden></span>'
         )
         rows += f"""
-        <tr data-found-by="{html.escape(found_login)}" data-priority="{priority or ''}" data-age-days="{age_days}"
+        <tr data-id="row-{number}" data-found-by="{html.escape(found_login)}" data-priority="{priority or ''}" data-age-days="{age_days}"
             data-state="{issue['state']}" data-status="{status}">
-          <td>{_render_status_control(number, status)}</td>
+          <td>{_render_status_control(number, status, "row")}</td>
           <td>{priority_cell}</td>
           <td class="bug-title"><a href="#/issue/{number}">{title}</a>{comment_badge}</td>
           <td>{author}</td>
-          <td>{_render_assign_control(number, assigned_to)}</td>
+          <td>{_render_assign_control(number, assigned_to, "row")}</td>
           <td class="dim">{age}</td>
         </tr>"""
 
