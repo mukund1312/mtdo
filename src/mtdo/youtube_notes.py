@@ -32,6 +32,18 @@ NOT_INSTALLED_MESSAGE = (
 # auto captions are lower quality and more prone to repeated/overlapping lines.
 _PREFERRED_LANGS = ["en", "en-US", "en-GB"]
 
+# gh69: no cap on transcript length used to mean a long video (e.g. a multi-hour
+# lecture) could plausibly exceed the active backend's context window --
+# especially a small local Ollama model -- either erroring out or silently
+# returning notes based on a truncated/garbled prompt, with nothing telling the
+# user their transcript was too long. ~92 minutes of speech at the 130
+# words/minute estimate generate_notes_and_quiz already uses below -- long
+# enough for nearly any real video, short enough to stay safely inside even a
+# modest local model's context. Longer transcripts are truncated (kept from
+# the start, not rejected outright) so a very long video's beginning still
+# gets useful notes, and the returned notes say plainly that this happened.
+_MAX_TRANSCRIPT_WORDS = 12000
+
 
 def fetch_transcript(url):
     """Returns (title, transcript_text, None) on success, or (None, None, error)
@@ -177,6 +189,10 @@ def generate_notes_and_quiz(title, transcript):
     failure. Calls ai_ask.ask() -- a real, possibly slow network/subprocess call,
     so (like every other ai_ask caller in this app) this must be invoked from a
     background thread, never the main/UI thread."""
+    words = transcript.split()
+    truncated = len(words) > _MAX_TRANSCRIPT_WORDS
+    if truncated:
+        transcript = " ".join(words[:_MAX_TRANSCRIPT_WORDS])
     # A rough word-count-based minute estimate is enough context for the prompt;
     # exact video duration isn't worth threading through for this.
     minutes = max(1, len(transcript.split()) // 130)
@@ -184,7 +200,13 @@ def generate_notes_and_quiz(title, transcript):
     answer, error = ai_ask.ask(prompt, timeout=120)
     if not answer:
         return None, error or "The AI backend returned nothing."
-    return _format_vault_body(title, answer), None
+    body = _format_vault_body(title, answer)
+    if truncated:
+        body += (
+            f"\n\n---\n*Note: this video's transcript was long enough that only the "
+            f"first ~{minutes} minutes were used to generate these notes/quiz.*"
+        )
+    return body, None
 
 
 def _format_vault_body(title, ai_answer):
