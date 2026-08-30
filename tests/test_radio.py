@@ -113,6 +113,7 @@ def test_read_levels_loop_ignores_inf_and_unparseable_values():
 def test_start_spawns_mpv_with_ipc_socket_and_the_right_url():
     player = radio.RadioPlayer()
     with patch("mtdo.radio.has_mpv", return_value=True), \
+         patch("mtdo.radio.has_ffmpeg", return_value=True), \
          patch("mtdo.radio.subprocess.Popen") as mock_popen, \
          patch("mtdo.radio.threading.Thread"):
         mock_popen.side_effect = [_fake_proc(alive_polls=5), _fake_proc(alive_polls=5)]
@@ -157,6 +158,7 @@ def test_start_raises_without_ffmpeg_and_never_spawns_mpv():
 def test_start_stops_the_previous_station_first():
     player = radio.RadioPlayer()
     with patch("mtdo.radio.has_mpv", return_value=True), \
+         patch("mtdo.radio.has_ffmpeg", return_value=True), \
          patch("mtdo.radio.subprocess.Popen") as mock_popen, \
          patch("mtdo.radio.threading.Thread"):
         first_mpv, first_ffmpeg = _fake_proc(alive_polls=5), _fake_proc(alive_polls=5)
@@ -176,6 +178,7 @@ def test_stop_terminates_then_escalates_to_kill_if_still_alive():
     streaming audio after mtdo has exited)."""
     player = radio.RadioPlayer()
     with patch("mtdo.radio.has_mpv", return_value=True), \
+         patch("mtdo.radio.has_ffmpeg", return_value=True), \
          patch("mtdo.radio.subprocess.Popen") as mock_popen, \
          patch("mtdo.radio.threading.Thread"):
         # poll() never reports exited -- forces the kill() escalation path
@@ -313,6 +316,7 @@ async def test_radio_screen_opens_via_keybinding_and_plays_on_enter():
         # exactly this reason.
         item = app.screen.list_view.children[0]
         with patch("mtdo.radio.has_mpv", return_value=True), \
+             patch("mtdo.radio.has_ffmpeg", return_value=True), \
              patch("mtdo.radio.subprocess.Popen", side_effect=_mock_popen_pair()), \
              patch("mtdo.radio.threading.Thread"):
             app.screen.on_list_view_selected(_FakeSelected(item))
@@ -459,6 +463,7 @@ async def test_shine_sweep_advances_while_playing_freezes_on_pause_parks_on_stop
 
         item = screen.list_view.children[0]
         with patch("mtdo.radio.has_mpv", return_value=True), \
+             patch("mtdo.radio.has_ffmpeg", return_value=True), \
              patch("mtdo.radio.subprocess.Popen", side_effect=_mock_popen_pair()), \
              patch("mtdo.radio.threading.Thread"):
             screen.on_list_view_selected(_FakeSelected(item))
@@ -638,6 +643,7 @@ async def test_visualizer_freezes_on_pause_parks_on_stop_resumes_on_play():
 
         item = screen.list_view.children[0]
         with patch("mtdo.radio.has_mpv", return_value=True), \
+             patch("mtdo.radio.has_ffmpeg", return_value=True), \
              patch("mtdo.radio.subprocess.Popen", side_effect=_mock_popen_pair()), \
              patch("mtdo.radio.threading.Thread"):
             screen.on_list_view_selected(_FakeSelected(item))
