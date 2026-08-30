@@ -9,6 +9,38 @@ Add each session's PROGRESS.md entry to the same branch as the code it describes
 
 ---
 
+## 2026-08-30 (PR https://github.com/mukund1312/mtdo/pull/56) -- gh60: atomic bug_log.json writes + corruption recovery
+
+Second fix from the full-codebase audit (see the gh59 entry below for the audit
+itself), same root cause and same fix shape as gh59, applied to `bug_log.py`.
+
+`_save()` wrote `bugs.json` via a direct `open(..., "w")`, which a mid-write crash
+could leave truncated -- and this module's entire *purpose* is capturing a bug
+right before exactly that kind of hard-kill, per its own docstring, so this was
+the worst place in the app for a non-atomic write to live. `_load()` then caught
+a bare `Exception` and returned `[]` on any failure at all, silently treating a
+corrupted file as an *empty* log -- every previously logged bug vanished with
+zero indication anything was lost.
+
+**Fix:** `_save()` now writes to a temp file in the same directory before
+`os.replace()`-ing it onto the real path (same-filesystem atomic rename, not a
+silent copy+delete fallback). `_load()` narrows its catch to
+`json.JSONDecodeError` specifically, quarantines the unreadable file to
+`bugs.json.corrupt-<timestamp>` (never deletes it -- kept for hand recovery),
+logs it via errorlog, and starts fresh instead of discarding everything.
+
+Added `tests/test_bug_log.py` (previously zero coverage): round-trip
+correctness, no leftover temp files, and the full corrupt-quarantine-and-recover
+cycle, including confirming a new bug can still be logged right after recovery
+(the whole point of this module). `BUGS_PATH` is a real fixed path under
+`~/.mtdo-sandbox`, not scoped to the MTDO_HOME test sandbox -- every test
+monkeypatches it to a throwaway `tmp_path` first; confirmed the real
+`~/.mtdo-sandbox/bugs.json` was never touched by the test run.
+
+CI green on the first run this time (full pytest suite: 117 passed, 1 skipped).
+
+---
+
 ## 2026-08-30 (PR https://github.com/mukund1312/mtdo/pull/54) -- gh59: atomic state.json writes + corruption recovery
 
 Fixed a real, verified bug from a full codebase audit (see below): `core.py`'s

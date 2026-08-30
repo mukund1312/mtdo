@@ -15,6 +15,10 @@ so that context isn't lost, but that's just a field now, not a storage location.
 import datetime
 import json
 import os
+import tempfile
+import time
+
+from . import errorlog
 
 BUGS_PATH = os.path.join(os.path.expanduser("~/.mtdo-sandbox"), "bugs.json")
 
@@ -29,14 +33,49 @@ def _load():
     try:
         with open(BUGS_PATH) as f:
             return json.load(f)
-    except Exception:
+    except json.JSONDecodeError:
+        # A truncated/corrupt file (e.g. the process was hard-killed mid-write,
+        # before _save() below wrote atomically) used to be silently treated as
+        # an EMPTY bug log -- every previously logged bug vanished with no
+        # indication anything was lost, which is exactly backwards for a file
+        # whose entire purpose is capturing bugs right before a crash -- gh60.
+        # Quarantine the unreadable file (never delete it -- it might still be
+        # hand-recoverable) instead of pretending nothing was ever logged.
+        quarantine_path = f"{BUGS_PATH}.corrupt-{int(time.time())}"
+        try:
+            os.replace(BUGS_PATH, quarantine_path)
+        except OSError:
+            quarantine_path = None
+        errorlog.log.exception(
+            "bugs.json was corrupt/unreadable -- quarantined to %s and starting fresh",
+            quarantine_path,
+        )
         return []
 
 
 def _save(bugs):
-    os.makedirs(os.path.dirname(BUGS_PATH), exist_ok=True)
-    with open(BUGS_PATH, "w") as f:
-        json.dump(bugs, f, indent=2)
+    """Writes via a temp file + os.replace() rather than a direct open(...,
+    "w") -- gh60: a direct write left a truncated/corrupt bugs.json behind if
+    the process was hard-killed mid-write (a real occurrence -- this module's
+    entire purpose is capturing bugs right before exactly that kind of crash),
+    which _load() above then couldn't parse at all. The temp file is created
+    in the SAME directory as BUGS_PATH specifically so os.replace() is an
+    atomic rename on the same filesystem -- a temp dir elsewhere (e.g. the OS
+    tmpdir) could land on a different filesystem, where the same call
+    silently falls back to a non-atomic copy+delete."""
+    bugs_dir = os.path.dirname(BUGS_PATH)
+    os.makedirs(bugs_dir, exist_ok=True)
+    fd, tmp_path = tempfile.mkstemp(dir=bugs_dir, prefix=".bugs.json.", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w") as f:
+            json.dump(bugs, f, indent=2)
+        os.replace(tmp_path, BUGS_PATH)
+    except BaseException:
+        try:
+            os.remove(tmp_path)
+        except OSError:
+            pass
+        raise
 
 
 def add_bug(text):
