@@ -148,6 +148,16 @@ class PracticeLabPanel(Vertical):
         self.language = "python"
         self.code_by_language = dict(code_runner.TEMPLATES)
         self.border_title = "Practice Lab"
+        # Guards against a second Run (or Analyze) firing while one is still in
+        # flight -- both spawn a background thread that writes to the same
+        # PRACTICE_DIR file for that language, so two overlapping runs can
+        # interleave their writes and whichever _show_*_result lands last wins,
+        # showing stale/wrong results for a run that isn't actually the most
+        # recent one (gh66). Independent flags since Run and Analyze don't share
+        # a file (see code_runner.run vs explain_sql/the AI-only complexity
+        # path), so there's no reason to block one while the other runs.
+        self._run_busy = False
+        self._analyze_busy = False
 
     def compose(self) -> ComposeResult:
         with Horizontal(id="practice-topbar"):
@@ -265,6 +275,9 @@ class PracticeLabPanel(Vertical):
         )
 
     def action_run_code(self):
+        if self._run_busy:
+            return
+        self._run_busy = True
         code = self.editor.text
         language = self.language
         self.output_panel.update(Group(
@@ -286,6 +299,7 @@ class PracticeLabPanel(Vertical):
         self.app.call_from_thread(self._show_run_result, language, result)
 
     def _show_run_result(self, language, result):
+        self._run_busy = False
         analytics.record(
             "practice_lab_run", language=language, success=result.ok,
             error_type=None if result.ok else "nonzero_exit",
@@ -301,6 +315,7 @@ class PracticeLabPanel(Vertical):
         ))
 
     def _show_run_error(self, message):
+        self._run_busy = False
         self.output_panel.update(Group(
             Text("OUTPUT", style="bold #6a6a6a"),
             Text(f"Couldn't run that -- see {LOG_PATH}\n{message}", style="bold #e06c75"),
@@ -332,6 +347,8 @@ class PracticeLabPanel(Vertical):
         return Group(Text(caption, style="bold #6a6a6a"), line)
 
     def action_analyze_complexity(self):
+        if self._analyze_busy:
+            return
         code = self.editor.text
         cap1, cap2 = self._complexity_captions()
         if not code.strip():
@@ -339,6 +356,7 @@ class PracticeLabPanel(Vertical):
             self.time_panel.update(self._complexity_message(cap1, empty_msg))
             self.space_panel.update(self._complexity_message(cap2, empty_msg))
             return
+        self._analyze_busy = True
         analytics.record("practice_lab_complexity_requested", language=self.language)
         if self.language == "sql":
             self.time_panel.update(self._complexity_message(cap1, "Running EXPLAIN QUERY PLAN..."))
@@ -370,6 +388,7 @@ class PracticeLabPanel(Vertical):
         self.app.call_from_thread(self._show_complexity_result, answer, error)
 
     def _show_complexity_result(self, answer, error):
+        self._analyze_busy = False
         if error and not answer:
             self.time_panel.update(self._complexity_message("TIME COMPLEXITY", error, style="bold #e06c75"))
             self.space_panel.update(self._complexity_message("SPACE COMPLEXITY", error, style="bold #e06c75"))
@@ -387,6 +406,7 @@ class PracticeLabPanel(Vertical):
         self.app.call_from_thread(self._show_sql_explain_result, plan, row_count, ok)
 
     def _show_sql_explain_result(self, plan, row_count, ok):
+        self._analyze_busy = False
         if not ok:
             self.time_panel.update(self._complexity_message("QUERY PLAN", plan, style="bold #e06c75"))
             self.space_panel.update(self._complexity_message("ROW COUNT", row_count, style="bold #e06c75"))
