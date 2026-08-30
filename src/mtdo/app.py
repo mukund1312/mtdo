@@ -2548,22 +2548,31 @@ class LearningCoachPanel(Static):
         if problem is None:
             if id(block) not in self.app.dsa_generating:
                 self.app.dsa_generating.add(id(block))
-                threading.Thread(target=self._generate_worker, args=(block, topic_type), daemon=True).start()
+                epoch = self.app._profile_epoch
+                threading.Thread(
+                    target=self._generate_worker, args=(block, topic_type, epoch), daemon=True,
+                ).start()
             self.update(self._generating_panel(block["text"]))
             return
         self.update(self._dsa_problem_panel(block["text"], problem))
 
-    def _generate_worker(self, block, topic_type):
+    def _generate_worker(self, block, topic_type, epoch):
         prompt = coaching.build_problem_prompt(block["text"], topic_type)
         try:
             answer, error = ai_ask.ask(prompt, timeout=90)
         except Exception as e:
             app_log.exception("DSA problem generation failed")
             answer, error = None, str(e)
-        self.app.call_from_thread(self._store_generated, block, answer, error)
+        self.app.call_from_thread(self._store_generated, block, answer, error, epoch)
 
-    def _store_generated(self, block, answer, error):
+    def _store_generated(self, block, answer, error, epoch):
         self.app.dsa_generating.discard(id(block))
+        if epoch != self.app._profile_epoch:
+            # gh63: the user switched profiles while this generation was in
+            # flight (it can take up to 90s) -- `block` belongs to a state
+            # tree that's no longer self.app.state, so mutating/saving it
+            # here would silently go nowhere. Drop the result.
+            return
         if answer:
             statement, hints = coaching.parse_problem_response(answer)
         else:
@@ -2594,8 +2603,9 @@ class LearningCoachPanel(Static):
             if id(block) not in self.app.coaching_generating:
                 self.app.coaching_generating.add(id(block))
                 label = (category_meta or {}).get("label", "this field")
+                epoch = self.app._profile_epoch
                 threading.Thread(
-                    target=self._generate_coaching_worker, args=(block, label), daemon=True,
+                    target=self._generate_coaching_worker, args=(block, label, epoch), daemon=True,
                 ).start()
             self.update(self._generating_panel(block["text"], "Asking the AI to tailor coaching notes..."))
             return
@@ -2606,17 +2616,20 @@ class LearningCoachPanel(Static):
             return
         self.update(self._coach_panel(block["text"], cached, note="AI-tailored for this task"))
 
-    def _generate_coaching_worker(self, block, label):
+    def _generate_coaching_worker(self, block, label, epoch):
         prompt = coaching.build_ai_coaching_prompt(block["text"], label)
         try:
             answer, error = ai_ask.ask(prompt, timeout=60)
         except Exception as e:
             app_log.exception("AI coaching generation failed")
             answer, error = None, str(e)
-        self.app.call_from_thread(self._store_generated_coaching, block, answer, error)
+        self.app.call_from_thread(self._store_generated_coaching, block, answer, error, epoch)
 
-    def _store_generated_coaching(self, block, answer, error):
+    def _store_generated_coaching(self, block, answer, error, epoch):
         self.app.coaching_generating.discard(id(block))
+        if epoch != self.app._profile_epoch:
+            # gh63: see _store_generated's identical comment above.
+            return
         content = coaching.parse_ai_coaching_response(answer) if answer else None
         has_enough = content and (content["focus_on"] or content["ask_yourself"])
         if not has_enough:
@@ -2810,6 +2823,17 @@ class TodoApp(App):
         # Same in-flight bookkeeping as dsa_generating above, but for AI-generated Learning
         # Coach content on fields with no static setup (see LearningCoachPanel._render_ai_coaching_mode).
         self.coaching_generating = set()
+        # gh63: bumped on every profile switch (see _switch_profile). A DSA/coaching
+        # generation worker can run up to 90s in the background; if the user switches
+        # profiles before it finishes, the `block` dict it closed over belongs to the
+        # OLD self.state tree, not the new one -- mutating/saving it would be a silent
+        # no-op that also wastes the AI call. Workers capture this epoch when they
+        # start and compare it against the current value before storing their result,
+        # discarding it if the profile has changed since. Deliberately not keyed off
+        # id(block) alone (the previous bug) -- CPython can reuse a freed object's
+        # address, which could make a stale result look like it belongs to a
+        # same-address block in the new profile.
+        self._profile_epoch = 0
         self._hint_prompt_open = False
         # AI-panel context priming (see coaching.build_focus_context_message /
         # _prime_ai_context_if_needed): the (date_key, category, idx) of the active task
@@ -3657,6 +3681,7 @@ class TodoApp(App):
             self.current_dsa_ref = None
             self.dsa_generating = set()
             self.coaching_generating = set()
+            self._profile_epoch += 1
             self.ai_primed_ref = None
             self._hint_prompt_open = False
         self.reload_from_goals()

@@ -9,6 +9,56 @@ Add each session's PROGRESS.md entry to the same branch as the code it describes
 
 ---
 
+## 2026-08-30 (PR pending) -- gh63: profile-switch epoch guard for in-flight AI generation
+
+Fourth fix from the full-codebase audit (see the gh59 entry further down). This
+one kicks off a **batch**: the user explicitly authorized fixing every remaining
+open audit bug assigned to them (gh63, gh65, gh67, gh68, gh69, gh71, gh72, gh73,
+gh74) and merging each PR directly rather than waiting for review each time --
+pull latest -> fix -> test -> PR -> CI green -> merge -> pull latest -> next bug,
+repeated through the whole list.
+
+**The bug:** a DSA/coaching AI generation runs in a background thread for up to
+90s. If the user switches profiles before it finishes, `_switch_profile`
+reassigns `self.state` to a freshly disk-read dict tree -- the `block` dict the
+thread closed over belongs to the OLD tree. When the thread finishes,
+`_store_generated`/`_store_generated_coaching` mutated that now-orphaned `block`
+and saved `self.app.state`, which never contained the mutation: the generated
+content vanished silently, and reopening the same task re-triggered (and
+re-billed) a fresh generation.
+
+**Fix:** added `self._profile_epoch`, bumped on every real profile switch.
+`_render_dsa_mode`/`_render_ai_coaching_mode` capture the epoch when they start a
+generation thread; `_store_generated`/`_store_generated_coaching` compare it
+against the current epoch before mutating/saving, discarding the result if the
+profile changed in the meantime. Deliberately NOT keyed off `id(block)` alone
+(the original design) -- CPython can reuse a freed object's address, which could
+make a stale result from profile A look like it belongs to a same-address block
+in profile B.
+
+Added `tests/test_profile_switch_generation_epoch.py` (zero prior coverage of
+this whole code path) -- calls the panel's result-storing methods directly with
+a controlled epoch rather than racing real threads/timing (a real generation can
+take up to 90s, so timing-based tests would be either slow or flaky).
+
+**A real lesson learned mid-fix, worth flagging for future test files:**
+`test_onboarding.py` has tests that assert "analytics hasn't been decided /
+no profile exists yet this session" -- true only because it happens to run
+before any other file that creates a profile or dismisses the analytics
+opt-in, in pytest's alphabetical collection order. The first version of this
+file was named `test_learning_coach_epoch.py`, which sorted *before*
+`test_onboarding.py` and broke both of those assumptions the moment it ran
+(confirmed by removing it and re-running: `test_onboarding.py` passed clean
+without it). Fixed two ways: added a local fixture cleaning up
+`analytics.json`'s `decided_at`, and renamed the file to
+`test_profile_switch_generation_epoch.py` so it sorts after `test_onboarding.py`.
+Any new test file that constructs a fresh `TodoApp()` and fully dismisses the
+first-run modal chain should be named with this in mind, or `test_onboarding.py`
+itself should stop depending on collection order -- whichever a future pass
+finds cleaner.
+
+---
+
 ## 2026-08-30 (PR https://github.com/mukund1312/mtdo/pull/61) -- gh61: atomic encrypted profile writes
 
 Third fix from the full-codebase audit (see the gh59 entry further down for the
