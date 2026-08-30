@@ -96,21 +96,19 @@ _SHINE_ART_FULL = [
 ]
 
 # Cropped to the center _SHINE_DISPLAY_WIDTH columns of the 65-wide source
-# art -- this screen now puts the visualizer BESIDE the art (not stacked
-# below it), and the two need to share one ~80-col terminal's worth of
-# horizontal room (same working assumption other screens in this app make,
-# and the same real-estate tradeoff PR #48/#49's shine-sweep/scrolling work
-# already had to reason about for this exact panel). At the panel's actual
-# content width (80 - 2*1 margin - 2*1 border - 2*2 padding = 70 cols) the
-# full 65-wide art plus any real visualizer simply doesn't fit -- narrowing
-# the art (rather than shrinking the visualizer down to the few columns that
-# would otherwise be left) is the one that keeps the new "skyline" dense
-# enough to read as dozens of bars. Cropped from the center, not an edge, on
-# the assumption the art's focal point is centered like most portrait-style
-# ASCII art -- _SHINE_ART_FULL is kept above uncropped in case a future
-# session wants to re-tune this.
-_SHINE_CROP_START = 11
-_SHINE_DISPLAY_WIDTH = 42
+# art -- this screen puts the visualizer BESIDE the art (not stacked below
+# it), and the two split the panel's real content width (80 - 2*1 margin -
+# 2*1 border - 2*2 padding = 70 cols, the same 80-col terminal assumption
+# other screens in this app make) as an actual LEFT HALF / RIGHT HALF, per
+# direct user feedback on an earlier lopsided 42/24 split that shortchanged
+# the visualizer -- not just "whatever's left over" for either side.
+# _SHINE_DISPLAY_WIDTH (35) + _VIS_GAP (1) + _VIS_BARS (34) = 70, an even
+# split. Cropped from the center, not an edge, on the assumption the art's
+# focal point is centered like most portrait-style ASCII art --
+# _SHINE_ART_FULL is kept above uncropped in case a future session wants to
+# re-tune this (e.g. a wider-than-80 terminal).
+_SHINE_CROP_START = 15
+_SHINE_DISPLAY_WIDTH = 35
 _SHINE_ART = [row[_SHINE_CROP_START:_SHINE_CROP_START + _SHINE_DISPLAY_WIDTH] for row in _SHINE_ART_FULL]
 _SHINE_WIDTH = len(_SHINE_ART[0])
 _SHINE_BASE_COLOR = "#a8b0ac"
@@ -120,37 +118,37 @@ _SHINE_STEP = 2
 _SHINE_TICK = 1 / 20
 
 # -- Dense "skyline" visualizer -- sits beside the shine-sweep art (not
-# stacked below it) inside the same ~70-col content budget accounted for
-# above: _SHINE_DISPLAY_WIDTH (42) + _VIS_GAP (2) + _VIS_BARS (24) = 68,
-# leaving a couple of spare columns for VerticalScroll's own scrollbar when
-# the panel's content overflows a short terminal (see PR #49). Height
-# matches the art's row count exactly so the two sit as one aligned block.
+# stacked below it), occupying the panel's right half (see the crop comment
+# above for the width budget). Height matches the art's row count exactly
+# so the two sit as one aligned block.
 #
 # Still real-data-only, same "EQ honesty" line the rest of this file holds
 # to (see module docstring): radio.py's RadioPlayer.get_levels() is the only
 # real audio data that exists, and it is only ever NUM_BANDS=8 values wide.
-# Going from 8 real bands to _VIS_BARS=24 dense bars is spline interpolation
+# Going from 8 real bands to _VIS_BARS=34 dense bars is spline interpolation
 # across those 8 real values (_interpolate_bars, below), not decoration --
 # a Catmull-Rom spline's curvature between control points is itself derived
 # from the real neighboring bands' values, so the "skyline" texture between
 # bars is real spectral shape, not randomness standing in for it.
-_VIS_BARS = 24
-_VIS_GAP = 2
+_VIS_BARS = 34
+_VIS_GAP = 1
 _VIS_ROWS = len(_SHINE_ART)
 _VIS_OFF = "#16241c"
-_VIS_CYAN = "#00ffd0"
 _VIS_GOLD = "#ffd166"
 _VIS_CORAL = "#ff5f56"
-# Low-to-high color ramp: neon cyan (bass) -> glowing mint -> warm gold ->
-# orange -> hot coral only at the very top peaks, matching the retro CRT/
-# synthwave palette the rest of this screen already uses (reuses
-# _GREEN_BRIGHT for the mint stop and _ORANGE for the orange stop rather
-# than inventing near-duplicate colors).
+_VIS_PEAK = "#ff7fa6"  # bright pink-red "peak hold" cap, see _render_visualizer
+# Low-to-high color ramp, re-tuned to match a reference "cliamp" mockup the
+# user pasted directly (image-based feedback, not just the earlier written
+# spec): mostly glowing green through the lower half (reused _GREEN_BRIGHT,
+# no separate green constant needed), rising through warm gold and orange,
+# hot coral only near the very top -- close to the mockup's segmented LED-
+# meter look, which reads green-dominant with red only at the tips, not the
+# more cyan-forward ramp an earlier revision used.
 _VIS_GRADIENT_STOPS = [
-    (0.0, _VIS_CYAN),
-    (0.35, _GREEN_BRIGHT),
-    (0.62, _VIS_GOLD),
-    (0.85, _ORANGE),
+    (0.0, _GREEN_BRIGHT),
+    (0.55, _GREEN_BRIGHT),
+    (0.72, _VIS_GOLD),
+    (0.88, _ORANGE),
     (1.0, _VIS_CORAL),
 ]
 
@@ -222,13 +220,25 @@ def _render_visualizer(levels):
     """Renders the dense skyline visualizer from real per-band `levels`.
     Pure function of its input (no player/screen access) so the
     interpolation and gradient-color logic can be unit-tested directly by
-    span/color inspection, same pattern as _render_shine_art above."""
+    span/color inspection, same pattern as _render_shine_art above.
+
+    Each bar's own topmost lit cell (row == height - 1, i.e. THAT bar's
+    current peak -- not a fixed row shared across every bar) is drawn with a
+    hatched "▒" texture in _VIS_PEAK instead of a solid block, echoing the
+    dotted peak-hold cap on the reference mockup's meter. Everything below
+    it is a solid block colored by _VIS_ROW_COLORS at that row's own
+    position, same gradient regardless of which bar it belongs to."""
     heights = [round(v * _VIS_ROWS) for v in _interpolate_bars(levels, _VIS_BARS)]
     text = Text()
     for row in range(_VIS_ROWS - 1, -1, -1):
-        color = _VIS_ROW_COLORS[row]
+        row_color = _VIS_ROW_COLORS[row]
         for height in heights:
-            text.append("█" if height > row else "░", style=color if height > row else _VIS_OFF)
+            if height <= 0 or row >= height:
+                text.append("░", style=_VIS_OFF)
+            elif row == height - 1:
+                text.append("▒", style=_VIS_PEAK)
+            else:
+                text.append("█", style=row_color)
         text.append("\n")
     return text
 
@@ -330,7 +340,7 @@ class RadioScreen(Screen):
     #radio-tty {{ width: auto; color: {_DIM}; }}
     #radio-panel {{ margin: 1 2 1 2; border: round {_BOX_BORDER}; background: {_PANEL_BG}; padding: 0 2 1 2; height: 1fr; }}
     #radio-hero {{ height: auto; margin-top: 1; margin-bottom: 1; }}
-    #radio-shine {{ width: auto; height: auto; }}
+    #radio-shine {{ width: {_SHINE_DISPLAY_WIDTH}; height: auto; }}
     #radio-visualizer {{ width: {_VIS_BARS}; height: {_VIS_ROWS}; margin-left: {_VIS_GAP}; background: {_GREEN_BG}; }}
     #radio-title-row {{ height: 1; margin-top: 1; }}
     #radio-cliamp {{ width: 1fr; color: {_TEAL}; text-style: bold; }}
