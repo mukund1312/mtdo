@@ -3612,13 +3612,22 @@ class TodoApp(App):
         self._write_current_profile(slug, value)
 
     def _write_current_profile(self, slug, password):
+        # gh62: write_goals() and write_state() used to always be two separate
+        # calls here -- the process dying (or write_state raising) between them
+        # left a real, inconsistent split profile (new goals, stale state, or
+        # vice versa). Combined into one atomic call when both exist; state is
+        # still always written on its own when there's no goals.json yet, same
+        # as before.
+        goals = None
         if os.path.exists(appconfig.GOALS_PATH):
             try:
                 goals = appconfig.load_goals()
-                pf.write_goals(slug, goals, password)
             except FileNotFoundError:
                 pass
-        pf.write_state(slug, self.state, password)
+        if goals is not None:
+            pf.write_goals_and_state(slug, goals, self.state, password)
+        else:
+            pf.write_state(slug, self.state, password)
 
     def _switch_profile(self, slug, password=None):
         """gh49: every switch to a protected profile re-prompts for its password,
