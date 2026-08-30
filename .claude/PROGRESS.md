@@ -54,6 +54,88 @@ around it PR by PR.
 
 ---
 
+## 2026-08-30 (PR https://github.com/mukund1312/mtdo/pull/55) -- visualizer widened to a true half/half split, restyled to match a pasted reference
+
+Direct follow-up to the entry right below (merged as PR #53) -- the user's
+real-time reaction after seeing it running: "the ascii dj has been cut down
+and also the music graphic should go be like this [image] it should occupy
+right half and then the ascii dj should occupy left half." They pasted a
+screenshot of the original "cliamp" reference mockup (found via Claude
+Code's own image cache, `~/.claude/image-cache/<session>/2.png`, since the
+image wasn't inlined as text in the relayed message) showing its bar
+visualizer: mostly bright green through the lower portion of each bar,
+rising through gold/orange to red only near the tips, with a distinct
+dotted/hatched "peak-hold" cap texture at each bar's own top.
+
+**Concurrent-session hazard, handled before touching anything:** partway
+through this follow-up, `git status` in `~/mtdo` showed the repo on a
+DIFFERENT branch (`feature/mu/UAT-gh59-atomic-state-write`) with staged
+`core.py`/`test_core.py` changes neither I nor this session had made --
+another Claude Code session was actively working in the same shared,
+non-worktree-isolated directory. Rather than risk clobbering that work by
+switching branches (which moves the shared repo's single HEAD/index and
+would misdirect that other session's next commit), captured this follow-up's
+own diff to a patch file, ran `git checkout -- <the 2 files>` to restore the
+shared working tree to exactly the state the other session left it in
+(confirmed via `git status`), and did the rest of this work in a
+`git worktree add`-created isolated worktree off `origin/main` instead --
+never touched the other session's branch, staged changes, or HEAD.
+
+**Layout, corrected to an actual half/half split:** previous revision gave
+the art 42 cols and the visualizer only 24 (a 42/24 split that was NOT half
+and half despite reading as "roughly balanced" at a glance) -- re-cropped
+the art down to its center 35 columns and widened the visualizer to 34 bars
+(1-col gap between): 35 + 1 + 34 = 70, the panel's full real content width,
+an actual even split as asked. Re-verified the crop doesn't break the
+existing shine-sweep tests for the same reason as before -- they read
+`_SHINE_ART`/`_SHINE_WIDTH` live off the module rather than hardcoding
+literals, so a width change alone needed zero test edits there.
+
+**Palette and character work re-tuned to match the pasted image specifically,**
+overriding the more cyan-forward ramp the earlier revision used (that ramp
+came from the original written spec, before there was a concrete image to
+compare against -- once there was one, matched it instead): dropped the
+cyan stop, `_VIS_GRADIENT_STOPS` now holds a flat `_GREEN_BRIGHT` plateau
+through the bottom 55% of a bar's height, then rises through gold (0.72),
+orange (0.88), to coral at the very top (1.0).
+
+**New "peak-hold cap" texture, matching the reference's dotted bar tips:**
+`_render_visualizer` now treats a bar's own topmost LIT row (`row == height
+- 1` for THAT bar specifically, not a row shared across the whole grid) as
+a distinct hatched `"▒"` character in a new `_VIS_PEAK` (`#ff7fa6`) color,
+instead of a solid block in the row's gradient color. Confirmed by hand via
+a zoomed-in crop of a real screenshot (`vis_zoom.png` in this session's
+scratchpad) that the cap genuinely tracks each column's own height
+independently -- a short bar's cap sits well below a tall neighbor's, not
+smeared across one shared row.
+
+**Tested:** same discipline as the entry below -- `python3 -m py_compile`
+clean; full pytest suite run in the isolated worktree's own venv (editable-
+installed against the worktree path, not the shared repo, so it genuinely
+exercises this branch's code) -- see the immediately-following test-suite
+result note appended once that run completed. Updated/added unit tests in
+`tests/test_radio.py`: `_gradient_color`/`_VIS_ROW_COLORS` tests rewritten
+to read stops live off `radio_screen._VIS_GRADIENT_STOPS` rather than
+hardcoding fracs (so a future re-tune, which this session itself is proof
+tends to happen, doesn't need fragile test edits); a new
+`test_render_visualizer_peak_cap_lands_on_each_bars_own_top_row` computes
+expected heights independently via `_interpolate_bars` and asserts the
+peak-cap/fill/unlit character and color at every single cell, per column,
+for a level shape guaranteed to produce unequal bar heights. Also captured
+fresh real headless Pilot screenshots (same wall-clock-tick discipline as
+before) confirming visually: a genuine half/half split with the art fully
+occupying its half (not visibly cramped), the skyline now dense enough to
+show real per-band irregularity, and the peak-cap pink hatch appearing only
+at each bar's own real tip.
+
+**Next / open items:** same open items as the entry below still apply
+(crop-offset eyeballing, gold/orange/coral untested against a real loud
+stream). Branch is `feature/mu/UAT-radio-visualizer-half-split`, built off
+`origin/main` (which already has PR #53 merged) via an isolated
+`git worktree`, not the shared `~/mtdo` checkout.
+
+---
+
 ## 2026-08-30 (PR https://github.com/mukund1312/mtdo/pull/56) -- gh60: atomic bug_log.json writes + corruption recovery
 
 Second fix from the full-codebase audit (see the gh59 entry below for the audit
@@ -128,7 +210,7 @@ worth a look separately if either keeps recurring.
 
 ---
 
-## 2026-08-30 (PR pending) -- visualizer moved beside the DJ art, made much denser
+## 2026-08-30 (PR https://github.com/mukund1312/mtdo/pull/53) -- visualizer moved beside the DJ art, made much denser
 
 Real feature request: put the audio visualizer BESIDE the shine-sweep "DJ" art
 (`_SHINE_ART`) instead of stacked below it, and make it much richer/denser --

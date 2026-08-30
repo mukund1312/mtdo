@@ -477,11 +477,13 @@ def test_interpolate_bars_produces_more_resolution_than_the_8_real_bands():
     assert len(set(round(v, 6) for v in bars)) > len(levels)
 
 
-def test_gradient_color_matches_stops_at_their_own_fracs_and_clamps_outside_0_1():
-    assert radio_screen._gradient_color(0.0) == radio_screen._VIS_CYAN
-    assert radio_screen._gradient_color(1.0) == radio_screen._VIS_CORAL
-    assert radio_screen._gradient_color(0.35) == radio_screen._GREEN_BRIGHT
-    assert radio_screen._gradient_color(0.85) == radio_screen._ORANGE
+def test_gradient_color_matches_every_stop_at_its_own_frac_and_clamps_outside_0_1():
+    """Reads _VIS_GRADIENT_STOPS itself rather than hardcoding fracs/colors,
+    so this stays correct if the ramp is ever re-tuned again (as it already
+    was once, to match a pasted reference mockup more closely -- see
+    PROGRESS.md)."""
+    for frac, color in radio_screen._VIS_GRADIENT_STOPS:
+        assert radio_screen._gradient_color(frac) == color
     # out-of-range fracs clamp to the end stops rather than extrapolating
     assert radio_screen._gradient_color(-5.0) == radio_screen._gradient_color(0.0)
     assert radio_screen._gradient_color(5.0) == radio_screen._gradient_color(1.0)
@@ -489,12 +491,19 @@ def test_gradient_color_matches_stops_at_their_own_fracs_and_clamps_outside_0_1(
 
 def test_gradient_color_is_monotonic_in_each_rgb_channel_within_a_stop_span():
     """Cheap sanity check that a mid-span frac is genuinely between its two
-    bracketing stops in RGB space, not some interpolation-math typo."""
-    low = radio_screen._hex_to_rgb(radio_screen._gradient_color(0.0))
-    mid = radio_screen._hex_to_rgb(radio_screen._gradient_color(0.17))  # halfway to the mint stop
-    high = radio_screen._hex_to_rgb(radio_screen._gradient_color(0.35))
+    bracketing stops in RGB space, not some interpolation-math typo. Uses the
+    gold->orange span (a real color change) rather than the bottom span,
+    which is deliberately a flat green plateau (see _VIS_GRADIENT_STOPS)."""
+    low = radio_screen._hex_to_rgb(radio_screen._gradient_color(0.72))
+    mid = radio_screen._hex_to_rgb(radio_screen._gradient_color(0.80))
+    high = radio_screen._hex_to_rgb(radio_screen._gradient_color(0.88))
     for lo, m, hi in zip(low, mid, high):
         assert min(lo, hi) <= m <= max(lo, hi)
+
+
+def test_vis_row_colors_run_from_green_at_the_bottom_to_coral_at_the_top():
+    assert radio_screen._VIS_ROW_COLORS[0] == radio_screen._GREEN_BRIGHT
+    assert radio_screen._VIS_ROW_COLORS[-1] == radio_screen._VIS_CORAL
 
 
 def _row_spans(text, row, width):
@@ -515,21 +524,50 @@ def test_render_visualizer_silence_is_all_unlit():
     assert all(s.style == radio_screen._VIS_OFF for s in bottom_row_spans)
 
 
-def test_render_visualizer_full_volume_lights_every_row_with_the_gradient():
+def test_render_visualizer_full_volume_lights_every_bar_with_a_peak_cap_and_the_gradient():
     """0 dBFS on every real band normalizes to 1.0 everywhere, so every bar
-    should be lit its full height -- bottom row cyan, top row coral, per the
+    is lit its full real height. Since every bar reaches the exact same
+    height here, the very top physical row is EVERY bar's own peak -- drawn
+    with the hatched peak-hold cap (see _render_visualizer's docstring),
+    not a solid gradient-colored block. Bottom row is green, per the
     low-to-high color ramp."""
     text = radio_screen._render_visualizer([0.0] * 8)
     plain_rows = text.plain.split("\n")[:-1]
     assert len(plain_rows) == radio_screen._VIS_ROWS
-    assert all(ch == "█" for row in plain_rows for ch in row)
+    assert all(ch == "▒" for ch in plain_rows[0])
+    assert all(ch == "█" for row in plain_rows[1:] for ch in row)
 
     # row 0 in the rendered Text is the TOP of the bar (rows are emitted
     # top-down); the bottom row is printed last.
     top_spans = _row_spans(text, 0, radio_screen._VIS_BARS)
     bottom_spans = _row_spans(text, radio_screen._VIS_ROWS - 1, radio_screen._VIS_BARS)
-    assert all(s.style == radio_screen._VIS_CORAL for s in top_spans)
-    assert all(s.style == radio_screen._VIS_CYAN for s in bottom_spans)
+    assert all(s.style == radio_screen._VIS_PEAK for s in top_spans)
+    assert all(s.style == radio_screen._GREEN_BRIGHT for s in bottom_spans)
+
+
+def test_render_visualizer_peak_cap_lands_on_each_bars_own_top_row():
+    """The peak-hold cap must track each bar's OWN height, not a single row
+    shared across the whole visualizer -- confirmed here per-column against
+    heights computed independently via _interpolate_bars, for a level shape
+    (one loud band, rest silent) guaranteed to produce genuinely unequal bar
+    heights across the 34 interpolated bars."""
+    levels = [-60.0] * 7 + [0.0]
+    heights = [round(v * radio_screen._VIS_ROWS) for v in radio_screen._interpolate_bars(levels, radio_screen._VIS_BARS)]
+    assert len(set(heights)) > 1  # otherwise this wouldn't exercise per-column placement at all
+
+    text = radio_screen._render_visualizer(levels)
+    plain_rows = text.plain.split("\n")[:-1]
+    columns = list(zip(*plain_rows))  # column-major view, top row first
+    for col_index, height in enumerate(heights):
+        for row_index in range(radio_screen._VIS_ROWS):
+            ch = columns[col_index][row_index]
+            row_from_bottom = radio_screen._VIS_ROWS - 1 - row_index
+            if height <= 0 or row_from_bottom >= height:
+                assert ch == "░"
+            elif row_from_bottom == height - 1:
+                assert ch == "▒"
+            else:
+                assert ch == "█"
 
 
 async def test_visualizer_freezes_on_pause_parks_on_stop_resumes_on_play():
