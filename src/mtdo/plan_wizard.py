@@ -59,8 +59,12 @@ def save_and_copy(prompt):
     with open(PROMPT_OUTPUT_PATH, "w") as f:
         f.write(prompt)
     try:
-        subprocess.run(["pbcopy"], input=prompt.encode(), timeout=3)
-        copied = True
+        result = subprocess.run(["pbcopy"], input=prompt.encode(), timeout=3)
+        # gh74: used to report copied=True as long as the subprocess call
+        # itself didn't raise, regardless of pbcopy's actual exit code -- if
+        # pbcopy ran but silently failed to set the clipboard, the caller was
+        # told it copied when it didn't.
+        copied = result.returncode == 0
     except (OSError, subprocess.SubprocessError):
         copied = False
     return PROMPT_OUTPUT_PATH, copied

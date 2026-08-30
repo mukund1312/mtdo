@@ -9,6 +9,28 @@ Add each session's PROGRESS.md entry to the same branch as the code it describes
 
 ---
 
+## 2026-08-30 (PR pending) -- gh74: plan_wizard.py checks pbcopy's real return code
+
+Ninth and final bug in the autonomous fix-everything-assigned-to-mukund1312
+batch. All 9 audit bugs assigned to Mukund are now fixed: gh59, gh60, gh61,
+gh63, gh65, gh67, gh68, gh69, gh71, gh72, gh73, gh74 (see the gh59 entry
+further down for the audit itself and the batch's own kickoff).
+
+**The bug:** `save_and_copy()` reported `copied = True` based only on whether
+the `pbcopy` subprocess call raised, not on its actual return code. If pbcopy
+ran but silently failed to set the clipboard, the caller was told it copied
+when it didn't -- a minor, low-likelihood UX inaccuracy (the lowest-severity
+finding of the whole audit).
+
+**Fix:** check `result.returncode == 0` instead of just "didn't raise."
+
+Added `tests/test_plan_wizard_save_and_copy.py` (zero prior coverage):
+success and nonzero-exit-code cases both report the right `copied` value, a
+raised exception still reports `False`, and the file is always written to
+disk regardless of the clipboard outcome.
+
+---
+
 ## 2026-08-30 (PR pending) -- gh73: youtube_notes.py validates the URL is actually YouTube
 
 Eighth bug in the autonomous fix-everything-assigned-to-mukund1312 batch (see
