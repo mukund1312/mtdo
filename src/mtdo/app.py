@@ -2912,7 +2912,14 @@ class TodoApp(App):
         self._finish_startup()
 
     def _finish_startup(self):
-        analytics.prune_older_than(days=180)
+        # gh71: prune_older_than() does a DELETE + VACUUM against events.db --
+        # VACUUM rebuilds the whole file and scales with its size. Nothing
+        # downstream in this method depends on its result, so run it off the
+        # main/event-loop thread rather than blocking every single app launch
+        # on it (harmless today at typical events.db sizes, but the one place
+        # in this app doing blocking DB maintenance directly in the startup
+        # path instead of off-thread like other slow I/O).
+        threading.Thread(target=analytics.prune_older_than, kwargs={"days": 180}, daemon=True).start()
         saved = tc.maybe_autosave_daily_report(self.state, self.today)
         self.refresh_side_panels()
         messages, style = [], "bold cyan"
