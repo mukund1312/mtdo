@@ -38,6 +38,7 @@ import os
 import re
 import secrets
 import shutil
+import tempfile
 
 from . import config as appconfig
 
@@ -435,6 +436,41 @@ def _decrypt_for(slug, password, raw_bytes):
         raise WrongPassword(f'wrong password for profile "{profile["name"]}".')
 
 
+def _atomic_write_bytes(path, raw):
+    """Writes via a temp file + os.replace() rather than a direct open(...,
+    "wb") -- gh61: a direct write left a truncated ciphertext behind if the
+    process died mid-write (a real occurrence -- this app is genuinely
+    killed via SIGHUP/hard-kill in real sandbox sessions, see bug_log.py's
+    own docstring). On next read, Fernet can't tell "truncated ciphertext"
+    apart from "wrong key" -- by design, it never signals which one caused
+    an InvalidToken, to avoid giving an attacker an oracle -- so a crash
+    mid-write surfaced identically to WrongPassword, misdiagnosing real data
+    corruption as a password problem with no recovery path. Fixing this on
+    the write side (prevent the corruption) rather than the read side
+    (guess-and-recover from it) is deliberate: unlike core.py/bug_log.py's
+    plain-JSON writes, an InvalidToken here could just as easily mean a
+    genuinely wrong password, and auto-discarding an encrypted profile on
+    every wrong-password attempt would be far worse than the bug it fixes.
+    The temp file is created in the SAME directory as `path` specifically
+    so os.replace() is an atomic rename on the same filesystem -- a temp
+    dir elsewhere (e.g. the OS tmpdir) could land on a different
+    filesystem, where the same call silently falls back to a non-atomic
+    copy+delete."""
+    directory = os.path.dirname(path)
+    os.makedirs(directory, exist_ok=True)
+    fd, tmp_path = tempfile.mkstemp(dir=directory, prefix=f".{os.path.basename(path)}.", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "wb") as f:
+            f.write(raw)
+        os.replace(tmp_path, path)
+    except BaseException:
+        try:
+            os.remove(tmp_path)
+        except OSError:
+            pass
+        raise
+
+
 def _goals_path(slug):
     return os.path.join(profile_dir(slug), "goals.json")
 
@@ -466,8 +502,7 @@ def write_goals(slug, goals, password=None):
     raw = json.dumps(goals, indent=2).encode("utf-8")
     if profile.get("protected"):
         raw = _encrypt_for(slug, password, raw)
-    with open(_goals_path(slug), "wb") as f:
-        f.write(raw)
+    _atomic_write_bytes(_goals_path(slug), raw)
 
 
 def read_state(slug, password=None):
@@ -493,8 +528,7 @@ def write_state(slug, state, password=None):
     raw = json.dumps(state, indent=2).encode("utf-8")
     if profile.get("protected"):
         raw = _encrypt_for(slug, password, raw)
-    with open(_state_path(slug), "wb") as f:
-        f.write(raw)
+    _atomic_write_bytes(_state_path(slug), raw)
 
 
 def import_goals_file(slug, source_path, password=None):

@@ -9,6 +9,51 @@ Add each session's PROGRESS.md entry to the same branch as the code it describes
 
 ---
 
+## 2026-08-30 (PR https://github.com/mukund1312/mtdo/pull/61) -- gh61: atomic encrypted profile writes
+
+Third fix from the full-codebase audit (see the gh59 entry further down for the
+audit itself). Same root cause as gh59/gh60 -- `profiles.py`'s `write_goals`/
+`write_state` wrote encrypted goals.json/state.json via a direct
+`open(..., "wb")`, which a mid-write crash could leave truncated.
+
+**Different consequence here than gh59/gh60, and a deliberately different fix
+shape:** Fernet raises the exact same `InvalidToken` for truncated ciphertext
+as for a genuinely wrong password -- by design, it never signals which one
+caused the failure, specifically to avoid giving an attacker a decryption
+oracle. So a crash mid-write surfaced identically to `WrongPassword`,
+misdiagnosing real data corruption as a password problem with no recovery
+path. This also means the gh59/gh60 "quarantine the corrupt file and start
+fresh" recovery pattern would be actively wrong here: auto-discarding an
+encrypted profile on every `InvalidToken` would risk destroying real data on
+nothing more than a mistyped password. So the fix is write-side only --
+`_atomic_write_bytes()` (temp file + `os.replace()`, same shape as gh59/gh60)
+prevents the corruption from ever happening; `WrongPassword` still reports as
+`WrongPassword`, untouched.
+
+Added `tests/test_profiles_write.py` (previously zero coverage of
+`write_goals`/`write_state`'s encrypted path): round-trip on both protected
+and unprotected profiles, no leftover temp files, a second write fully
+replacing the first, and confirming a genuinely wrong password still reports
+as wrong rather than getting silently "recovered."
+
+**CI flakiness pattern, now worth addressing on its own:** this PR's CI failed
+once, on yet a THIRD distinct test unrelated to the change --
+`test_profiles.py::test_reselecting_the_same_active_profile_does_not_reset_pomodoro`
+(an off-by-one Pomodoro tick count, 41 vs 42 seconds remaining), cleared on a
+single rerun. Combined with gh59's PR (`test_radio.py`'s StopIteration) and
+gh60's PR (`test_radio.py`'s StopIteration again, then `test_vault.py`'s
+spinner-timing assertion), that's three different real-time-sensitive tests
+flaking across three different unrelated PRs. This is no longer "one weird
+test" -- it looks like CI's runner is consistently slower/more variable than
+local, and several tests in this suite make tight real-time assumptions
+(sleep-based timing, tick counting, single-`pilot.pause()` scheduling) that
+occasionally slip under that variability. Worth a dedicated pass to make
+those tests robust to slower schedulers (poll-with-timeout instead of
+assert-after-one-pause, where applicable) rather than continuing to rerun
+around it PR by PR.
+
+---
+
 ## 2026-08-30 (PR https://github.com/mukund1312/mtdo/pull/55) -- visualizer widened to a true half/half split, restyled to match a pasted reference
 
 Direct follow-up to the entry right below (merged as PR #53) -- the user's
