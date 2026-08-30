@@ -45,7 +45,7 @@ import os
 import re
 import subprocess
 
-from . import bug_sync, status_sync
+from . import bug_sync, errorlog, status_sync
 from .bug_sync import DISPLAY_NAMES, PEOPLE, PERSON_COLOR_VAR
 
 DASHBOARD_PATH = os.path.expanduser("~/.mtdo-sandbox/dashboard.html")
@@ -1186,12 +1186,26 @@ def generate(overrides=None):
     generation after it, even one run with no overrides at all) reflects them
     durably instead of only for as long as nobody republishes without remembering
     to carry the override dict forward by hand. See that function's own docstring
-    for the real incident that made this necessary, not just a hypothetical."""
+    for the real incident that made this necessary, not just a hypothetical.
+
+    Returns (DASHBOARD_PATH, None) -- instead of raising -- if a `gh` call fails
+    partway through (rate limit, auth hiccup, network blip): gh67, every OTHER
+    subprocess call in this file (_commit_counts, _fetch_remotes_quiet,
+    _bug_git_activity) already degrades gracefully rather than crashing the whole
+    dashboard over a transient failure; this brings actual regeneration in line
+    with that same philosophy. DASHBOARD_PATH is left untouched in that case (the
+    write below never runs), so callers still have the last-known-good page --
+    `triaged is None` is how a caller tells "generation was skipped" apart from
+    a real "nothing needed triaging" (`{}`)."""
     _fetch_remotes_quiet()
-    bug_sync.sync_dashboard_overrides(overrides)
-    triaged = bug_sync.auto_triage_pending()
-    issues = bug_sync.list_all()
-    statuses = status_sync.get_all_status()
+    try:
+        bug_sync.sync_dashboard_overrides(overrides)
+        triaged = bug_sync.auto_triage_pending()
+        issues = bug_sync.list_all()
+        statuses = status_sync.get_all_status()
+    except RuntimeError:
+        errorlog.log.exception("dashboard.generate(): a gh call failed -- keeping the last-known-good page")
+        return DASHBOARD_PATH, None
     content = render_html(issues, statuses, overrides=overrides)
     os.makedirs(os.path.dirname(DASHBOARD_PATH), exist_ok=True)
     with open(DASHBOARD_PATH, "w") as f:

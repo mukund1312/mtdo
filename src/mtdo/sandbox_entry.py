@@ -244,6 +244,9 @@ def _dashboard_command():
     # dashboard.generate() runs the auto-triage safety net itself now, so every caller
     # (this CLI command, and the in-app background job) gets it for free.
     path, triaged = dashboard.generate()
+    if triaged is None:
+        print(f"Couldn't refresh the dashboard (a `gh` call failed) -- {path} still shows the last generated version.")
+        return
     print(f"Dashboard written to {path}")
     if triaged:
         print(f"Auto-triaged {len(triaged)} bug(s) as a safety net:")
