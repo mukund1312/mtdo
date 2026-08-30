@@ -9,6 +9,34 @@ Add each session's PROGRESS.md entry to the same branch as the code it describes
 
 ---
 
+## 2026-08-30 (PR pending) -- gh73: youtube_notes.py validates the URL is actually YouTube
+
+Eighth bug in the autonomous fix-everything-assigned-to-mukund1312 batch (see
+the gh63 entry further down).
+
+**The bug:** `fetch_transcript()` passed `url` straight to
+`yt_dlp.YoutubeDL(...).extract_info()` with no check it's actually a YouTube
+link -- yt-dlp supports many non-YouTube sites. A pasted non-YouTube URL in
+what's presented as a YouTube-specific Vault feature could "succeed" against
+an unrelated site, or fail with a generic yt-dlp error rather than a clear
+"that's not a YouTube URL" message.
+
+**Fix:** added `_is_youtube_url()`, checked by hostname against an allowlist
+(`youtube.com`, `www.youtube.com`, `m.youtube.com`, `music.youtube.com`,
+`youtu.be`) rather than a stricter path/ID-shape regex -- real YouTube URLs
+come in enough shapes (`watch?v=`, `youtu.be/<id>`, `/shorts/<id>`,
+`/live/<id>`) that a hostname check is the more robust, less
+guessable-wrong option. Checked after the existing yt-dlp-availability
+check (so that failure mode is still reported first, unmasked), before ever
+touching yt-dlp.
+
+Added `tests/test_youtube_url_validation.py`: common real YouTube URL shapes
+accepted, common non-YouTube URLs (and garbage input) rejected, a rejected
+URL never reaches yt-dlp, and the missing-yt-dlp check still takes priority
+over the new URL check.
+
+---
+
 ## 2026-08-30 (PR pending) -- gh72: bug_sync.py reports a missing gh binary clearly
 
 Seventh bug in the autonomous fix-everything-assigned-to-mukund1312 batch (see

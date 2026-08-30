@@ -13,6 +13,7 @@ fetch_transcript() and generate_notes_and_quiz() are split so the caller can sho
 instead of one opaque wait -- see VaultScreen's worker thread.
 """
 import re
+import urllib.parse
 import urllib.request
 
 from . import ai_ask
@@ -44,6 +45,23 @@ _PREFERRED_LANGS = ["en", "en-US", "en-GB"]
 # gets useful notes, and the returned notes say plainly that this happened.
 _MAX_TRANSCRIPT_WORDS = 12000
 
+# gh73: yt-dlp itself supports far more than YouTube, so a pasted non-YouTube
+# URL in what's presented as a YouTube-specific Vault feature could either
+# "succeed" against an unrelated site or fail with a generic yt-dlp error --
+# neither is a clear "that's not a YouTube URL" message. Checked by hostname,
+# not a stricter path/ID-shape regex, since valid YouTube URLs come in enough
+# shapes (watch?v=, youtu.be/<id>, /shorts/<id>, /live/<id>, music.youtube.com)
+# that a hostname allowlist is the more robust, less guessable-wrong check.
+_YOUTUBE_HOSTS = {"youtube.com", "www.youtube.com", "m.youtube.com", "music.youtube.com", "youtu.be"}
+
+
+def _is_youtube_url(url):
+    try:
+        host = (urllib.parse.urlparse(url).hostname or "").lower()
+    except ValueError:
+        return False
+    return host in _YOUTUBE_HOSTS
+
 
 def fetch_transcript(url):
     """Returns (title, transcript_text, None) on success, or (None, None, error)
@@ -52,6 +70,8 @@ def fetch_transcript(url):
     error the UI can just display, not a traceback."""
     if not YT_DLP_AVAILABLE:
         return None, None, NOT_INSTALLED_MESSAGE
+    if not _is_youtube_url(url):
+        return None, None, "That doesn't look like a YouTube URL -- paste a youtube.com or youtu.be link."
 
     ydl_opts = {"skip_download": True, "quiet": True, "no_warnings": True}
     try:
