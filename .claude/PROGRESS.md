@@ -9,6 +9,48 @@ Add each session's PROGRESS.md entry to the same branch as the code it describes
 
 ---
 
+## 2026-08-30 (PR https://github.com/mukund1312/mtdo/pull/54) -- gh59: atomic state.json writes + corruption recovery
+
+Fixed a real, verified bug from a full codebase audit (see below): `core.py`'s
+`save_state()` wrote `state.json` via a direct `open(..., "w")`, which a mid-write
+crash (this app is genuinely killed via SIGHUP/hard-kill in real sandbox sessions,
+per bug_log.py's own docstring) could leave truncated. `load_state()` had no
+`JSONDecodeError` handling at all, so a corrupted file crashed the app on every
+subsequent launch with no way back in.
+
+**Fix:** `save_state()` now writes to a temp file in the *same directory* as
+`state.json` (so `os.replace()` is a same-filesystem atomic rename, not a silent
+copy+delete fallback on a different filesystem) before replacing the real path.
+`load_state()` now catches `JSONDecodeError`, quarantines the unreadable file to
+`state.json.corrupt-<timestamp>` (never deletes it -- kept for hand recovery),
+logs it via errorlog, and starts fresh instead of crashing.
+
+Added `tests/test_core.py` -- there was previously zero direct test coverage of
+`load_state`/`save_state` at all. Covers round-trip correctness, no leftover temp
+files, and the full corrupt-quarantine-and-recover cycle (including that the app
+can save normally again afterward, not just avoid crashing once).
+
+**A full code audit happened earlier this session** (parallel review across all
+26 source files, ~13,200 lines) -- found 17 real, verified issues, filed as
+mukund1312/mtdo-bugs#58-#74, triaged by severity and split between Mukund/Janhwi
+via the existing balanced-assignment logic. gh59 (this entry) was the first one
+fixed; #58 and #60 are the other two High-severity ones still open (a missing
+ffmpeg check that crashes the app and orphans mpv, and the same non-atomic-write
+pattern in bug_log.py causing silent full data loss on corruption).
+
+**CI note:** this PR's own CI run flaked twice before going green on a third
+attempt -- `test_radio.py::test_radio_screen_opens_via_keybinding_and_plays_on_enter`
+(StopIteration from an exhausted mocked subprocess side_effect list) and
+`test_vault.py::test_youtube_flow_shows_spinner_while_running_and_hides_on_success`
+(a spinner-visibility timing assertion) failed in different combinations across
+the three runs -- confirmed via `git diff origin/main..HEAD --stat` that this
+branch touches only core.py/test_core.py, so neither is caused by this fix.
+Left both test files untouched (out of this fix's scope) since a clean third
+run confirms genuine CI-environment flakiness, not a deterministic failure --
+worth a look separately if either keeps recurring.
+
+---
+
 ## 2026-08-30 (PR pending) -- visualizer moved beside the DJ art, made much denser
 
 Real feature request: put the audio visualizer BESIDE the shine-sweep "DJ" art
