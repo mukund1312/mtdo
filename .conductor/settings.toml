@@ -1,0 +1,28 @@
+# Conductor project settings (see https://www.conductor.build/docs/core/scripts).
+# Tracked in the repo so every workspace/agent gets this regardless of which
+# machine or Conductor install created it -- not just this one.
+
+[scripts]
+# Conductor's own worktree creation only carries over tracked files. This
+# copies the same untracked files scripts/new-agent-worktree.sh copies for
+# Herdr/manual worktrees, so a Conductor workspace doesn't silently lose its
+# skills or local settings either:
+#
+#   .claude/settings.local.json  -- gitignored globally (~/.config/git/ignore)
+#   .claude/skills/               -- untracked; a relative symlink farm into .agents/skills
+#   .agents/                      -- untracked; the real skill directories .claude/skills/ points into
+#   skills-lock.json              -- untracked
+#
+# CONDUCTOR_ROOT_PATH is the original ~/mtdo checkout; CONDUCTOR_WORKSPACE_PATH
+# (this script's cwd) is the new workspace. cp -a preserves .claude/skills/'s
+# relative symlinks as symlinks, which still resolve correctly here since
+# .agents/ is copied to the same relative depth alongside it.
+setup = """
+for item in .claude/settings.local.json .claude/skills .agents skills-lock.json; do
+  src="$CONDUCTOR_ROOT_PATH/$item"
+  if [ -e "$src" ] || [ -L "$src" ]; then
+    mkdir -p "$(dirname "$item")"
+    cp -a "$src" "$item"
+  fi
+done
+"""
