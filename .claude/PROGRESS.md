@@ -9,6 +9,34 @@ Add each session's PROGRESS.md entry to the same branch as the code it describes
 
 ---
 
+## 2026-08-30 (PR pending) -- gh68: status_sync.py retries on a conflicting concurrent write
+
+Fourth bug in the autonomous fix-everything-assigned-to-mukund1312 batch (see
+the gh63 entry further down).
+
+**The bug:** `set_status()` does a genuine two-writer read-sha/modify/PUT
+against GitHub's Contents API, with no lock and no retry. GitHub's API itself
+rejects a PUT against a stale sha (a real conflict, not corruption) -- but
+`_run()` turns that rejection into a hard `RuntimeError`. If you and Janhwi
+both call `mtdo-sandbox working-on "..."` within the same short window, one of
+you got a crash instead of the obvious recovery.
+
+**Fix:** wrapped the read/modify/PUT cycle in a bounded retry loop
+(`max_attempts=3`, default). On a failed PUT, it re-reads the file (now
+reflecting whatever the other person's write already landed), reapplies just
+this person's own status on top of the fresh content, and retries -- not a
+blind resubmit of the stale copy it started with, which would silently
+clobber the other person's concurrent update. After exhausting all attempts,
+re-raises the last real error, so a genuinely broken case (bad auth, no
+network) still surfaces clearly rather than retrying forever.
+
+Added `tests/test_status_sync.py` (zero prior coverage): first-try success,
+retry-after-one-conflict success, a dedicated check that the retry's PUT body
+actually contains the other person's fresh status (not the stale pre-conflict
+copy), and exhausting all attempts re-raising the last error.
+
+---
+
 ## 2026-08-30 (PR pending) -- gh67: dashboard.py degrades gracefully on a gh CLI failure
 
 Third bug in the autonomous fix-everything-assigned-to-mukund1312 batch (see
