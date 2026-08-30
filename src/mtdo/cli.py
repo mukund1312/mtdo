@@ -433,15 +433,25 @@ def cmd_profile_create(args):
 
     adopted = False
     if args.from_current:
-        goals_exists = os.path.exists(appconfig.GOALS_PATH)
-        state_exists = os.path.exists(appconfig.STATE_PATH)
-        if goals_exists:
+        # Same gh62 fix as cmd_profile_switch below: read both first, commit both
+        # via one atomic call rather than two separate write_goals()/write_state()
+        # calls that could leave this brand-new profile with only one of the two
+        # adopted if the process died in between.
+        goals_data = None
+        if os.path.exists(appconfig.GOALS_PATH):
             with open(appconfig.GOALS_PATH) as f:
-                pf.write_goals(slug, json.load(f), password)
-        if state_exists:
+                goals_data = json.load(f)
+        state_data = None
+        if os.path.exists(appconfig.STATE_PATH):
             with open(appconfig.STATE_PATH) as f:
-                pf.write_state(slug, json.load(f), password)
-        adopted = goals_exists or state_exists
+                state_data = json.load(f)
+        if goals_data is not None and state_data is not None:
+            pf.write_goals_and_state(slug, goals_data, state_data, password)
+        elif goals_data is not None:
+            pf.write_goals(slug, goals_data, password)
+        elif state_data is not None:
+            pf.write_state(slug, state_data, password)
+        adopted = goals_data is not None or state_data is not None
         if adopted:
             print(f"Copied your current {_GOALS_DISPLAY}/state.json into '{args.name}'.")
         else:
@@ -486,12 +496,24 @@ def cmd_profile_switch(args):
         except _AuthFailed as e:
             print(str(e))
             return
+        # Read both first, then commit both via one call -- gh62: two separate
+        # write_goals()/write_state() calls left a real window where the process
+        # dying (or the second call raising) between them left the profile with
+        # its goals updated but state stale, a genuine inconsistent split state.
+        goals_data = None
         if os.path.exists(appconfig.GOALS_PATH):
             with open(appconfig.GOALS_PATH) as f:
-                pf.write_goals(current_slug, json.load(f), current_password)
+                goals_data = json.load(f)
+        state_data = None
         if os.path.exists(appconfig.STATE_PATH):
             with open(appconfig.STATE_PATH) as f:
-                pf.write_state(current_slug, json.load(f), current_password)
+                state_data = json.load(f)
+        if goals_data is not None and state_data is not None:
+            pf.write_goals_and_state(current_slug, goals_data, state_data, current_password)
+        elif goals_data is not None:
+            pf.write_goals(current_slug, goals_data, current_password)
+        elif state_data is not None:
+            pf.write_state(current_slug, state_data, current_password)
     elif os.path.exists(appconfig.GOALS_PATH) or os.path.exists(appconfig.STATE_PATH):
         print(
             f"You have an existing {_GOALS_DISPLAY}/state.json that isn't tied to any "

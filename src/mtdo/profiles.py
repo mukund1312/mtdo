@@ -531,6 +531,37 @@ def write_state(slug, state, password=None):
     _atomic_write_bytes(_state_path(slug), raw)
 
 
+def write_goals_and_state(slug, goals, state, password=None):
+    """Writes both goals.json and state.json for a profile as close to atomic as
+    two separate files can get. _atomic_write_bytes (gh61) already makes each
+    individual write safe against a mid-write crash -- this closes the other
+    gap: both payloads are fully prepared (serialized + encrypted) *before*
+    either file is touched, so a serialization/encryption failure in either one
+    leaves both files untouched, then both are written and swapped into place
+    with os.replace() back-to-back. Added for gh62 (mtdo profile switch):
+    writing goals successfully but dying (or write_state raising) before state
+    -- or vice versa -- left the profile in a real, inconsistent split state,
+    since the two used to be entirely separate write_goals()/write_state()
+    calls with everything from a password prompt to a full read+encrypt cycle
+    able to happen in between them. This shrinks that risk window down to two
+    adjacent atomic renames with nothing else able to fail in between.
+
+    Not a true multi-file transaction -- a crash between the two os.replace()
+    calls is still possible in principle -- but that residual window is about as
+    small as it gets without a journaling filesystem or a write-ahead log, which
+    would be real over-engineering for two JSON files."""
+    profile = get_profile(slug)
+    if profile is None:
+        raise ProfileNotFound(f"no such profile: {slug}")
+    goals_raw = json.dumps(goals, indent=2).encode("utf-8")
+    state_raw = json.dumps(state, indent=2).encode("utf-8")
+    if profile.get("protected"):
+        goals_raw = _encrypt_for(slug, password, goals_raw)
+        state_raw = _encrypt_for(slug, password, state_raw)
+    _atomic_write_bytes(_goals_path(slug), goals_raw)
+    _atomic_write_bytes(_state_path(slug), state_raw)
+
+
 def import_goals_file(slug, source_path, password=None):
     """Copies an existing external goals.json (given as a plain file path, e.g. one
     exported from another machine or written by hand) into this profile. Validates
