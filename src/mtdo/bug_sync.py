@@ -39,7 +39,18 @@ GIT_EMAILS = {
 
 
 def _run(args):
-    result = subprocess.run(args, capture_output=True, text=True)
+    try:
+        result = subprocess.run(args, capture_output=True, text=True)
+    except FileNotFoundError as e:
+        # gh72: a missing `gh` binary raised a raw, uncaught FileNotFoundError
+        # in every bug/status-sync code path that funnels through here --
+        # catch it once, in this one place, and turn it into the same kind of
+        # clear, actionable RuntimeError every other failure in this module
+        # already gets, instead of a confusing traceback.
+        raise RuntimeError(
+            "`gh` (GitHub CLI) not found -- install it from https://cli.github.com/ "
+            f"and run `gh auth login`, then try again. (command: {' '.join(args)})"
+        ) from e
     if result.returncode != 0:
         raise RuntimeError(f"{' '.join(args)} failed: {result.stderr.strip()}")
     return result.stdout.strip()

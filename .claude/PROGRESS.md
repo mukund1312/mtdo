@@ -9,6 +9,28 @@ Add each session's PROGRESS.md entry to the same branch as the code it describes
 
 ---
 
+## 2026-08-30 (PR pending) -- gh72: bug_sync.py reports a missing gh binary clearly
+
+Seventh bug in the autonomous fix-everything-assigned-to-mukund1312 batch (see
+the gh63 entry further down).
+
+**The bug:** every `_run()` call in `bug_sync.py` assumed `gh` is installed.
+A missing `gh` binary raised a raw, uncaught `FileNotFoundError` from
+`subprocess.run` in every bug/status-sync code path, instead of a clear
+"gh CLI not found, install it" message like every other real failure mode in
+this module already gets.
+
+**Fix:** wrapped the `subprocess.run` call in `_run()` with `except
+FileNotFoundError`, re-raising as the same kind of actionable `RuntimeError`
+the rest of the module uses, pointing at cli.github.com and `gh auth login`.
+
+Added `tests/test_bug_sync_run.py` (zero prior coverage of `_run()` at all):
+a missing binary raises a clear, actionable message; a real `gh` failure
+(nonzero exit) is unaffected by the fix; a successful call still returns
+stdout normally.
+
+---
+
 ## 2026-08-30 (PR pending) -- gh71: analytics pruning moved off the main thread
 
 Sixth bug in the autonomous fix-everything-assigned-to-mukund1312 batch (see
