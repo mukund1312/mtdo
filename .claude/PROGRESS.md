@@ -9,6 +9,33 @@ Add each session's PROGRESS.md entry to the same branch as the code it describes
 
 ---
 
+## 2026-08-30 (PR pending) -- gh69: youtube_notes.py caps transcript length before the AI call
+
+Fifth bug in the autonomous fix-everything-assigned-to-mukund1312 batch (see
+the gh63 entry further down).
+
+**The bug:** `generate_notes_and_quiz()` embedded the full transcript into the
+AI prompt with no length cap. A long video (a multi-hour lecture) could
+plausibly exceed the active backend's context window -- especially a small
+local Ollama model -- either erroring out or silently returning notes based on
+a truncated/garbled prompt, with nothing telling the user their transcript
+was too long.
+
+**Fix:** added `_MAX_TRANSCRIPT_WORDS = 12000` (~92 minutes of speech at the
+130 words/minute estimate this function already used) -- long enough for
+nearly any real video, short enough to stay inside even a modest local
+model's context. Transcripts longer than that are truncated to the first N
+words (kept from the start, not rejected outright, so a very long video's
+beginning still gets useful notes), and the returned notes/quiz body says
+plainly when this happened rather than silently cutting content.
+
+Added `tests/test_youtube_notes_length_cap.py` (no prior direct test of this
+function): a short transcript passes through untouched with no truncation
+note; a long one gets truncated before ever reaching the mocked AI call (and
+the notes say so); the truncation boundary is exactly `_MAX_TRANSCRIPT_WORDS`.
+
+---
+
 ## 2026-08-30 (PR pending) -- gh68: status_sync.py retries on a conflicting concurrent write
 
 Fourth bug in the autonomous fix-everything-assigned-to-mukund1312 batch (see
