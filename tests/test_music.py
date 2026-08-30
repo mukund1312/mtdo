@@ -212,3 +212,100 @@ def test_unknown_app_with_no_rate_field_still_assumes_playing():
     with patch("subprocess.run", return_value=_mock_run(raw)):
         info = music._nowplaying_cli_info()
     assert info["state"] == "playing"
+
+
+# ---------------- gh64: missing subprocess timeouts can freeze the whole UI ----------------
+#
+# Every function in music.py is called directly from a main-thread keybinding action
+# handler (app.py's action_music_*) or the once-a-second polling tick -- never a
+# background thread -- so a subprocess call with no timeout is a real way to freeze
+# the entire Textual event loop, not just a theoretical one. These simulate the
+# real failure via subprocess.TimeoutExpired (what Python itself raises once a
+# timeout= actually elapses) rather than waiting out a real 3-second timeout.
+
+import subprocess as _subprocess
+
+
+def _timeout_expired():
+    return _subprocess.TimeoutExpired(cmd=["x"], timeout=3)
+
+
+def test_run_best_effort_swallows_a_timeout_without_raising():
+    with patch("subprocess.run", side_effect=_timeout_expired()):
+        music._run_best_effort(["nowplaying-cli", "togglePlayPause"])  # must not raise
+
+
+def test_run_best_effort_swallows_other_subprocess_failures_too():
+    """Matches the rest of this module's existing style (_apple_script_is_playing,
+    _spotify_info) of catching broadly, not just TimeoutExpired -- e.g. the binary
+    could also vanish mid-session (FileNotFoundError)."""
+    with patch("subprocess.run", side_effect=FileNotFoundError("no such file")):
+        music._run_best_effort(["nowplaying-cli", "next"])  # must not raise
+
+
+def test_run_best_effort_passes_a_bounded_timeout():
+    with patch("subprocess.run") as mock_run:
+        music._run_best_effort(["nowplaying-cli", "next"])
+    _, kwargs = mock_run.call_args
+    assert kwargs.get("timeout"), "must pass a timeout, or a hung subprocess blocks the UI forever"
+
+
+def test_play_pause_does_not_raise_on_timeout_via_nowplaying_cli():
+    with patch("mtdo.music.has_nowplaying_cli", return_value=True), \
+         patch("subprocess.run", side_effect=_timeout_expired()):
+        music.play_pause()
+
+
+def test_play_pause_does_not_raise_on_timeout_via_spotify_fallback():
+    with patch("mtdo.music.has_nowplaying_cli", return_value=False), \
+         patch("subprocess.run", side_effect=_timeout_expired()):
+        music.play_pause()
+
+
+def test_next_and_previous_track_do_not_raise_on_timeout():
+    with patch("mtdo.music.has_nowplaying_cli", return_value=True), \
+         patch("subprocess.run", side_effect=_timeout_expired()):
+        music.next_track()
+        music.previous_track()
+
+
+def test_volume_up_and_down_do_not_raise_on_timeout():
+    with patch("mtdo.music.has_nowplaying_cli", return_value=True), \
+         patch("subprocess.run", side_effect=_timeout_expired()):
+        music.volume_up()
+        music.volume_down()
+    with patch("mtdo.music.has_nowplaying_cli", return_value=False), \
+         patch("subprocess.run", side_effect=_timeout_expired()):
+        music.volume_up()
+        music.volume_down()
+
+
+def test_spotify_running_returns_false_instead_of_raising_on_timeout():
+    with patch("subprocess.run", side_effect=_timeout_expired()):
+        assert music._spotify_running() is False
+
+
+def test_spotify_info_returns_empty_instead_of_raising_on_timeout():
+    with patch("mtdo.music._spotify_running", return_value=True), \
+         patch("subprocess.check_output", side_effect=_timeout_expired()):
+        assert music._spotify_info() == music._EMPTY
+
+
+def test_now_playing_via_spotify_path_survives_a_timeout_end_to_end():
+    with patch("mtdo.music.has_nowplaying_cli", return_value=False), \
+         patch("mtdo.music._spotify_running", return_value=True), \
+         patch("subprocess.check_output", side_effect=_timeout_expired()):
+        assert music.now_playing() == music._EMPTY
+
+
+def test_play_spotify_url_returns_false_instead_of_raising_on_timeout():
+    with patch("subprocess.run", side_effect=_timeout_expired()):
+        assert music.play_spotify_url("spotify:track:abc123") is False
+
+
+def test_play_spotify_url_passes_a_bounded_timeout():
+    with patch("subprocess.run") as mock_run:
+        mock_run.return_value.returncode = 0
+        music.play_spotify_url("spotify:track:abc123")
+    _, kwargs = mock_run.call_args
+    assert kwargs.get("timeout"), "must pass a timeout, or a hung subprocess blocks the UI forever"
