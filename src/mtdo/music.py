@@ -37,10 +37,28 @@ def has_nowplaying_cli():
     return shutil.which("nowplaying-cli") is not None
 
 
+def _run_best_effort(argv):
+    """Fire-and-forget subprocess call for a control command (play/pause, skip,
+    volume) where there's nothing useful to do with a failure -- just don't let a
+    hung or missing subprocess freeze the UI. Every one of these runs directly on
+    the main thread from a keybinding's action handler (see app.py's
+    action_music_*), not a background thread -- a missing timeout here is a real,
+    not just theoretical, way to freeze the entire app until the process returns
+    or is killed (gh64)."""
+    try:
+        subprocess.run(argv, timeout=3)
+    except Exception:
+        pass
+
+
 def _spotify_running():
-    return subprocess.run(
-        ["pgrep", "-x", "Spotify"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
-    ).returncode == 0
+    try:
+        return subprocess.run(
+            ["pgrep", "-x", "Spotify"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            timeout=3,
+        ).returncode == 0
+    except Exception:
+        return False
 
 
 _EMPTY = {"song": "Nothing Playing", "artist": "", "position": 0.0, "duration": 0.0,
@@ -57,21 +75,21 @@ def now_playing():
 
 def play_pause():
     if has_nowplaying_cli():
-        subprocess.run(["nowplaying-cli", "togglePlayPause"])
+        _run_best_effort(["nowplaying-cli", "togglePlayPause"])
     else:
         _spotify_osa('tell application "Spotify" to playpause')
 
 
 def next_track():
     if has_nowplaying_cli():
-        subprocess.run(["nowplaying-cli", "next"])
+        _run_best_effort(["nowplaying-cli", "next"])
     else:
         _spotify_osa('tell application "Spotify" to next track')
 
 
 def previous_track():
     if has_nowplaying_cli():
-        subprocess.run(["nowplaying-cli", "previous"])
+        _run_best_effort(["nowplaying-cli", "previous"])
     else:
         _spotify_osa('tell application "Spotify" to previous track')
 
@@ -88,7 +106,7 @@ def _nudge_volume(delta):
     if has_nowplaying_cli():
         # No per-app volume in MediaRemote -- nudge the actual system output volume,
         # which affects whatever's playing regardless of app.
-        subprocess.run(["osascript", "-e", f'''
+        _run_best_effort(["osascript", "-e", f'''
             set v to output volume of (get volume settings)
             set v to v + ({delta})
             if v > 100 then set v to 100
@@ -96,7 +114,7 @@ def _nudge_volume(delta):
             set volume output volume v
         '''])
     else:
-        subprocess.run(["osascript", "-e", f'''
+        _run_best_effort(["osascript", "-e", f'''
             tell application "Spotify"
                 set v to sound volume + ({delta})
                 if v > 100 then set v to 100
@@ -110,7 +128,7 @@ def _nudge_volume(delta):
 # no universal equivalent) -----------------------------------------------------
 
 def _spotify_osa(script):
-    subprocess.run(["osascript", "-e", script])
+    _run_best_effort(["osascript", "-e", script])
 
 
 def _spotify_info():
@@ -122,7 +140,7 @@ def _spotify_info():
             'tell application "Spotify" to name of current track & "|||" & artist of current track'
             ' & "|||" & (player position as string) & "|||" & (duration of current track as string)'
             ' & "|||" & (player state as string) & "|||" & (sound volume as string)'
-        ]).decode().strip()
+        ], timeout=3).decode().strip()
         song, artist, position_s, duration_ms, state, volume_s = output.split("|||")
         return {
             "song": song, "artist": artist,
@@ -157,10 +175,13 @@ def play_spotify_url(value):
     uri = _spotify_uri_from_input(value)
     if not uri:
         return False
-    result = subprocess.run(
-        ["osascript", "-e", f'tell application "Spotify" to play track "{uri}"'],
-        capture_output=True,
-    )
+    try:
+        result = subprocess.run(
+            ["osascript", "-e", f'tell application "Spotify" to play track "{uri}"'],
+            capture_output=True, timeout=3,
+        )
+    except Exception:
+        return False
     return result.returncode == 0
 
 

@@ -9,7 +9,7 @@ Add each session's PROGRESS.md entry to the same branch as the code it describes
 
 ---
 
-## 2026-08-30 (PR pending) -- visualizer widened to a true half/half split, restyled to match a pasted reference
+## 2026-08-30 (PR https://github.com/mukund1312/mtdo/pull/55) -- visualizer widened to a true half/half split, restyled to match a pasted reference
 
 Direct follow-up to the entry right below (merged as PR #53) -- the user's
 real-time reaction after seeing it running: "the ascii dj has been cut down
@@ -88,6 +88,80 @@ at each bar's own real tip.
 stream). Branch is `feature/mu/UAT-radio-visualizer-half-split`, built off
 `origin/main` (which already has PR #53 merged) via an isolated
 `git worktree`, not the shared `~/mtdo` checkout.
+
+---
+
+## 2026-08-30 (PR https://github.com/mukund1312/mtdo/pull/56) -- gh60: atomic bug_log.json writes + corruption recovery
+
+Second fix from the full-codebase audit (see the gh59 entry below for the audit
+itself), same root cause and same fix shape as gh59, applied to `bug_log.py`.
+
+`_save()` wrote `bugs.json` via a direct `open(..., "w")`, which a mid-write crash
+could leave truncated -- and this module's entire *purpose* is capturing a bug
+right before exactly that kind of hard-kill, per its own docstring, so this was
+the worst place in the app for a non-atomic write to live. `_load()` then caught
+a bare `Exception` and returned `[]` on any failure at all, silently treating a
+corrupted file as an *empty* log -- every previously logged bug vanished with
+zero indication anything was lost.
+
+**Fix:** `_save()` now writes to a temp file in the same directory before
+`os.replace()`-ing it onto the real path (same-filesystem atomic rename, not a
+silent copy+delete fallback). `_load()` narrows its catch to
+`json.JSONDecodeError` specifically, quarantines the unreadable file to
+`bugs.json.corrupt-<timestamp>` (never deletes it -- kept for hand recovery),
+logs it via errorlog, and starts fresh instead of discarding everything.
+
+Added `tests/test_bug_log.py` (previously zero coverage): round-trip
+correctness, no leftover temp files, and the full corrupt-quarantine-and-recover
+cycle, including confirming a new bug can still be logged right after recovery
+(the whole point of this module). `BUGS_PATH` is a real fixed path under
+`~/.mtdo-sandbox`, not scoped to the MTDO_HOME test sandbox -- every test
+monkeypatches it to a throwaway `tmp_path` first; confirmed the real
+`~/.mtdo-sandbox/bugs.json` was never touched by the test run.
+
+CI green on the first run this time (full pytest suite: 117 passed, 1 skipped).
+
+---
+
+## 2026-08-30 (PR https://github.com/mukund1312/mtdo/pull/54) -- gh59: atomic state.json writes + corruption recovery
+
+Fixed a real, verified bug from a full codebase audit (see below): `core.py`'s
+`save_state()` wrote `state.json` via a direct `open(..., "w")`, which a mid-write
+crash (this app is genuinely killed via SIGHUP/hard-kill in real sandbox sessions,
+per bug_log.py's own docstring) could leave truncated. `load_state()` had no
+`JSONDecodeError` handling at all, so a corrupted file crashed the app on every
+subsequent launch with no way back in.
+
+**Fix:** `save_state()` now writes to a temp file in the *same directory* as
+`state.json` (so `os.replace()` is a same-filesystem atomic rename, not a silent
+copy+delete fallback on a different filesystem) before replacing the real path.
+`load_state()` now catches `JSONDecodeError`, quarantines the unreadable file to
+`state.json.corrupt-<timestamp>` (never deletes it -- kept for hand recovery),
+logs it via errorlog, and starts fresh instead of crashing.
+
+Added `tests/test_core.py` -- there was previously zero direct test coverage of
+`load_state`/`save_state` at all. Covers round-trip correctness, no leftover temp
+files, and the full corrupt-quarantine-and-recover cycle (including that the app
+can save normally again afterward, not just avoid crashing once).
+
+**A full code audit happened earlier this session** (parallel review across all
+26 source files, ~13,200 lines) -- found 17 real, verified issues, filed as
+mukund1312/mtdo-bugs#58-#74, triaged by severity and split between Mukund/Janhwi
+via the existing balanced-assignment logic. gh59 (this entry) was the first one
+fixed; #58 and #60 are the other two High-severity ones still open (a missing
+ffmpeg check that crashes the app and orphans mpv, and the same non-atomic-write
+pattern in bug_log.py causing silent full data loss on corruption).
+
+**CI note:** this PR's own CI run flaked twice before going green on a third
+attempt -- `test_radio.py::test_radio_screen_opens_via_keybinding_and_plays_on_enter`
+(StopIteration from an exhausted mocked subprocess side_effect list) and
+`test_vault.py::test_youtube_flow_shows_spinner_while_running_and_hides_on_success`
+(a spinner-visibility timing assertion) failed in different combinations across
+the three runs -- confirmed via `git diff origin/main..HEAD --stat` that this
+branch touches only core.py/test_core.py, so neither is caused by this fix.
+Left both test files untouched (out of this fix's scope) since a clean third
+run confirms genuine CI-environment flakiness, not a deterministic failure --
+worth a look separately if either keeps recurring.
 
 ---
 

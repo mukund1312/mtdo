@@ -71,20 +71,32 @@
     width: min(1160px, 92vw); height: min(720px, 86vh);
     border-radius: 16px; overflow: hidden;
     box-shadow: 0 60px 140px -40px rgba(0,0,0,.85), 0 0 0 1px rgba(255,255,255,.05);
-    animation: stageIn .6s cubic-bezier(.16,1,.3,1) forwards;
+    /* .38s not the original .6s -- each real-shot is a genuine Textual SVG export
+       (hundreds of <rect>/<text> per screenshot), and it jumps from card-size to
+       ~980px the instant this class lands, so the first frame already pays a real
+       layout/paint cost before the animation even starts. A long animation on top
+       of that reads as sluggish; will-change below gets the browser to promote
+       this to its own layer ahead of time instead of doing it mid-transition. */
+    animation: stageIn .38s cubic-bezier(.16,1,.3,1) forwards;
+    will-change: transform, opacity;
   }
   .step:not(.flip) .stage.expanded { left: 3vw; transform-origin: left center; }
   .step.flip .stage.expanded { right: 3vw; left: auto; transform-origin: right center; }
-  .stage.expanded.leaving { animation: stageOut .45s cubic-bezier(.4,0,1,1) forwards; }
+  .stage.expanded.leaving { animation: stageOut .28s cubic-bezier(.4,0,1,1) forwards; }
   @keyframes stageIn { from { opacity: 0; transform: translateY(-50%) scale(.82); } to { opacity: 1; transform: translateY(-50%) scale(1); } }
   @keyframes stageOut { from { opacity: 1; transform: translateY(-50%) scale(1); } to { opacity: 0; transform: translateY(-50%) scale(.84); } }
 
   .stage-backdrop {
     position: fixed; inset: 0; z-index: 250; pointer-events: none;
     background: rgba(4,5,4,0); backdrop-filter: blur(0px);
-    transition: background .5s ease, backdrop-filter .5s ease;
+    /* Full-viewport backdrop-filter is one of the more expensive things a browser
+       can composite, especially with a huge inline SVG sitting right behind it --
+       lighter blur (5px, was 7px) and a shorter transition keep the darken-in feel
+       without making it the bottleneck on open. */
+    transition: background .3s ease, backdrop-filter .3s ease;
+    will-change: backdrop-filter;
   }
-  .stage-backdrop.show { background: rgba(4,5,4,.74); backdrop-filter: blur(7px); pointer-events: auto; }
+  .stage-backdrop.show { background: rgba(4,5,4,.74); backdrop-filter: blur(5px); pointer-events: auto; }
 
   .stage-wallpaper { position: absolute; inset: 0; display: none; }
   .stage.expanded .stage-wallpaper { display: block; }
@@ -3312,10 +3324,13 @@ $ ./install.sh</pre>
       if (info.expandTimer) clearTimeout(info.expandTimer);
       // a short hover-intent delay: a genuine hover survives it easily, a card
       // just passing under the cursor mid-scroll doesn't stay put long enough.
+      // Trimmed from 180ms -- combined with the animation length below, the old
+      // value made "opening" a card read as sluggish; the scroll guard above
+      // (isScrolling) is what actually prevents mis-triggers, not this delay.
       info.expandTimer = setTimeout(() => {
         info.expandTimer = null;
         if (!isScrolling) expand(stage);
-      }, 180);
+      }, 120);
     }
 
     function cancelScheduledExpand(stage) {
@@ -3349,7 +3364,9 @@ $ ./install.sh</pre>
       backdrop.classList.remove('show');
       stage.classList.add('leaving');
       if (info.text) info.text.classList.add('leaving');
-      info.restoreTimer = setTimeout(() => finalize(stage), 420);
+      // matches the shortened .28s stageOut animation above (was 420ms for the
+      // old .45s animation), plus a small buffer.
+      info.restoreTimer = setTimeout(() => finalize(stage), 300);
     }
 
     function collapseNow(stage) {
@@ -3382,6 +3399,11 @@ $ ./install.sh</pre>
       if (info.restoreTimer) { clearTimeout(info.restoreTimer); info.restoreTimer = null; }
     });
     backdrop.addEventListener('mouseleave', () => { if (activeStage) scheduleCollapse(activeStage); });
+    // Click anywhere on the darkened area outside the card closes it immediately --
+    // previously the backdrop only ever canceled the auto-collapse timer on hover
+    // (see mouseenter above), so landing your mouse on it actually *kept the card
+    // open* instead of dismissing it, leaving the close button as the only way out.
+    backdrop.addEventListener('click', () => { if (activeStage) collapseNow(activeStage); });
     document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && activeStage) collapseNow(activeStage); });
 
     // safety net: if anything ever leaves the backdrop shown with no active stage

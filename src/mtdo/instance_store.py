@@ -36,11 +36,32 @@ def _slugify(name):
     return slug or "instance"
 
 
+def _validate_slug(slug):
+    """Rejects any slug that could escape INSTANCES_DIR once path-joined -- a path
+    separator or a ".." component. A slug produced by _slugify() can never contain
+    either (it collapses any run of non-alphanumeric characters to a single "-"), so
+    this only ever fires on untrusted input that bypassed _slugify(), e.g. the raw
+    argv[1] `mtdo-sandbox instance delete <slug>` hands to instance_store directly.
+
+    Added after a code audit (gh70) flagged that _data_path/_meta_path path-join a
+    slug with no such guard. Not remotely exploitable as shipped -- the delete
+    command's confirm-by-retyping-slug step requires a matching <slug>.meta.json to
+    already exist at the traversed path -- but that confirm step only guards against
+    fat-fingering a slug that resolves to a *real* saved instance, not against a slug
+    deliberately crafted to escape instances/ in the first place, which is exactly
+    the failure mode this whole module exists to prevent (see delete_instance's
+    docstring for the incident that prompted it)."""
+    if not slug or "/" in slug or "\\" in slug or ".." in slug:
+        raise ValueError(f"Invalid instance slug: {slug!r}")
+
+
 def _meta_path(slug):
+    _validate_slug(slug)
     return os.path.join(INSTANCES_DIR, f"{slug}.meta.json")
 
 
 def _data_path(slug):
+    _validate_slug(slug)
     return os.path.join(INSTANCES_DIR, slug)
 
 
