@@ -9,6 +9,37 @@ Add each session's PROGRESS.md entry to the same branch as the code it describes
 
 ---
 
+## 2026-08-30 (PR pending) -- gh71: analytics pruning moved off the main thread
+
+Sixth bug in the autonomous fix-everything-assigned-to-mukund1312 batch (see
+the gh63 entry further down).
+
+**The bug:** `_finish_startup()` called `analytics.prune_older_than(days=180)`
+(a DELETE + VACUUM against events.db) synchronously on the main/event-loop
+thread at every single app launch. VACUUM rebuilds the whole file and scales
+with its size -- harmless today given the 180-day cap and opt-in-off-by-default
+keeping `events.db` small, but the one place in this app doing blocking DB
+maintenance directly in the startup path instead of off-thread like every
+other slow I/O.
+
+**Fix:** wrapped the call in `threading.Thread(target=analytics.prune_older_than,
+kwargs={"days": 180}, daemon=True).start()`. Nothing downstream in
+`_finish_startup()` depends on its result, so fire-and-forget is safe.
+
+Added `tests/test_analytics_prune_offthread.py`. Notable dead end during
+writing this: the first approach called `_finish_startup()` a second time by
+hand (with `analytics.prune_older_than` mocked slow) to prove it returned
+before the mock finished -- but a second call turned out to be unsafe on a
+live app (it re-triggers profile-bootstrap modal logic that assumes it only
+ever runs once, crashing on an unrelated `NoMatches` error hunting for
+`#profile-name`). Rewrote to instead record every `threading.Thread(...)`
+construction `app.py` makes during the app's own single, real startup
+sequence, and assert one of them targets `prune_older_than` with the right
+kwargs -- exercises the real code path exactly once, like every other test in
+this suite already does, rather than inventing a risky second entry point.
+
+---
+
 ## 2026-08-30 (PR pending) -- gh69: youtube_notes.py caps transcript length before the AI call
 
 Fifth bug in the autonomous fix-everything-assigned-to-mukund1312 batch (see
