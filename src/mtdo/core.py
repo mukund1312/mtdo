@@ -15,9 +15,12 @@ one from a later day's carried-forward view mutates that original day's record.
 import datetime
 import json
 import os
+import tempfile
+import time
 
 from . import analytics
 from . import config as appconfig
+from . import errorlog
 
 DAY_NAMES = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
 
@@ -272,8 +275,25 @@ def _migrate_legacy_block(blk):
 def load_state():
     if not os.path.exists(appconfig.STATE_PATH):
         return {"_meta": {}}
-    with open(appconfig.STATE_PATH) as f:
-        state = json.load(f)
+    try:
+        with open(appconfig.STATE_PATH) as f:
+            state = json.load(f)
+    except json.JSONDecodeError:
+        # A truncated/corrupt file (e.g. the process was killed mid-write,
+        # before save_state() below wrote atomically) used to crash the app
+        # outright on every subsequent launch with no way back in -- gh59.
+        # Move the unreadable file aside (never delete it -- it might still
+        # be hand-recoverable) and start fresh rather than lock the user out.
+        quarantine_path = f"{appconfig.STATE_PATH}.corrupt-{int(time.time())}"
+        try:
+            os.replace(appconfig.STATE_PATH, quarantine_path)
+        except OSError:
+            quarantine_path = None
+        errorlog.log.exception(
+            "state.json was corrupt/unreadable -- quarantined to %s and starting fresh",
+            quarantine_path,
+        )
+        return {"_meta": {}}
     for key, day in state.items():
         if key in NON_DAY_KEYS:
             continue
@@ -284,9 +304,28 @@ def load_state():
 
 
 def save_state(state):
-    os.makedirs(os.path.dirname(appconfig.STATE_PATH), exist_ok=True)
-    with open(appconfig.STATE_PATH, "w") as f:
-        json.dump(state, f, indent=2)
+    """Writes via a temp file + os.replace() rather than a direct open(...,
+    "w") -- gh59: a direct write left a truncated/corrupt state.json behind
+    if the process died mid-write (a real occurrence -- this app gets
+    SIGHUP'd/hard-killed in real sandbox sessions, see bug_log.py's own
+    docstring), which load_state() above then couldn't parse at all. The
+    temp file is created in the SAME directory as STATE_PATH specifically so
+    os.replace() is an atomic rename on the same filesystem -- a temp dir
+    elsewhere (e.g. the OS tmpdir) could land on a different filesystem,
+    where the same call silently falls back to a non-atomic copy+delete."""
+    state_dir = os.path.dirname(appconfig.STATE_PATH)
+    os.makedirs(state_dir, exist_ok=True)
+    fd, tmp_path = tempfile.mkstemp(dir=state_dir, prefix=".state.json.", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w") as f:
+            json.dump(state, f, indent=2)
+        os.replace(tmp_path, appconfig.STATE_PATH)
+    except BaseException:
+        try:
+            os.remove(tmp_path)
+        except OSError:
+            pass
+        raise
 
 
 def ensure_day_registered(state, d):
