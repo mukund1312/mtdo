@@ -9,6 +9,38 @@ Add each session's PROGRESS.md entry to the same branch as the code it describes
 
 ---
 
+## 2026-08-30 (PR pending) -- gh67: dashboard.py degrades gracefully on a gh CLI failure
+
+Third bug in the autonomous fix-everything-assigned-to-mukund1312 batch (see
+the gh63 entry further down for how this batch works).
+
+**The bug:** `dashboard.generate()` calls `bug_sync.sync_dashboard_overrides()`,
+`bug_sync.auto_triage_pending()`, `bug_sync.list_all()`, and
+`status_sync.get_all_status()` -- all of which go through a `_run()` helper that
+raises a bare `RuntimeError` on any nonzero `gh` exit. Every OTHER subprocess
+call in this file (`_commit_counts`, `_fetch_remotes_quiet`, `_bug_git_activity`)
+already wraps failures and degrades gracefully; this one didn't, so a transient
+`gh` hiccup (rate limit, auth expiry, network blip) crashed the whole
+regeneration instead of leaving the last-known-good page in place.
+
+**Fix:** wrapped the gh-touching sequence in `generate()` in a `try/except
+RuntimeError`, returning `(DASHBOARD_PATH, None)` instead of raising --
+`DASHBOARD_PATH` is left untouched (the write only happens after this block
+succeeds), and `triaged is None` is the caller-visible signal that generation
+was skipped, distinct from `{}` ("ran fine, nothing needed triaging"). Updated
+both real callers (`sandbox_entry.py`'s CLI command, `app.py`'s background
+sync worker) to check for `None` and say plainly that the refresh was skipped
+rather than either crashing or falsely claiming success.
+
+Added `tests/test_dashboard_generate.py` (zero prior coverage of this whole
+module): a `gh` failure at the first call and a failure partway through both
+return `None` and leave existing content untouched; a fully-mocked success
+path still writes fresh content and returns a real triage dict.
+`DASHBOARD_PATH` is a real fixed path under `~/.mtdo-sandbox` (like gh60's
+`BUGS_PATH`), so every test monkeypatches it to a throwaway path first.
+
+---
+
 ## 2026-08-30 (PR pending) -- gh65: pty_panel.py master_fd leak on failed Popen
 
 Second bug in the autonomous fix-everything-assigned-to-mukund1312 batch (see

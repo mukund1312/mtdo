@@ -3455,11 +3455,20 @@ class TodoApp(App):
                 # the toast below reports what actually ended up triaged, not just the
                 # first attempt's count.
                 _, triaged_after = dashboard.generate()
-                triaged = {**triaged, **triaged_after}
-                if filed or triaged:
-                    msg = f"Synced {filed} bug(s), triaged {len(triaged)} -- dashboard updated"
+                if triaged_after is None:
+                    # gh67: a transient `gh` failure inside generate() itself
+                    # (as opposed to bug_sync.sync_and_triage() above, already
+                    # covered by this whole method's own try/except) -- the
+                    # dashboard file is untouched, still showing the last
+                    # generated version, so say that plainly instead of
+                    # claiming a refresh that didn't happen.
+                    msg = "Dashboard refresh skipped (a `gh` call failed) -- still showing the last generated version"
                 else:
-                    msg = "Dashboard refreshed"
+                    triaged = {**triaged, **triaged_after}
+                    if filed or triaged:
+                        msg = f"Synced {filed} bug(s), triaged {len(triaged)} -- dashboard updated"
+                    else:
+                        msg = "Dashboard refreshed"
                 self.call_from_thread(self.toast, msg, style="dim")
             except Exception:
                 app_log.exception("background bug sync/triage/dashboard failed")
