@@ -52,6 +52,53 @@ failure documented earlier in this file for the mpv check. Ran
 
 ---
 
+## 2026-09-03 (PR pending) -- gh62 (remaining half): cmd_profile_switch's INCOMING write is now atomic too
+
+Second bug in this batch (gh58, gh62, gh64, gh66, gh70). gh62 was already
+partly fixed in PR #67 (`c2109ce`, merged 2026-08-30 by Janhvi) --
+`profiles.write_goals_and_state()` made the OUTGOING profile's save-away
+(goals+state written into its own per-profile encrypted storage) atomic as a
+pair. Re-reading `cmd_profile_switch` for this batch found the other half of
+the same bug was never actually fixed: after reading the target profile's
+goals/state, landing them into the live, unencrypted `~/.mtdo/goals.json`/
+`state.json` was still two separate, direct `open(..., "w")` calls -- not
+individually crash-safe (opening in `"w"` mode truncates the file to empty
+the instant it's opened, before `json.dump` ever runs), and with the exact
+same no-rollback gap between the two files as the original bug description.
+`tests/test_profile_atomic_writes.py`'s existing coverage only ever checked
+what the OUTGOING profile ended up with after a switch, never what actually
+landed in the live files for the profile being switched INTO -- so this half
+had zero test coverage and nothing would have caught it.
+
+**Fix:** added `config.save_goals()` (new, mirrors `core.save_state`'s
+already-existing temp-file + `os.replace()` pattern from gh59 -- same
+idiom duplicated rather than shared, matching this codebase's own
+"three similar lines beats a shared helper" convention, since
+`profiles._atomic_write_bytes` is profile-storage-scoped and private, not a
+fit for the plain unencrypted live files). `cmd_profile_switch` now calls
+`appconfig.save_goals(goals)` and `core.save_state(state)` back-to-back with
+no other I/O in between, instead of the two raw `open()` calls -- same
+"prepare/write via the module's own atomic primitive" shape
+`write_goals_and_state` already established for the outgoing side.
+
+Extended `tests/test_profile_atomic_writes.py` (not a new file, per this
+batch's convention of reusing existing coverage): a direct unit test of the
+new `save_goals()` primitive (mid-write failure leaves the original content
+untouched, no leftover temp file -- mirrors the existing `_atomic_write_bytes`
+test), a first-ever check that the INCOMING profile's data actually lands
+correctly in the live files after a real switch, and a regression test that
+forces the state write specifically to fail mid-switch (isolated from the
+outgoing-save step by using a freshly-created, still-empty active profile so
+that step is a no-op) and confirms no truncated/empty `state.json` is left
+behind. Ran `tests/test_profile_atomic_writes.py` + `test_profiles_write.py`
++ `test_profiles.py`: 39 passed. Noted one pre-existing, order-dependent
+flaky test in this file (`test_switching_away_in_the_live_tui_saves_both_goals_and_state`,
+fails when run alone but passes as part of the full suite/file) --
+confirmed unrelated to this change by reproducing it identically on the
+unmodified branch via `git stash`; not touched here.
+
+---
+
 ## 2026-08-30 (PR https://github.com/mukund1312/mtdo/pull/72) -- dashboard freeze: editable controls had no data-id
 
 Directly user-reported ("when i click postpont in the dashboard the netire
