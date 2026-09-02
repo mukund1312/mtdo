@@ -136,6 +136,29 @@ same PR): 6 passed.
 
 ---
 
+## 2026-09-03 (no code change) -- gh70: already fixed, verified
+
+Fifth and last bug in this batch. Same situation again: `instance_store.py`
+already has `_validate_slug()` (rejects a slug containing `/`, `\`, or `..`),
+called from both `_meta_path()` and `_data_path()` -- the two functions every
+slug-consuming operation in the module (including `delete_instance()`) routes
+through, so the guard applies everywhere a slug reaches a filesystem path, not
+just at the one CLI call site. Fixed in `cbc6b21` (PR #58, merged by Janhvi
+2026-08-30, before this batch's branch was created), explicitly labeled
+`gh70`.
+
+No code change made. Ran `tests/test_instance_store.py` (added by that same
+PR): 17 passed.
+
+**Batch summary (gh58, gh62, gh64, gh66, gh70):** only gh58 (radio.py/mpv/
+ffmpeg) and gh62 (cmd_profile_switch's incoming-write half) needed actual
+code changes -- see their own entries above. gh64/gh66/gh70 had already been
+fixed and merged to main by Janhvi's own parallel sessions (PRs #58-#60)
+before this batch's branch was cut from main, so re-doing them here would
+have been redundant/duplicate work; verified instead and left untouched.
+
+---
+
 ## 2026-08-30 (PR https://github.com/mukund1312/mtdo/pull/72) -- dashboard freeze: editable controls had no data-id
 
 Directly user-reported ("when i click postpont in the dashboard the netire
