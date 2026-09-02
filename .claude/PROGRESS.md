@@ -99,6 +99,27 @@ unmodified branch via `git stash`; not touched here.
 
 ---
 
+## 2026-09-03 (no code change) -- gh64: already fixed, verified
+
+Third bug in this batch (gh58, gh62, gh64, gh66, gh70). Per step 1 of this
+batch's process ("read the actual current code first -- don't assume the bug
+description maps 1:1 to what you find"): music.py's subprocess calls already
+all have `timeout=3` (`_run_best_effort`, `_spotify_running`, `_spotify_info`,
+`play_spotify_url`, `_apple_script_is_playing`, `_nowplaying_cli_info`) --
+fixed in `f0d7649` (PR #60, merged by Janhvi 2026-08-30, before this batch's
+branch was created), which explicitly labels the change `gh64` and covers
+every subprocess call in the file (confirmed by grepping music.py for both
+`subprocess\.(run|check_output|Popen|call)` and `timeout=` -- 6 call sites,
+6 timeouts, 1:1).
+
+No code change made. Ran `tests/test_music.py` (added by that same PR) to
+confirm it's still green: 22 passed. Flagging per this batch's own
+instructions rather than silently no-oping or inventing busywork -- the real
+finding here is "already fixed," not a residual gap like gh62 turned out to
+have.
+
+---
+
 ## 2026-08-30 (PR https://github.com/mukund1312/mtdo/pull/72) -- dashboard freeze: editable controls had no data-id
 
 Directly user-reported ("when i click postpont in the dashboard the netire
