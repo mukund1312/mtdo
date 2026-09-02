@@ -9,6 +9,49 @@ Add each session's PROGRESS.md entry to the same branch as the code it describes
 
 ---
 
+## 2026-09-03 (PR pending) -- gh58: radio.py checks ffmpeg before spawning mpv, and cleans up mpv if ffmpeg still fails to start
+
+First bug in a new batch of code-audit findings (gh58, gh62, gh64, gh66, gh70),
+same style as the earlier gh59-gh74 batch.
+
+**The bug:** `RadioPlayer.start()` only ever checked `has_mpv()` up front.
+mpv was spawned first, then the ffmpeg analysis process was spawned right
+after with no equivalent check -- if ffmpeg isn't installed,
+`subprocess.Popen(["ffmpeg", ...])` raises `FileNotFoundError`, which
+propagated straight out of `start()`. At that point mpv was already running
+and genuinely playing audio, but `self._mpv_proc` was left holding a live,
+untracked process with `self._station_index` never set (still `None` from
+before) -- `current_station()` reports nothing selected while mpv keeps
+streaming in the background with no clean way for the app to find and stop
+it again short of restarting mtdo.
+
+**Fix:** added `has_ffmpeg()` (mirrors `has_mpv()`, `shutil.which("ffmpeg")`)
+and check it up front in `start()`, alongside the existing mpv check, before
+either process is spawned -- raises the same kind of clear `RuntimeError`
+(`FFMPEG_INSTALL_HINT = "brew install ffmpeg"`) that `radio_screen.py`'s
+`_play()` already catches and surfaces via `now_line.update()`, so this
+needed no UI-side changes at all. Also wrapped the ffmpeg `Popen` call itself
+in a `try/except BaseException` that terminates the already-spawned mpv
+process, clears `self._mpv_proc`/`self._tmp_dir`/`self._ipc_sock`, and
+re-raises -- defense in depth for the TOCTOU gap between the upfront check
+and the actual spawn (ffmpeg uninstalled in between, permissions, etc.),
+since the upfront check alone only prevents the common case.
+
+Extended `tests/test_radio.py`: `test_start_raises_without_ffmpeg_and_touches_nothing`
+(mirrors the existing without-mpv test) and
+`test_start_kills_mpv_if_ffmpeg_popen_fails_after_the_upfront_check` (forces
+a Popen failure on the ffmpeg call specifically and confirms the already-spawned
+mpv mock's `.terminate()` was called, `is_playing()` is `False`, and
+`_mpv_proc`/`_tmp_dir` are cleared). Also added `has_ffmpeg` patches (default
+`True`) to every existing test that exercises `start()`/`on_list_view_selected`
+without one, so the suite no longer silently depends on whether ffmpeg
+happens to be installed on whatever machine runs it -- same reasoning as the
+existing `has_mpv` patches, and the same kind of gap that caused a real CI-only
+failure documented earlier in this file for the mpv check. Ran
+`tests/test_radio.py` standalone: 34 passed.
+
+---
+
 ## 2026-08-30 (PR https://github.com/mukund1312/mtdo/pull/72) -- dashboard freeze: editable controls had no data-id
 
 Directly user-reported ("when i click postpont in the dashboard the netire

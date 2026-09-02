@@ -37,6 +37,7 @@ import threading
 import time
 
 MPV_INSTALL_HINT = "brew install mpv"
+FFMPEG_INSTALL_HINT = "brew install ffmpeg"
 
 _RMS_LINE_RE = re.compile(r"Parsed_ametadata_(\d+).*?RMS_level=(-?[\d.]+|-?inf)")
 
@@ -67,6 +68,10 @@ NUM_BANDS = len(_BAND_EDGES) + 1
 
 def has_mpv():
     return shutil.which("mpv") is not None
+
+
+def has_ffmpeg():
+    return shutil.which("ffmpeg") is not None
 
 
 def _band_filter(index):
@@ -134,10 +139,24 @@ class RadioPlayer:
 
     def start(self, station_index):
         """Starts `STATIONS[station_index]`, stopping whatever was playing
-        first. Raises RuntimeError if mpv isn't installed -- callers should
-        check has_mpv() before ever offering this."""
+        first. Raises RuntimeError if mpv or ffmpeg isn't installed --
+        callers should check has_mpv() before ever offering this (ffmpeg's
+        check is here rather than also being a separate pre-flight for
+        callers, since it's only ever needed as part of this same start()
+        call, never on its own).
+
+        Both binaries are checked BEFORE either process is spawned, and the
+        ffmpeg Popen call itself is also guarded (gh58): a mid-write crash
+        can't happen here, but a TOCTOU gap between has_ffmpeg() and actually
+        spawning it (ffmpeg uninstalled in between, permissions, etc.) is
+        still possible in principle -- without the guard, mpv would already
+        be running and orphaned with nothing left tracking it, since the
+        exception would propagate out of start() before self._mpv_proc is
+        ever cleaned up."""
         if not has_mpv():
             raise RuntimeError(f"mpv not found -- install it with `{MPV_INSTALL_HINT}`.")
+        if not has_ffmpeg():
+            raise RuntimeError(f"ffmpeg not found -- install it with `{FFMPEG_INSTALL_HINT}`.")
         self.stop()
         station = STATIONS[station_index]
 
@@ -148,13 +167,21 @@ class RadioPlayer:
              f"--input-ipc-server={self._ipc_sock}", station["url"]],
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
         )
-        self._ffmpeg_proc = subprocess.Popen(
-            ["ffmpeg", "-loglevel", "info", "-i", station["url"],
-             "-filter_complex", _build_filter_complex(),
-             "-f", "null", "-"],
-            stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
-            text=True, bufsize=1,
-        )
+        try:
+            self._ffmpeg_proc = subprocess.Popen(
+                ["ffmpeg", "-loglevel", "info", "-i", station["url"],
+                 "-filter_complex", _build_filter_complex(),
+                 "-f", "null", "-"],
+                stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
+                text=True, bufsize=1,
+            )
+        except BaseException:
+            self._terminate(self._mpv_proc)
+            self._mpv_proc = None
+            shutil.rmtree(self._tmp_dir, ignore_errors=True)
+            self._tmp_dir = None
+            self._ipc_sock = None
+            raise
         self._station_index = station_index
         self._levels = [0.0] * NUM_BANDS
 
