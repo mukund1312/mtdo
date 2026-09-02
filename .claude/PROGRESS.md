@@ -120,6 +120,22 @@ have.
 
 ---
 
+## 2026-09-03 (no code change) -- gh66: already fixed, verified
+
+Fourth bug in this batch. Same situation as gh64: `PracticeLabPanel`'s
+`_run_busy`/`_analyze_busy` guards already exist exactly as gh66 describes --
+`action_run_code()`/`action_analyze_complexity()` both check-then-set their
+flag before starting a background thread and ignore a re-invocation while
+one's in flight, and every path either thread can end on (success, exception,
+and both the AI-based and SQL-explain branches of Analyze) clears it again.
+Fixed in `03928d6` (PR #59, merged by Janhvi 2026-08-30, before this batch's
+branch was created), explicitly labeled `gh66`.
+
+No code change made. Ran `tests/test_practice_lab_panel.py` (added by that
+same PR): 6 passed.
+
+---
+
 ## 2026-08-30 (PR https://github.com/mukund1312/mtdo/pull/72) -- dashboard freeze: editable controls had no data-id
 
 Directly user-reported ("when i click postpont in the dashboard the netire
