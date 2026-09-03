@@ -64,6 +64,13 @@ def test_has_mpv_reflects_shutil_which():
         assert radio.has_mpv() is False
 
 
+def test_has_ffmpeg_reflects_shutil_which():
+    with patch("shutil.which", return_value="/opt/homebrew/bin/ffmpeg"):
+        assert radio.has_ffmpeg() is True
+    with patch("shutil.which", return_value=None):
+        assert radio.has_ffmpeg() is False
+
+
 def test_read_levels_loop_maps_instances_to_bands_in_first_seen_order():
     """Synthetic lines shaped like real ffmpeg output (captured by hand against
     a real SomaFM stream): each band's ametadata filter gets its own numbered
@@ -134,7 +141,10 @@ def test_start_raises_without_mpv_and_touches_nothing():
     assert player.is_playing() is False
 
 
-def test_start_raises_without_ffmpeg_and_touches_nothing():
+def test_start_raises_without_ffmpeg_and_never_spawns_mpv():
+    """gh58: a missing ffmpeg must be caught before mpv is ever spawned --
+    otherwise mpv starts, plays real audio, and is left orphaned with no
+    reachable way to stop it once the ffmpeg Popen call fails."""
     player = radio.RadioPlayer()
     with patch("mtdo.radio.has_mpv", return_value=True), \
          patch("mtdo.radio.has_ffmpeg", return_value=False), \
@@ -354,6 +364,36 @@ async def test_radio_keybinding_without_mpv_toasts_and_does_not_open():
 
         assert not isinstance(app.screen, RadioScreen)
         assert "mpv" in app.query_one(ToastLine).content.plain.lower()
+
+
+async def test_play_without_ffmpeg_shows_error_without_crashing_or_orphaning_mpv():
+    """gh58: mpv installed but ffmpeg missing must fail cleanly through the
+    real Textual event handler -- no uncaught FileNotFoundError, and no mpv
+    process left running with nothing to stop it."""
+    app = TodoApp()
+    async with app.run_test() as pilot:
+        await _dismiss_first_run_prompts(pilot, app)
+
+        with patch("mtdo.radio.has_mpv", return_value=True):
+            await pilot.press("R")
+            await pilot.pause()
+        assert isinstance(app.screen, RadioScreen)
+
+        item = app.screen.list_view.children[0]
+        with patch("mtdo.radio.has_mpv", return_value=True), \
+             patch("mtdo.radio.has_ffmpeg", return_value=False), \
+             patch("mtdo.radio.subprocess.Popen") as mock_popen:
+            # Deliberately not followed by `await pilot.pause()` here: the
+            # screen's own 0.5s _update_status interval (radio_screen.py)
+            # would otherwise get a chance to fire and stomp the error
+            # message this asserts on -- on_list_view_selected -> _play is
+            # itself synchronous, so the assertion right after it is exactly
+            # the wording the handler leaves behind, before anything else
+            # runs.
+            app.screen.on_list_view_selected(_FakeSelected(item))
+            mock_popen.assert_not_called()
+            assert app.radio_player.is_playing() is False
+            assert "ffmpeg" in app.screen.now_line.content.lower()
 
 
 async def test_favoriting_a_station_persists_across_reopening_the_screen():

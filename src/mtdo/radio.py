@@ -140,19 +140,10 @@ class RadioPlayer:
     def start(self, station_index):
         """Starts `STATIONS[station_index]`, stopping whatever was playing
         first. Raises RuntimeError if mpv or ffmpeg isn't installed --
-        callers should check has_mpv() before ever offering this (ffmpeg's
-        check is here rather than also being a separate pre-flight for
-        callers, since it's only ever needed as part of this same start()
-        call, never on its own).
-
-        Both binaries are checked BEFORE either process is spawned, and the
-        ffmpeg Popen call itself is also guarded (gh58): a mid-write crash
-        can't happen here, but a TOCTOU gap between has_ffmpeg() and actually
-        spawning it (ffmpeg uninstalled in between, permissions, etc.) is
-        still possible in principle -- without the guard, mpv would already
-        be running and orphaned with nothing left tracking it, since the
-        exception would propagate out of start() before self._mpv_proc is
-        ever cleaned up."""
+        callers should check has_mpv() before ever offering this. Both checks
+        run before either process is spawned, specifically so a missing
+        ffmpeg can never leave a just-started mpv process orphaned and
+        playing with no reachable way to stop it (gh58)."""
         if not has_mpv():
             raise RuntimeError(f"mpv not found -- install it with `{MPV_INSTALL_HINT}`.")
         if not has_ffmpeg():
