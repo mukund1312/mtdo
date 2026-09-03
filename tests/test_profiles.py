@@ -685,8 +685,12 @@ async def test_reselecting_the_same_active_profile_does_not_reset_pomodoro(uniqu
         app.pomo_panel.running = True
         app.pomo_panel.remaining = 42
 
+        # No await between setting `remaining` and asserting it: _switch_profile
+        # is fully synchronous for this state, and yielding to the event loop
+        # here let the real 1s `on_second_tick` interval (app.py's
+        # set_interval(1.0, ...)) fire if enough wall-clock time had passed,
+        # flakily decrementing `remaining` before the assertion below.
         app._switch_profile(slug)
-        await pilot.pause()
 
         assert app.pomo_panel.running is True
         assert app.pomo_panel.remaining == 42
