@@ -2,7 +2,8 @@
 
 Full project context lives in `.claude/PROGRESS.md` (session-by-session log, read before
 starting work) and `~/.claude/agents/mtdo-dev.md` (architecture/onboarding doc for the
-`mtdo-dev` agent). Read those before making changes here.
+`mtdo-dev` agent). Read those before making changes here. Work that's been deliberately
+scoped out (not a bug list, not a backlog of ideas) lives in `TODOS.md`.
 
 ## Design System (mtdo **web** only)
 
