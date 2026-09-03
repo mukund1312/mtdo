@@ -3,6 +3,7 @@ import copy
 import json
 import os
 import shutil
+import tempfile
 import uuid
 from datetime import datetime
 
@@ -291,6 +292,31 @@ def load_goals():
             f"{type(raw).__name__} instead."
         )
     return _strip_meta_keys(raw)
+
+
+def save_goals(goals):
+    """Writes goals.json via a temp file + os.replace() rather than a direct
+    open(..., "w") -- gh62: cmd_profile_switch writes the incoming profile's
+    goals.json and state.json straight into the live, unencrypted ~/.mtdo
+    files (not per-profile storage, so profiles.write_goals_and_state()
+    doesn't apply here), and a direct write left a truncated file behind if
+    the process died mid-write. Same pattern as core.py's save_state (gh59)
+    and profiles.py's _atomic_write_bytes (gh61) -- the temp file is created
+    in the SAME directory as GOALS_PATH specifically so os.replace() is an
+    atomic rename on the same filesystem."""
+    goals_dir = os.path.dirname(GOALS_PATH)
+    os.makedirs(goals_dir, exist_ok=True)
+    fd, tmp_path = tempfile.mkstemp(dir=goals_dir, prefix=".goals.json.", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w") as f:
+            json.dump(goals, f, indent=2, sort_keys=False)
+        os.replace(tmp_path, GOALS_PATH)
+    except BaseException:
+        try:
+            os.remove(tmp_path)
+        except OSError:
+            pass
+        raise
 
 
 def create_snapshot():

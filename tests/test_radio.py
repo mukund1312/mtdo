@@ -155,6 +155,25 @@ def test_start_raises_without_ffmpeg_and_never_spawns_mpv():
     assert player.is_playing() is False
 
 
+def test_start_kills_mpv_if_ffmpeg_popen_fails_after_the_upfront_check(tmp_path):
+    """gh58: even if has_ffmpeg() passed (TOCTOU gap, permissions, etc.), a
+    failing ffmpeg Popen call must not leave the already-spawned mpv process
+    orphaned and untracked."""
+    player = radio.RadioPlayer()
+    mpv_proc = _fake_proc(alive_polls=5)
+    with patch("mtdo.radio.has_mpv", return_value=True), \
+         patch("mtdo.radio.has_ffmpeg", return_value=True), \
+         patch("mtdo.radio.subprocess.Popen") as mock_popen:
+        mock_popen.side_effect = [mpv_proc, FileNotFoundError("ffmpeg")]
+        with pytest.raises(FileNotFoundError):
+            player.start(0)
+
+    mpv_proc.terminate.assert_called_once()
+    assert player.is_playing() is False
+    assert player._mpv_proc is None
+    assert player._tmp_dir is None
+
+
 def test_start_stops_the_previous_station_first():
     player = radio.RadioPlayer()
     with patch("mtdo.radio.has_mpv", return_value=True), \

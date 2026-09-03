@@ -158,13 +158,21 @@ class RadioPlayer:
              f"--input-ipc-server={self._ipc_sock}", station["url"]],
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
         )
-        self._ffmpeg_proc = subprocess.Popen(
-            ["ffmpeg", "-loglevel", "info", "-i", station["url"],
-             "-filter_complex", _build_filter_complex(),
-             "-f", "null", "-"],
-            stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
-            text=True, bufsize=1,
-        )
+        try:
+            self._ffmpeg_proc = subprocess.Popen(
+                ["ffmpeg", "-loglevel", "info", "-i", station["url"],
+                 "-filter_complex", _build_filter_complex(),
+                 "-f", "null", "-"],
+                stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
+                text=True, bufsize=1,
+            )
+        except BaseException:
+            self._terminate(self._mpv_proc)
+            self._mpv_proc = None
+            shutil.rmtree(self._tmp_dir, ignore_errors=True)
+            self._tmp_dir = None
+            self._ipc_sock = None
+            raise
         self._station_index = station_index
         self._levels = [0.0] * NUM_BANDS
 

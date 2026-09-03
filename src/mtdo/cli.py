@@ -532,14 +532,24 @@ def cmd_profile_switch(args):
     goals = pf.read_goals(target["slug"], target_password)
     state = pf.read_state(target["slug"], target_password)
 
+    # gh62: these used to be two separate, direct open(..., "w") calls -- neither
+    # individually crash-safe (a mid-write death left a truncated file), and with a
+    # real window between them where a crash (or the second call raising) left the
+    # incoming profile's goals landed but state stale (or vice versa), same half-
+    # updated-profile risk as the outgoing-profile write this fix's sibling
+    # (write_goals_and_state, see profiles.py) already closed. Both are now written
+    # via their module's own atomic (temp file + os.replace()) writer, back-to-back
+    # with no other I/O in between -- config.save_goals/core.save_state rather than
+    # profiles.write_goals_and_state itself, since these are the live, unencrypted
+    # ~/.mtdo files, not per-profile storage.
+    from . import core as tc
+
     os.makedirs(appconfig.APP_DIR, exist_ok=True)
     if goals is not None:
-        with open(appconfig.GOALS_PATH, "w") as f:
-            json.dump(goals, f, indent=2, sort_keys=False)
+        appconfig.save_goals(goals)
     elif os.path.exists(appconfig.GOALS_PATH):
         os.remove(appconfig.GOALS_PATH)
-    with open(appconfig.STATE_PATH, "w") as f:
-        json.dump(state, f, indent=2, sort_keys=False)
+    tc.save_state(state)
 
     pf.set_active(target["slug"])
     print(f"Switched to profile '{target['name']}'. Run `{_PROG}` to start.")

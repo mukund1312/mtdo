@@ -9,6 +9,156 @@ Add each session's PROGRESS.md entry to the same branch as the code it describes
 
 ---
 
+## 2026-09-03 (PR pending) -- gh58: radio.py checks ffmpeg before spawning mpv, and cleans up mpv if ffmpeg still fails to start
+
+First bug in a new batch of code-audit findings (gh58, gh62, gh64, gh66, gh70),
+same style as the earlier gh59-gh74 batch.
+
+**The bug:** `RadioPlayer.start()` only ever checked `has_mpv()` up front.
+mpv was spawned first, then the ffmpeg analysis process was spawned right
+after with no equivalent check -- if ffmpeg isn't installed,
+`subprocess.Popen(["ffmpeg", ...])` raises `FileNotFoundError`, which
+propagated straight out of `start()`. At that point mpv was already running
+and genuinely playing audio, but `self._mpv_proc` was left holding a live,
+untracked process with `self._station_index` never set (still `None` from
+before) -- `current_station()` reports nothing selected while mpv keeps
+streaming in the background with no clean way for the app to find and stop
+it again short of restarting mtdo.
+
+**Fix:** added `has_ffmpeg()` (mirrors `has_mpv()`, `shutil.which("ffmpeg")`)
+and check it up front in `start()`, alongside the existing mpv check, before
+either process is spawned -- raises the same kind of clear `RuntimeError`
+(`FFMPEG_INSTALL_HINT = "brew install ffmpeg"`) that `radio_screen.py`'s
+`_play()` already catches and surfaces via `now_line.update()`, so this
+needed no UI-side changes at all. Also wrapped the ffmpeg `Popen` call itself
+in a `try/except BaseException` that terminates the already-spawned mpv
+process, clears `self._mpv_proc`/`self._tmp_dir`/`self._ipc_sock`, and
+re-raises -- defense in depth for the TOCTOU gap between the upfront check
+and the actual spawn (ffmpeg uninstalled in between, permissions, etc.),
+since the upfront check alone only prevents the common case.
+
+Extended `tests/test_radio.py`: `test_start_raises_without_ffmpeg_and_touches_nothing`
+(mirrors the existing without-mpv test) and
+`test_start_kills_mpv_if_ffmpeg_popen_fails_after_the_upfront_check` (forces
+a Popen failure on the ffmpeg call specifically and confirms the already-spawned
+mpv mock's `.terminate()` was called, `is_playing()` is `False`, and
+`_mpv_proc`/`_tmp_dir` are cleared). Also added `has_ffmpeg` patches (default
+`True`) to every existing test that exercises `start()`/`on_list_view_selected`
+without one, so the suite no longer silently depends on whether ffmpeg
+happens to be installed on whatever machine runs it -- same reasoning as the
+existing `has_mpv` patches, and the same kind of gap that caused a real CI-only
+failure documented earlier in this file for the mpv check. Ran
+`tests/test_radio.py` standalone: 34 passed.
+
+---
+
+## 2026-09-03 (PR pending) -- gh62 (remaining half): cmd_profile_switch's INCOMING write is now atomic too
+
+Second bug in this batch (gh58, gh62, gh64, gh66, gh70). gh62 was already
+partly fixed in PR #67 (`c2109ce`, merged 2026-08-30 by Janhvi) --
+`profiles.write_goals_and_state()` made the OUTGOING profile's save-away
+(goals+state written into its own per-profile encrypted storage) atomic as a
+pair. Re-reading `cmd_profile_switch` for this batch found the other half of
+the same bug was never actually fixed: after reading the target profile's
+goals/state, landing them into the live, unencrypted `~/.mtdo/goals.json`/
+`state.json` was still two separate, direct `open(..., "w")` calls -- not
+individually crash-safe (opening in `"w"` mode truncates the file to empty
+the instant it's opened, before `json.dump` ever runs), and with the exact
+same no-rollback gap between the two files as the original bug description.
+`tests/test_profile_atomic_writes.py`'s existing coverage only ever checked
+what the OUTGOING profile ended up with after a switch, never what actually
+landed in the live files for the profile being switched INTO -- so this half
+had zero test coverage and nothing would have caught it.
+
+**Fix:** added `config.save_goals()` (new, mirrors `core.save_state`'s
+already-existing temp-file + `os.replace()` pattern from gh59 -- same
+idiom duplicated rather than shared, matching this codebase's own
+"three similar lines beats a shared helper" convention, since
+`profiles._atomic_write_bytes` is profile-storage-scoped and private, not a
+fit for the plain unencrypted live files). `cmd_profile_switch` now calls
+`appconfig.save_goals(goals)` and `core.save_state(state)` back-to-back with
+no other I/O in between, instead of the two raw `open()` calls -- same
+"prepare/write via the module's own atomic primitive" shape
+`write_goals_and_state` already established for the outgoing side.
+
+Extended `tests/test_profile_atomic_writes.py` (not a new file, per this
+batch's convention of reusing existing coverage): a direct unit test of the
+new `save_goals()` primitive (mid-write failure leaves the original content
+untouched, no leftover temp file -- mirrors the existing `_atomic_write_bytes`
+test), a first-ever check that the INCOMING profile's data actually lands
+correctly in the live files after a real switch, and a regression test that
+forces the state write specifically to fail mid-switch (isolated from the
+outgoing-save step by using a freshly-created, still-empty active profile so
+that step is a no-op) and confirms no truncated/empty `state.json` is left
+behind. Ran `tests/test_profile_atomic_writes.py` + `test_profiles_write.py`
++ `test_profiles.py`: 39 passed. Noted one pre-existing, order-dependent
+flaky test in this file (`test_switching_away_in_the_live_tui_saves_both_goals_and_state`,
+fails when run alone but passes as part of the full suite/file) --
+confirmed unrelated to this change by reproducing it identically on the
+unmodified branch via `git stash`; not touched here.
+
+---
+
+## 2026-09-03 (no code change) -- gh64: already fixed, verified
+
+Third bug in this batch (gh58, gh62, gh64, gh66, gh70). Per step 1 of this
+batch's process ("read the actual current code first -- don't assume the bug
+description maps 1:1 to what you find"): music.py's subprocess calls already
+all have `timeout=3` (`_run_best_effort`, `_spotify_running`, `_spotify_info`,
+`play_spotify_url`, `_apple_script_is_playing`, `_nowplaying_cli_info`) --
+fixed in `f0d7649` (PR #60, merged by Janhvi 2026-08-30, before this batch's
+branch was created), which explicitly labels the change `gh64` and covers
+every subprocess call in the file (confirmed by grepping music.py for both
+`subprocess\.(run|check_output|Popen|call)` and `timeout=` -- 6 call sites,
+6 timeouts, 1:1).
+
+No code change made. Ran `tests/test_music.py` (added by that same PR) to
+confirm it's still green: 22 passed. Flagging per this batch's own
+instructions rather than silently no-oping or inventing busywork -- the real
+finding here is "already fixed," not a residual gap like gh62 turned out to
+have.
+
+---
+
+## 2026-09-03 (no code change) -- gh66: already fixed, verified
+
+Fourth bug in this batch. Same situation as gh64: `PracticeLabPanel`'s
+`_run_busy`/`_analyze_busy` guards already exist exactly as gh66 describes --
+`action_run_code()`/`action_analyze_complexity()` both check-then-set their
+flag before starting a background thread and ignore a re-invocation while
+one's in flight, and every path either thread can end on (success, exception,
+and both the AI-based and SQL-explain branches of Analyze) clears it again.
+Fixed in `03928d6` (PR #59, merged by Janhvi 2026-08-30, before this batch's
+branch was created), explicitly labeled `gh66`.
+
+No code change made. Ran `tests/test_practice_lab_panel.py` (added by that
+same PR): 6 passed.
+
+---
+
+## 2026-09-03 (no code change) -- gh70: already fixed, verified
+
+Fifth and last bug in this batch. Same situation again: `instance_store.py`
+already has `_validate_slug()` (rejects a slug containing `/`, `\`, or `..`),
+called from both `_meta_path()` and `_data_path()` -- the two functions every
+slug-consuming operation in the module (including `delete_instance()`) routes
+through, so the guard applies everywhere a slug reaches a filesystem path, not
+just at the one CLI call site. Fixed in `cbc6b21` (PR #58, merged by Janhvi
+2026-08-30, before this batch's branch was created), explicitly labeled
+`gh70`.
+
+No code change made. Ran `tests/test_instance_store.py` (added by that same
+PR): 17 passed.
+
+**Batch summary (gh58, gh62, gh64, gh66, gh70):** only gh58 (radio.py/mpv/
+ffmpeg) and gh62 (cmd_profile_switch's incoming-write half) needed actual
+code changes -- see their own entries above. gh64/gh66/gh70 had already been
+fixed and merged to main by Janhvi's own parallel sessions (PRs #58-#60)
+before this batch's branch was cut from main, so re-doing them here would
+have been redundant/duplicate work; verified instead and left untouched.
+
+---
+
 ## 2026-08-30 (PR https://github.com/mukund1312/mtdo/pull/72) -- dashboard freeze: editable controls had no data-id
 
 Directly user-reported ("when i click postpont in the dashboard the netire
