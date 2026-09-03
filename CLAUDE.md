@@ -4,6 +4,17 @@ Full project context lives in `.claude/PROGRESS.md` (session-by-session log, rea
 starting work) and `~/.claude/agents/mtdo-dev.md` (architecture/onboarding doc for the
 `mtdo-dev` agent). Read those before making changes here.
 
+## Design System (mtdo **web** only)
+
+Always read `DESIGN.md` before making any visual or UI decision in the web product.
+Font choices, colors, spacing, radius, motion, and the aesthetic direction ("Graphite") are
+defined there. Do not deviate without explicit user approval. In QA mode, flag any code that
+doesn't match `DESIGN.md`.
+
+`DESIGN.md` governs the **web** product only. The terminal app (`src/mtdo/`) keeps its own
+green-on-black identity and is deliberately not covered by it. Product plan and phase
+breakdown for the web product: `docs/designs/mtdo-web-v1-plan.md`.
+
 ## Linking a commit/branch to a tracker bug
 
 The shared bug dashboard's "Related git activity" section (see `dashboard.py`,
