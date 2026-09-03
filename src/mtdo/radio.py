@@ -37,6 +37,7 @@ import threading
 import time
 
 MPV_INSTALL_HINT = "brew install mpv"
+FFMPEG_INSTALL_HINT = "brew install ffmpeg"
 
 _RMS_LINE_RE = re.compile(r"Parsed_ametadata_(\d+).*?RMS_level=(-?[\d.]+|-?inf)")
 
@@ -67,6 +68,10 @@ NUM_BANDS = len(_BAND_EDGES) + 1
 
 def has_mpv():
     return shutil.which("mpv") is not None
+
+
+def has_ffmpeg():
+    return shutil.which("ffmpeg") is not None
 
 
 def _band_filter(index):
@@ -134,10 +139,15 @@ class RadioPlayer:
 
     def start(self, station_index):
         """Starts `STATIONS[station_index]`, stopping whatever was playing
-        first. Raises RuntimeError if mpv isn't installed -- callers should
-        check has_mpv() before ever offering this."""
+        first. Raises RuntimeError if mpv or ffmpeg isn't installed --
+        callers should check has_mpv() before ever offering this. Both checks
+        run before either process is spawned, specifically so a missing
+        ffmpeg can never leave a just-started mpv process orphaned and
+        playing with no reachable way to stop it (gh58)."""
         if not has_mpv():
             raise RuntimeError(f"mpv not found -- install it with `{MPV_INSTALL_HINT}`.")
+        if not has_ffmpeg():
+            raise RuntimeError(f"ffmpeg not found -- install it with `{FFMPEG_INSTALL_HINT}`.")
         self.stop()
         station = STATIONS[station_index]
 
