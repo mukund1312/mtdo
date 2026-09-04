@@ -35,7 +35,9 @@ export async function proxy(request: NextRequest) {
 
   if (!user) {
     // First visit: create the anonymous identity now, not at signup, so the
-    // ledger never has a pre-signup gap.
+    // ledger never has a pre-signup gap. The matching `profiles` row is
+    // created by an `after insert on auth.users` trigger (schema.md §6) —
+    // don't insert one from here.
     await supabase.auth.signInAnonymously();
   }
 

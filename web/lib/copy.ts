@@ -5,7 +5,7 @@
  * Schema, API routes, and component names stay neutral (`plans`,
  * `focus_sessions`, `rooms`, `notes`) regardless of what's in here —
  * never let a term from this file leak into a table, column, or route
- * segment name. See docs/architecture/api.md §4.
+ * segment name. See docs/architecture/api.md §5.
  */
 export const copy = {
   web: {
