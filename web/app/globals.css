@@ -1,0 +1,25 @@
+@import "tailwindcss";
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  padding: 0;
+  margin: 0;
+}
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: "Satoshi", ui-sans-serif, system-ui, sans-serif;
+  font-weight: 300; /* body copy is 300 weight — DESIGN.md §Typography, load-bearing */
+  -webkit-font-smoothing: antialiased;
+}
+
+a {
+  color: inherit;
+}
