@@ -1,8 +1,11 @@
 # Design System — mtdo web
 
 > Source of truth for every visual decision in the mtdo **web** product.
-> Approved 2026-09-03 from the "Graphite" direction (`/tmp/mtdo-renders/4-graphite.html`).
-> The mtdo **terminal** app is a separate product and keeps its own green-on-black identity.
+> Approved 2026-09-03 from the "Graphite" direction (`/tmp/mtdo-renders/4-graphite.html`), and
+> extended 2026-09-04 to **`C · Ember Graphite`**: Graphite is the core identity, Ember is reserved
+> for the focus transition and high-intent moments.
+> The mtdo **terminal** app is a separate product with its own skin and its own vocabulary
+> (§Vocabulary). It stays dark, but *readable* dark — slate/charcoal rather than crushed black.
 
 ## Product Context
 
@@ -19,7 +22,9 @@
 
 ## Aesthetic Direction
 
-- **Direction:** **Graphite** — premium consumer dark. Minimal, calm, confident.
+- **Direction:** **`C · Ember Graphite`** — premium consumer dark. Minimal, calm, confident.
+  Graphite carries the whole product; **Ember** appears only at the focus transition and other
+  high-intent moments (§Motion → The morph). Ember is a signal, never decoration.
 - **Decoration level:** minimal. Type, space, and one accent do the work.
 - **Mood:** a quiet, expensive tool. Nothing shouts. Surfaces are glass over near-black, edges are
   hairlines rather than shadows, and motion is soft rather than snappy. It should feel like
@@ -84,33 +89,41 @@ Body copy is **300 weight**. This is load-bearing: at 400 the pages read heavy a
   --muted:   #8A8A93;
   --dim:     #5C5C64;                    /* meta, timestamps, footers */
 
-  --accent:  #22D3EE;                    /* cyan: structure, links, progress, heatmap */
-  --live:    #FB7185;                    /* rose: ONLY when something is happening now */
+  --accent:     #22D3EE;                 /* cyan: structure, links, progress, heatmap */
+  --live:       #F97316;                 /* EMBER: ONLY when something is happening now */
+  --ember-deep: #C2410C;                 /* bloom gradient inner stop — focus transition only */
 
   --success: #34D399;
   --warning: #FBBF24;
-  --danger:  #DC2626;                    /* deliberately darker/more saturated than --live */
+  --danger:  #DC2626;                    /* true red; see rule 2 below */
 }
 ```
 
 ### Two enforceable color rules
 
-1. **`--live` is a state, not a decoration.** Rose appears only when something is happening *this
+1. **`--live` is a state, not a decoration.** Ember appears only when something is happening *this
    second*: a running timer, a member in session, a streak at risk. If it is on screen, something
    is live. Never use it for emphasis, headings, or ordinary CTAs.
-2. **`--danger` must never be confused with `--live`.** `#DC2626` is deliberately darker and more
-   saturated than `#FB7185` so a destructive action can never read as "in progress."
+2. **`--danger` must never be confused with `--live`.** `#DC2626` is a true red, `#F97316` a warm
+   orange. ⚠️ This rule was originally written against rose `#FB7185`, which sat much further from
+   red. **Revalidate before shipping:** put a destructive button and a running timer side by side —
+   a delete must never read as "in progress."
+3. **`--warning` must never be confused with `--live`.** Amber `#FBBF24` and Ember `#F97316` are
+   close neighbours, and this collision is new with Ember. Prefer separating them by *form* rather
+   than hue — Ember only ever pulses or blooms; warning is always static.
 
 Surfaces are defined by **hairline borders and translucency**, never by drop shadows. The only
 shadow permitted is the glass nav's `0 10px 40px rgba(0,0,0,.6)` on scroll.
 
 ### Gradients
 
-Two permitted uses only:
+Three permitted uses only:
 - **Text clip** on large numerals: `linear-gradient(180deg,#FFF,#8A8A93)` with `background-clip:text`.
 - **Ambient hero wash:** `radial-gradient(ellipse 80% 50% at 50% -10%, rgba(34,211,238,.09), transparent 70%)`.
+- **Ember bloom**, the focus transition only (§Motion → The morph):
+  `radial-gradient(circle at 50% 50%, var(--ember-deep), var(--live) 40%, transparent 72%)`.
 
-No gradient buttons. No purple.
+No gradient buttons. No purple. The ember bloom is the *only* place `--ember-deep` may appear.
 
 ### Heatmap ramp
 
@@ -169,6 +182,30 @@ the harder-edged directions considered alongside it.
   - **Spring hover:** `scale(1.045)` on primary buttons; `translateY(-4px)` on cards.
   - **Scroll progress bar:** 2px, `--accent`, fixed top.
 
+### The morph — entering focus
+
+The single highest-craft moment in the product. Starting a session is not a navigation, it is a
+ritual, and the transition is what makes the timer the emotional center rather than a widget.
+
+```
+Graphite home  →  ember bloom across viewport  →  terminal focus shell
+```
+
+- **Trigger:** starting the focus timer. Never a manual theme toggle — there is no "switch to
+  terminal mode" control anywhere.
+- **Bloom:** the ember gradient above expands from the timer's origin point to fill the viewport,
+  then dissipates as the focus shell settles under it. It should read as a room dimming and a coal
+  catching, not as a page transition.
+- **Destination — the terminal focus shell:** a terminal-*flavored* web screen built from these
+  same Graphite tokens. Slate/charcoal ground, tighter grid, operational tone, Satoshi throughout.
+  It is a **mood, not an emulator**: no xterm.js, no PTY, no dependency on the local bridge. (A web
+  PTY is ruled out outright — see `docs/designs/mtdo-web-v1-plan.md` §6.)
+- **Exit:** reverses, faster. Leaving focus should feel like coming up, not like another ceremony.
+
+**`prefers-reduced-motion` collapses the bloom to an instant state change** — the focus shell
+appears without the animation. It must never resolve to a blank screen; same blocking rule as
+every other reveal below.
+
 ### Accessibility requirements (blocking, do not ship without)
 
 Reveal animations gate content visibility, so both fallbacks are mandatory:
@@ -192,8 +229,11 @@ touch targets.
 ## Component Notes
 
 - **Nav:** floating pill, `backdrop-filter: blur(20px) saturate(160%)`, gains a shadow past 20px scroll.
-- **Session screen:** the highest-focus surface in the product. Timer in gradient-clipped 900-weight
-  Satoshi, coaching content in a 252px right rail, nothing else on screen.
+- **Session screen (the terminal focus shell):** the highest-focus surface in the product, and the
+  destination of the morph. Timer in gradient-clipped 900-weight Satoshi, coaching content in a
+  252px right rail, nothing else on screen. Ground shifts to slate/charcoal and the grid tightens
+  to carry the operational, terminal-flavored tone — using these tokens, not a second design system.
+  The running timer is `--live`; it is the canonical use of Ember.
 - **Study rooms:** a **timing board with lanes**, never a ranked leaderboard. Group total is shared
   and filled together; each member's line is measured against their own past self. In-session lanes
   use `--live`; idle lanes use `--accent`. A ranked leaderboard demotivates exactly the user we
@@ -203,6 +243,28 @@ touch targets.
 - **Record Card:** milestone artifact at **1080×1920**, sized to screenshot into a WhatsApp status
   or Instagram story uncropped. It is the reward mechanic and the distribution mechanic at once.
   Needs a dedicated design pass; it was the weakest element in the light-theme exploration.
+
+## Vocabulary
+
+mtdo web and mtdo terminal are two expressions of one system, and they deliberately **do not share
+names**. Web copy is human, motivating, direct, outcome-focused. Terminal copy is precise,
+operational, tool-like.
+
+| Concept | Web | Terminal |
+|---|---|---|
+| Goal / plan | Goal route | `mission_compiler` |
+| Focus | Focus timer | `focus_orbit` |
+| Group study | Study rooms | `mesh_signal` |
+| Notes | Vault | `archive_index` |
+
+Two rules:
+
+1. **The website must never read like a CLI manual, and the terminal must never read like the
+   website.** If a web string would look at home in a man page, rewrite it.
+2. **This is a presentation layer only.** Schema, API, and component names stay neutral —
+   `plans`, `focus_sessions`, `rooms`, `notes`. Naming a database table after marketing copy means
+   you can no longer change either one independently. The web mapping lives in exactly one
+   dictionary, `web/lib/copy.ts`.
 
 ## Decisions Log
 
@@ -214,3 +276,9 @@ touch targets.
 | 2026-09-03 | Single type family (Satoshi) | Three-family systems were explored and rejected as harder to hold consistent across a solo-built product |
 | 2026-09-03 | `--live` reserved strictly as a state color | Makes the interface feel wired to real time and keeps urgency meaningful as screens multiply |
 | 2026-09-03 | Rounded pills and 16px cards kept | The softness is what makes Graphite feel consumer rather than developer-tool |
+| 2026-09-04 | Direction extended to **`C · Ember Graphite`** | Graphite alone had no register for high-intent moments; Ember gives the focus ritual its own signal without adding a second identity |
+| 2026-09-04 | **Ember replaces rose as `--live`** (`#FB7185` → `#F97316`) | One warm high-intent color instead of two. The bloom then reads as the same signal scaled up, rather than an unrelated effect. Hex is a starting point — tune against a real screen |
+| 2026-09-04 | The morph is a **ritual, not a toggle**; no manual mode switch exists | Starting focus is the emotional center of the product; a settings toggle would make it a preference instead of a moment |
+| 2026-09-04 | Terminal focus shell is **terminal-flavored, built from Graphite tokens** — not an emulator, not the TUI | Keeps one design system and one codebase. A real web PTY is ruled out outright (`mtdo-web-v1-plan.md` §6), and a bridge dependency would make the core focus path Pro-only |
+| 2026-09-04 | Web and terminal keep **separate vocabularies**, mapped in one dictionary | Two expressions of one system should not sound alike; keeping the mapping out of the schema means either side can be renamed without a migration |
+| 2026-09-04 | Terminal moves to readable dark (slate/charcoal), diagonal shadow treatment dropped | The shadows hurt readability, and crushed black was fighting legibility for no identity gain |
