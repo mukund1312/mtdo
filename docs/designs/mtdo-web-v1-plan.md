@@ -75,9 +75,10 @@ people abandon goals), because social accountability is the strongest known coun
 
 **Full spec: `DESIGN.md` at the repo root.** That file is the source of truth; this is the summary.
 
-**Direction:** premium consumer dark. Near-black `#0B0B0C`, glass surfaces defined by hairline
-borders rather than shadows, one cyan accent `#22D3EE` for structure and one rose `#FB7185`
-reserved strictly as a live state. Single type family (Satoshi). Rounded pills and 16px cards.
+**Direction:** `C · Ember Graphite` — premium consumer dark. Near-black `#0B0B0C`, glass surfaces
+defined by hairline borders rather than shadows, one cyan accent `#22D3EE` for structure and one
+ember `#F97316` reserved strictly as a live state and for the focus-transition bloom.
+Single type family (Satoshi). Rounded pills and 16px cards.
 Blur-in scroll reveals, counter tick-ups, spring hovers. Craft references: Linear, Vercel, Raycast.
 
 **Why dark, after three reviews argued for light:** a light "Results Day" direction (warm bone
@@ -100,8 +101,9 @@ keeps its own skin; it is a different product for different people.
 ```css
 --bg:#0B0B0C  --surface:rgba(255,255,255,.032)  --border:rgba(255,255,255,.09)
 --text:#FAFAFA  --muted:#8A8A93  --dim:#5C5C64
---accent:#22D3EE   /* cyan: structure, links, progress, heatmap */
---live:#FB7185     /* rose: ONLY when something is happening right now */
+--accent:#22D3EE      /* cyan: structure, links, progress, heatmap */
+--live:#F97316        /* EMBER: ONLY when something is happening right now */
+--ember-deep:#C2410C  /* bloom gradient inner stop — focus transition only */
 --success:#34D399  --warning:#FBBF24  --danger:#DC2626
 ```
 Type: **Satoshi** (Fontshare) across the whole product, body at 300 weight, all numerals
@@ -226,7 +228,7 @@ Each phase ends with something that works. Do not start the next until the curre
 ### Phase 0 — Foundations (~1 week CC)
 - [ ] Next.js + Vercel skeleton, PWA manifest, "add to home screen" working on a real phone
 - [ ] Supabase project, schema v1, row-level security
-- [ ] `DESIGN.md` tokens implemented as CSS custom properties; Archivo / Switzer / Instrument Serif loaded
+- [ ] `DESIGN.md` tokens implemented as CSS custom properties; **Satoshi** loaded (Fontshare)
 - [ ] Sentry + PostHog wired (before any user exists)
 - [ ] Privacy policy + data deletion path
 **Done when:** a blank styled page loads on your phone from a URL and an error in it shows up in Sentry.
@@ -236,7 +238,7 @@ Each phase ends with something that works. Do not start the next until the curre
 - [ ] Today: one card, next task + why
 - [ ] Session: timer on the ink field, coaching content on screen
 - [ ] Done: mark complete, streak updates, one line on what unlocked
-- [ ] Progress: heatmap in the ultramarine ramp
+- [ ] Progress: heatmap in the cyan ramp (`DESIGN.md` §Heatmap ramp)
 - [ ] Record Card minting + 1080×1920 export
 **Done when:** you can run your own real goal through it for a week without opening the TUI.
 
@@ -308,7 +310,8 @@ longer fun. Phase gates exist to prevent that.
 | 2026-09-03 | Terminal app kept, repositioned as the power/dev tier | 14,283 LOC of working product; becomes the Pro runtime via the bridge |
 | 2026-09-03 | Wedge is coaching + curriculum, not the focus timer | Timer category is commoditized; coaching is the only defensible part |
 | 2026-09-03 | Abandon green-on-black terminal identity for web | Unanimous across Claude, Codex, and an independent subagent; signals "for programmers" at peak-churn moment |
-| 2026-09-03 | "Results Day" design direction, daylight default, one dark screen | Occupies the unclaimed "serious for learners" position |
+| 2026-09-03 | ~~"Results Day" design direction, daylight default, one dark screen~~ **Superseded** | Explored and overruled the same day in favour of Graphite (see the row below). Kept here only so the reversal is legible; do not build against it |
+| 2026-09-04 | Direction extended to `C · Ember Graphite`; Ember replaces rose as `--live` | Graphite had no register for the focus ritual. Full spec in `DESIGN.md` |
 | 2026-09-03 | Record Card as the reward mechanic | Reward doubles as organic distribution in the target audience |
 | 2026-09-03 | Practice Lab via WASM (free) + localhost bridge (Pro), never server-side | Avoids sandboxing infra, cost, and RCE exposure entirely |
 | 2026-09-03 | PTY never ships to web | No cheap safe version exists |
