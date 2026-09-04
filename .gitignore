@@ -12,3 +12,15 @@ dist/
 src/mtdo/goals.json
 goals.json
 goals_snapshots/
+
+# web/ (Next.js)
+web/node_modules/
+web/.next/
+web/out/
+web/.env*.local
+web/next-env.d.ts
+web/*.tsbuildinfo
+
+# Supabase CLI local state
+supabase/.branches/
+supabase/.temp/

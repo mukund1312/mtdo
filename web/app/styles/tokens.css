@@ -1,0 +1,76 @@
+/*
+ * mtdo web — design tokens
+ * Transcribed directly from DESIGN.md's :root block (Ember Graphite).
+ * DESIGN.md is the source of truth — if these ever diverge, DESIGN.md wins
+ * and this file is wrong. Do not add tokens here that aren't in DESIGN.md.
+ */
+
+:root {
+  /* Color — DESIGN.md §Color */
+  --bg: #0b0b0c; /* page */
+  --surface: rgba(255, 255, 255, 0.032); /* cards, glass panels */
+  --surface-hover: rgba(255, 255, 255, 0.055);
+  --border: rgba(255, 255, 255, 0.09); /* hairlines, never shadows */
+  --text: #fafafa;
+  --muted: #8a8a93;
+  --dim: #5c5c64; /* meta, timestamps, footers */
+
+  --accent: #22d3ee; /* cyan: structure, links, progress, heatmap */
+  --live: #f97316; /* EMBER: ONLY when something is happening now */
+  --ember-deep: #c2410c; /* bloom gradient inner stop — focus transition only */
+
+  --success: #34d399;
+  --warning: #fbbf24;
+  --danger: #dc2626; /* true red; see DESIGN.md rule 2 */
+
+  /* Spacing — DESIGN.md §Spacing, base unit 4px */
+  --space-2xs: 2px;
+  --space-xs: 4px;
+  --space-sm: 8px;
+  --space-md: 16px;
+  --space-lg: 24px;
+  --space-xl: 32px;
+  --space-2xl: 48px;
+  --space-3xl: 64px;
+
+  /* Radius — DESIGN.md §Layout, hierarchical */
+  --radius-sm: 6px; /* swatches, chips, inline marks */
+  --radius-md: 14px; /* stat tiles */
+  --radius-lg: 16px; /* cards */
+  --radius-xl: 20px; /* large mock panels, session surface */
+  --radius-full: 999px; /* nav shell, pills, buttons, progress tracks */
+
+  /* Motion easing — DESIGN.md §Motion */
+  --ease-reveal: cubic-bezier(0.2, 0.8, 0.2, 1);
+  --ease-spring: cubic-bezier(0.2, 1.5, 0.4, 1);
+}
+
+/* All numerals: tabular figures so timers/counters don't jitter (DESIGN.md §Typography) */
+.num {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum" 1;
+}
+
+/* Blocking accessibility requirement (DESIGN.md §Accessibility): reveal
+ * animations gate content visibility, so both fallbacks are mandatory.
+ * Every reveal class (.rv) and the EmberMorph bloom must respect this. */
+@media (prefers-reduced-motion: reduce) {
+  .rv {
+    opacity: 1 !important;
+    transform: none !important;
+    filter: none !important;
+    transition: none !important;
+  }
+  * {
+    animation: none !important;
+  }
+}
+
+/* No-JS fallback (DESIGN.md §Accessibility): the root layout's inline script
+ * removes `no-js` from <html> immediately. If it never ran, force every
+ * reveal visible instead of leaving the page blank. */
+.no-js .rv {
+  opacity: 1 !important;
+  transform: none !important;
+  filter: none !important;
+}
