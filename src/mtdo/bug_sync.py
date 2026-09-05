@@ -26,6 +26,15 @@ PRIORITIES = ["high", "medium", "low"]
 STATUS_PREFIX = "status:"
 POSTPONED_LABEL = f"{STATUS_PREFIX}postponed"
 
+# Web-dev work items (mtdo-web-dev-split-plan.md §7) live in the same tracker repo, as
+# issues carrying this label instead of LABEL -- same board, same PEOPLE/assignment/
+# status machinery, just a different "kind" of row so a bug filter never picks one up
+# by accident and vice versa. WAVE_PREFIX plays the role PRIORITY_PREFIX plays for bugs
+# (a single-value label read by task_wave()), not a priority -- a task's wave doesn't
+# mean "how urgent," it means "which phase of docs/designs/mtdo-web-v1-plan.md it's in."
+WEB_LABEL = "web-task"
+WAVE_PREFIX = "wave:"
+
 # The known two-person roster. Each maps to a friendly display name/color for the
 # dashboard, and to every git identity (name+email pairs are inconsistent across
 # machines/accounts -- see PROGRESS.md 2026-08-23) that should count toward their commits.
@@ -168,8 +177,9 @@ def board():
     return open_count, closed_count
 
 
-def list_all():
-    """Every synced bug issue, full detail -- used by the dashboard for per-person
+def list_all(label=LABEL):
+    """Every synced issue carrying `label` (bugs by default; pass `WEB_LABEL` for web-dev
+    tasks -- see file_task() below), full detail -- used by the dashboard for per-person
     found/fixed attribution (author = found by; assignee on a closed issue = fixed by,
     set by mark_fixed_and_close) and for assignment tracking (labels). Includes
     `comments` (full author/body/createdAt per comment, not just a count -- confirmed
@@ -177,12 +187,19 @@ def list_all():
     the dashboard's "Conversation" thread can read real, durable notes without an extra
     per-issue `gh issue view` round trip for every bug on the board."""
     out = _run([
-        "gh", "issue", "list", "--repo", TRACKER_REPO, "--label", LABEL,
+        "gh", "issue", "list", "--repo", TRACKER_REPO, "--label", label,
         "--state", "all",
         "--json", "number,title,body,author,assignees,state,createdAt,closedAt,updatedAt,labels,comments",
         "--limit", "1000",
     ])
     return json.loads(out)
+
+
+def list_web_tasks():
+    """Every web-dev task issue -- list_all() scoped to WEB_LABEL. Kept as a named
+    function (not just callers spelling out list_all(label=WEB_LABEL) everywhere) so the
+    "tasks live under a different label" detail has exactly one place to change."""
+    return list_all(label=WEB_LABEL)
 
 
 def assigned_person(issue):
@@ -203,6 +220,54 @@ def bug_priority(issue):
         if name.startswith(PRIORITY_PREFIX):
             return name[len(PRIORITY_PREFIX):]
     return None
+
+
+def task_wave(issue):
+    """A `wave:<name>` label on a web-task issue (e.g. "w1"), or None if unset -- the
+    task-board equivalent of bug_priority() above."""
+    for label in issue.get("labels", []):
+        name = label["name"] if isinstance(label, dict) else label
+        if name.startswith(WAVE_PREFIX):
+            return name[len(WAVE_PREFIX):]
+    return None
+
+
+def _ensure_wave_label(wave):
+    """Creates the `wave:<wave>` label on demand if it doesn't exist yet -- waves aren't a
+    fixed enum like PRIORITIES, so (unlike _ensure_priority_labels) this checks/creates
+    one label at a time rather than the whole set up front."""
+    label = f"{WAVE_PREFIX}{wave}"
+    existing = set(_run([
+        "gh", "label", "list", "--repo", TRACKER_REPO, "--json", "name", "-q", ".[].name",
+    ]).splitlines())
+    if label not in existing:
+        subprocess.run(
+            ["gh", "label", "create", label, "--repo", TRACKER_REPO,
+             "--color", "0e8a16", "--description", f"Web-dev work item, {wave}"],
+            capture_output=True,
+        )
+
+
+def file_task(title, body, wave, assigned_to=None):
+    """Files one web-dev work item as a `WEB_LABEL`-tagged issue in the same tracker repo
+    bugs use (mtdo-web-dev-split-plan.md §7) -- so M/J see their assignments on the same
+    board they already check for bugs, via the same assign/status controls. Returns the
+    new issue number. `assigned_to` must be a login in PEOPLE or None (unassigned, to be
+    picked up by hand -- there's no auto-triage equivalent for tasks, since balancing
+    "how many tasks" is far less meaningful than balancing bugs by priority)."""
+    _ensure_wave_label(wave)
+    args = [
+        "gh", "issue", "create", "--repo", TRACKER_REPO,
+        "--title", title[:200], "--body", body,
+        "--label", WEB_LABEL, "--label", f"{WAVE_PREFIX}{wave}",
+    ]
+    if assigned_to is not None:
+        if assigned_to not in PEOPLE:
+            raise ValueError(f"assigned_to must be one of {PEOPLE!r}, got {assigned_to!r}")
+        _ensure_assignment_labels()
+        args += ["--label", f"{ASSIGN_PREFIX}{assigned_to}"]
+    url = _run(args)
+    return int(url.rsplit("/", 1)[-1])
 
 
 def _ensure_priority_labels():
@@ -511,7 +576,10 @@ def sync_dashboard_overrides(overrides):
     transient gh error) shouldn't block syncing everything else."""
     if not overrides:
         return
-    issues_by_number = {i["number"]: i for i in list_all()}
+    # Overrides can reference either a bug or a web-task issue -- both share one number
+    # space in the same repo, so a single merged lookup covers whichever kind a given
+    # override key turns out to be without the caller needing to know which.
+    issues_by_number = {i["number"]: i for i in list_all() + list_web_tasks()}
     for key, ov in overrides.items():
         try:
             number = int(key)
