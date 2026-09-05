@@ -37,6 +37,13 @@ would be worse than not having them.
 `mtdo-sandbox dashboard` writes the result to DASHBOARD_PATH; a Claude Code session then
 publishes/updates it as a Claude Artifact from that file so both machines can open the
 same link.
+
+**Web Tasks (added 2026-09-05, see docs/designs/mtdo-web-dev-split-plan.md):** the same
+board also carries web-dev work items, not just bugs -- issues in the same tracker repo
+labeled `bug_sync.WEB_LABEL` instead of `bug_sync.LABEL`, filed via `bug_sync.file_task()`.
+They reuse the exact same assign/status/comment machinery as bugs (a task's "Fixed" means
+"PR merged," not "bug closed"); the only thing that's genuinely different is a `wave:<name>`
+label (`bug_sync.task_wave()`) standing in for a bug's priority.
 """
 import datetime
 import html
@@ -322,6 +329,91 @@ def _render_issue_detail(issue, assigned_to, description, notes, priority=None, 
     </section>"""
 
 
+_WAVE_LABEL_TEXT = {"w0": "W0", "w1": "W1", "w2": "W2", "w3a": "W3a", "w3b": "W3b",
+                     "w4a": "W4a", "w4b": "W4b", "w4c": "W4c", "w5": "W5", "w6": "W6",
+                     "w7": "W7", "wm": "WM", "wp": "WP", "wt": "WT"}
+
+
+def _wave_pill(wave):
+    if not wave:
+        return '<span class="dim">--</span>'
+    return f'<span class="pill pill-wave">{html.escape(_WAVE_LABEL_TEXT.get(wave, wave.upper()))}</span>'
+
+
+def _render_task_row(task, assigned_to, wave, status):
+    """One Web Tasks table row -- same shape as a bug row, with `wave` in place of
+    `priority` and no "found by" column (a task's GitHub-issue author is whoever's `gh`
+    identity ran file_task(), not a meaningful attribution here)."""
+    number = task["number"]
+    title = html.escape(task["title"])
+    age_source = task["closedAt"] if task.get("closedAt") else task["createdAt"]
+    age = _age(age_source)
+    age_days = _age_days(age_source)
+    return f"""
+    <tr data-id="task-row-{number}" data-found-by="" data-kind="task" data-wave="{wave or ''}" data-age-days="{age_days}"
+        data-state="{task['state']}" data-status="{status}">
+      <td>{_render_status_control(number, status, "row")}</td>
+      <td>{_wave_pill(wave)}</td>
+      <td class="bug-title"><a href="#/issue/{number}">{title}</a></td>
+      <td>{_render_assign_control(number, assigned_to, "row")}</td>
+      <td class="dim">{age}</td>
+    </tr>"""
+
+
+def _render_task_detail(task, assigned_to, description, notes, wave, status):
+    """Same structure as _render_issue_detail (git activity, conversation thread all
+    reuse identically -- gh<number> linking and comment sync don't care whether the
+    issue is a bug or a task), with "Wave" in the meta row instead of "Priority" and no
+    "Found by" (see _render_task_row)."""
+    number = task["number"]
+    title = html.escape(task["title"])
+    closed_age = _age(task["closedAt"]) if task.get("closedAt") else None
+
+    activity = _bug_git_activity(number)
+    if activity["branches"] or activity["commits"]:
+        branch_items = "".join(f"<li>branch <code>{html.escape(b)}</code></li>" for b in activity["branches"])
+        commit_items = "".join(
+            f"<li><code>{html.escape(c['sha'])}</code> {html.escape(c['subject'])} "
+            f"<span class=\"dim\">-- {html.escape(c['author'])}, {c['date']}</span></li>"
+            for c in activity["commits"]
+        )
+        git_section = f'<ul class="git-list">{branch_items}{commit_items}</ul>'
+    else:
+        git_section = (
+            f'<p class="dim">None yet -- name a branch or commit message with '
+            f'"gh{number}" to link it here.</p>'
+        )
+
+    comment_items = "".join(
+        f'<p class="comment">'
+        f'{(html.escape(n["author"]) + ": ") if n.get("author") else ""}'
+        f'{html.escape(n.get("text", ""))}</p>'
+        for n in notes
+    )
+
+    return f"""
+    <section class="view issue-detail-view" id="issue-detail-{number}" style="display:none">
+      <button type="button" class="back-to-issues">&larr; Back to Web Tasks</button>
+      <h1>#{number} {title}</h1>
+      <div class="issue-meta">
+        <div><span class="meta-label">Status</span>{_render_status_control(number, status, "detail")}</div>
+        <div><span class="meta-label">Wave</span>{_wave_pill(wave)}</div>
+        <div><span class="meta-label">Assigned to</span>{_render_assign_control(number, assigned_to, "detail")}</div>
+        {f'<div><span class="meta-label">Done</span>{closed_age}</div>' if closed_age else ''}
+      </div>
+      <p class="section-label">Description</p>
+      <div class="issue-body edit-affordance" contenteditable="true" spellcheck="false">{html.escape(description)}</div>
+      <p class="section-label">Related git activity</p>
+      {git_section}
+      <p class="section-label">Conversation</p>
+      <div class="thread" id="thread-{number}" data-id="thread-{number}">{comment_items}</div>
+      <div class="thread-compose edit-affordance" artifact-local>
+        <input type="text" class="thread-input" data-issue="{number}" placeholder="Write a note for the other dev...">
+        <button type="button" class="thread-post" data-issue="{number}">Post</button>
+      </div>
+    </section>"""
+
+
 _SCRIPT = """
 <script>
 (function () {
@@ -389,7 +481,7 @@ _SCRIPT = """
       document.getElementById("view-issues").style.display = "";
       return;
     }
-    var name = (parts[0] === "issues" || parts[0] === "team") ? parts[0] : "dashboard";
+    var name = (parts[0] === "issues" || parts[0] === "team" || parts[0] === "tasks") ? parts[0] : "dashboard";
     document.getElementById("view-" + name).style.display = "";
     var navBtn = document.querySelector('.nav-item[data-route="' + name + '"]');
     if (navBtn) navBtn.classList.add("active");
@@ -406,18 +498,22 @@ _SCRIPT = """
   // ---------- read current row/assignment state straight from the DOM (always live,
   // since assignment lives on the page itself now, not a static snapshot blob) ----------
   function getRowsData() {
-    return Array.prototype.map.call(document.querySelectorAll("#bug-table tbody tr[data-found-by]"), function (row) {
-      var link = row.querySelector(".bug-title a");
-      var control = row.querySelector(".assign-control");
-      return {
-        number: link ? parseInt(link.getAttribute("href").split("/").pop(), 10) : null,
-        title: link ? link.textContent : "",
-        state: row.getAttribute("data-state") || "OPEN",
-        status: row.getAttribute("data-status") || "open",
-        foundBy: row.getAttribute("data-found-by"),
-        assignedTo: control ? (control.getAttribute("data-assigned-to") || "") : "",
-      };
-    });
+    return Array.prototype.map.call(
+      document.querySelectorAll("#bug-table tbody tr[data-found-by], #task-table tbody tr[data-found-by]"),
+      function (row) {
+        var link = row.querySelector(".bug-title a");
+        var control = row.querySelector(".assign-control");
+        return {
+          number: link ? parseInt(link.getAttribute("href").split("/").pop(), 10) : null,
+          title: link ? link.textContent : "",
+          kind: row.getAttribute("data-kind") || "bug",
+          state: row.getAttribute("data-state") || "OPEN",
+          status: row.getAttribute("data-status") || "open",
+          foundBy: row.getAttribute("data-found-by"),
+          assignedTo: control ? (control.getAttribute("data-assigned-to") || "") : "",
+        };
+      }
+    );
   }
 
   // ---------- dashboard view ----------
@@ -444,7 +540,7 @@ _SCRIPT = """
       var li = document.createElement("li");
       var a = document.createElement("a");
       a.href = "#/issue/" + r.number;
-      a.textContent = "#" + r.number + " " + r.title;
+      a.textContent = (r.kind === "task" ? "🛠 " : "") + "#" + r.number + " " + r.title;
       li.appendChild(a);
       list.appendChild(li);
     });
@@ -724,7 +820,8 @@ _SCRIPT = """
 """
 
 
-def render_html(issues, statuses, overrides=None):
+def render_html(issues, statuses, tasks=None, overrides=None):
+    tasks = tasks or []
     overrides = overrides or {}
     open_count = sum(1 for i in issues if i["state"] == "OPEN")
     closed_count = sum(1 for i in issues if i["state"] == "CLOSED")
@@ -768,7 +865,7 @@ def render_html(issues, statuses, overrides=None):
             f'<span class="comment-badge" data-issue="{number}" hidden></span>'
         )
         rows += f"""
-        <tr data-id="row-{number}" data-found-by="{html.escape(found_login)}" data-priority="{priority or ''}" data-age-days="{age_days}"
+        <tr data-id="row-{number}" data-found-by="{html.escape(found_login)}" data-kind="bug" data-priority="{priority or ''}" data-age-days="{age_days}"
             data-state="{issue['state']}" data-status="{status}">
           <td>{_render_status_control(number, status, "row")}</td>
           <td>{priority_cell}</td>
@@ -779,6 +876,19 @@ def render_html(issues, statuses, overrides=None):
         </tr>"""
 
         detail_sections += _render_issue_detail(issue, assigned_to, description, notes, priority, status)
+
+    task_rows = ""
+    task_detail_sections = ""
+    for task in sorted(tasks, key=lambda t: (t["state"] != "OPEN", t["number"] * -1)):
+        number = task["number"]
+        override = overrides.get(number, overrides.get(str(number), {}))
+        assigned_to = override.get("assigned_to", bug_sync.assigned_person(task))
+        description = override.get("description", task.get("body") or "")
+        notes = _render_comment_notes(task)
+        wave = bug_sync.task_wave(task)
+        status = bug_sync.bug_status(task)
+        task_rows += _render_task_row(task, assigned_to, wave, status)
+        task_detail_sections += _render_task_detail(task, assigned_to, description, notes, wave, status)
 
     person_cards = ""
     team_rows = ""
@@ -981,6 +1091,7 @@ def render_html(issues, statuses, overrides=None):
   .pill-priority-high {{ color: var(--danger); background: color-mix(in srgb, var(--danger) 16%, transparent); }}
   .pill-priority-medium {{ color: var(--warn); background: color-mix(in srgb, var(--warn) 16%, transparent); }}
   .pill-priority-low {{ color: var(--text-dim); background: var(--surface-2); }}
+  .pill-wave {{ color: var(--mukund); background: color-mix(in srgb, var(--mukund) 16%, transparent); }}
 
   .velocity-cell {{ display: flex; align-items: center; gap: 10px; min-width: 160px; }}
   .velocity-bar {{ flex: 1; height: 8px; background: var(--surface-2); border-radius: 4px; overflow: hidden; }}
@@ -1083,6 +1194,7 @@ def render_html(issues, statuses, overrides=None):
     <div class="brand">MTDO</div>
     <button class="nav-item" data-route="dashboard">🏠 Dashboard</button>
     <button class="nav-item" data-route="issues">📝 Issues</button>
+    <button class="nav-item" data-route="tasks">🛠 Web Tasks</button>
     <button class="nav-item" data-route="team">👥 Team</button>
     <button class="nav-item" id="open-search">🔍 Search <span class="kbd-hint">⌘K</span></button>
     <div class="sidebar-footer">
@@ -1154,6 +1266,23 @@ def render_html(issues, statuses, overrides=None):
       </div>
     </section>
 
+    <section id="view-tasks" class="view" style="display:none">
+      <h1>Web Tasks</h1>
+      <p class="dim" style="margin:-8px 0 16px">Wave-by-wave build work for the web product
+      (see `docs/designs/mtdo-web-dev-split-plan.md`) -- filed the same way bugs are, on the
+      same board. "Fixed" here means merged to main, not "bug closed."</p>
+      <div class="table-wrap">
+        <table id="task-table">
+          <thead><tr>
+            <th>Status</th><th>Wave</th><th>Task</th><th>Assigned to</th><th>Age</th>
+          </tr></thead>
+          <tbody artifact-local>
+            {task_rows if task_rows else '<tr><td colspan="5" class="empty">No web tasks filed yet.</td></tr>'}
+          </tbody>
+        </table>
+      </div>
+    </section>
+
     <section id="view-team" class="view" style="display:none">
       <h1>Team</h1>
       <div class="table-wrap">
@@ -1164,6 +1293,7 @@ def render_html(issues, statuses, overrides=None):
       </div>
     </section>
     {detail_sections}
+    {task_detail_sections}
 
     <p class="footer">Assigning, editing a description, and posting notes save live to this page and are visible to
     both of you immediately. Found-by/fixed/commit stats and new bugs still come from GitHub -- ask Claude to run
@@ -1214,11 +1344,12 @@ def generate(overrides=None):
         bug_sync.sync_dashboard_overrides(overrides)
         triaged = bug_sync.auto_triage_pending()
         issues = bug_sync.list_all()
+        tasks = bug_sync.list_web_tasks()
         statuses = status_sync.get_all_status()
     except RuntimeError:
         errorlog.log.exception("dashboard.generate(): a gh call failed -- keeping the last-known-good page")
         return DASHBOARD_PATH, None
-    content = render_html(issues, statuses, overrides=overrides)
+    content = render_html(issues, statuses, tasks=tasks, overrides=overrides)
     os.makedirs(os.path.dirname(DASHBOARD_PATH), exist_ok=True)
     with open(DASHBOARD_PATH, "w") as f:
         f.write(content)

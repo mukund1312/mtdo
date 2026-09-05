@@ -9,6 +9,48 @@ Add each session's PROGRESS.md entry to the same branch as the code it describes
 
 ---
 
+## 2026-09-05 (PR pending) -- dev-split plan committed; dashboard now carries web-dev tasks
+
+Not a bug fix -- organizational/tooling work to get two human developers (Mukund on
+backend/Claude Code, Janhwi on frontend/Codex) actually started on mtdo web, following an
+`AskUserQuestion`-clarified planning session (workspace = shared clone + worktrees per dev,
+owner-reviews-own-domain, J waits for M's contract lock, J needs Codex onboarding here).
+
+**Committed `docs/designs/mtdo-web-dev-split-plan.md`**: the ownership split (never-cross
+file table), branch-naming split by initial (`feature/m/...` / `feature/j/...`), the
+per-wave contract-lock-then-canvas-then-build handoff protocol, review authority, and
+model/token sizing per tool -- translates the earlier solo-founder Claude/Codex delivery
+plan (ephemeral, `~/.claude/plans/compressed-humming-sunrise.md`) into a real two-person
+org chart now that Janhwi is doing frontend with Codex specifically, not just Claude
+sub-agents.
+
+**Extended the private bug dashboard (`dashboard.py`/`bug_sync.py`) to also carry web-dev
+work items**, not just bugs, so M/J see their Wave 1 assignments on the same board they
+already check for bugs: web tasks are `mukund1312/mtdo-bugs` issues labeled `web-task`
+(`bug_sync.WEB_LABEL`) instead of `sandbox-bug`, carrying a `wave:<name>` label
+(`bug_sync.task_wave()`) in place of a priority, filed via the new `bug_sync.file_task()`.
+Reused the existing assign/status/comment/git-activity machinery as-is (all of it is
+generic over issue number and doesn't care which label an issue carries) -- only
+`list_all()` needed generalizing (`label=LABEL` param, default unchanged) and
+`sync_dashboard_overrides()` needed its issue lookup merged across both label sets.
+New "🛠 Web Tasks" nav view (`dashboard.py`'s `_render_task_row`/`_render_task_detail`),
+and the home dashboard's "Assigned to me" list now includes tasks alongside bugs
+(prefixed 🛠 to distinguish).
+
+Added `tests/test_bug_sync_web_tasks.py` (list_all/list_web_tasks label handling,
+task_wave, file_task's label-creation/assignment/validation) and
+`tests/test_dashboard_web_tasks.py` (task row/detail rendering, empty state, generate()
+passing tasks through) -- zero prior coverage of either since this is new surface area.
+Full existing suite re-run: 218 passed, 1 skipped, 2 failed -- both failures
+(`test_code_runner_sandbox.py`'s C/C++ sandbox tests) are pre-existing and environmental
+(missing Xcode command line tools on this machine), confirmed unrelated by inspecting the
+failure output (`xcode-select: no developer tools found`), not touched by this change.
+
+Wave 1's concrete task items (docs/designs/mtdo-web-dev-split-plan.md §7) filed on the
+board next, assigned Mukund/Janhwi per that doc.
+
+---
+
 ## 2026-09-03 (PR pending) -- gh58: radio.py checks ffmpeg before spawning mpv, and cleans up mpv if ffmpeg still fails to start
 
 First bug in a new batch of code-audit findings (gh58, gh62, gh64, gh66, gh70),
