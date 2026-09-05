@@ -148,6 +148,14 @@ splitting the work in the first place).
 - If a `gpt-5.4-mini` screen comes back wrong twice, move that screen's brief up to `terra` rather
   than re-prompting the small model repeatedly.
 
+**Session lifecycle (both tools):** one session/worktree per feature-or-PR, closed once that PR is
+**merged** (or its review comments are addressed) — not closed the moment it's pushed. Closing at
+push-time means the next thing that touches that PR (a review comment, a CI failure) has to spin up
+a fresh session that re-derives context just to make a small fix, which costs more than finishing
+the thread would have. This is cheap to do between *features* specifically because of the
+docs-on-disk rule above — the next session reads `DESIGN.md`/`docs/architecture/` instead of
+needing your chat history, so closing there is free. Closing mid-review is not free.
+
 ---
 
 ## 6. J's Codex onboarding (do this before assigning a real wave)
@@ -190,6 +198,41 @@ Wave 1's concrete items (already filed, see the board):
 2. Today screen.
 3. Session screen (highest-craft piece — triggers EmberMorph per M's contract).
 4. Progress heatmap + Record Card export.
+
+---
+
+## 8. Environment & accounts — M sets these up once
+
+Four external accounts, all mapped 1:1 to `web/.env.example` (verified against the real file, not
+assumed). **M owns every credential here** — none are J's to create or hold. J gets only the safe
+subset (see below).
+
+| Service | For | Account | Env var(s) |
+|---|---|---|---|
+| Supabase | DB + auth | supabase.com (GitHub login is fine) | `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY` |
+| Vercel | Hosting/deploy | vercel.com, the same GitHub account that owns `mukund1312/mtdo` | set in the Vercel project, not `.env.local` |
+| Sentry | Error tracking | sentry.io, new project, platform = Next.js | `NEXT_PUBLIC_SENTRY_DSN` |
+| PostHog | Analytics | posthog.com | `NEXT_PUBLIC_POSTHOG_KEY`, `NEXT_PUBLIC_POSTHOG_HOST` |
+| Anthropic (not one of the "4," but required) | AI plan-generation Route Handler (`api.md` §2) | console.anthropic.com — a **Console API key**, not a Claude.ai/Claude Code login | `ANTHROPIC_API_KEY` |
+
+Steps, in order:
+
+1. **Supabase**: new project, pick a region, set and save a strong DB password (needed later for
+   direct `psql`/CLI access). Project Settings → API → copy the Project URL and anon public key.
+   **Do not apply migrations via the SQL editor** — paste-and-run skips migration history tracking.
+   Apply them via the Supabase CLI instead, once the project exists.
+2. **Vercel**: Import Project → select `mtdo` → **set Root Directory to `web`**, not the repo root.
+   This is the one step that's easy to get wrong in this monorepo — skipping it makes Vercel try to
+   build the Python app. The framework preset should then auto-detect as Next.js.
+3. **Sentry**: new project, platform Next.js, copy the DSN.
+4. **PostHog**: new project, copy the Project API Key, note whether it's `app.posthog.com` or
+   `eu.posthog.com`.
+5. **Anthropic**: a real Console API key, not a personal login.
+
+**What J needs vs. what stays M-only:** J's local `web/.env.local` needs the `NEXT_PUBLIC_*` values
+only (Supabase URL/anon key, Sentry DSN, PostHog key/host) — safe to hand her directly, since
+they're meant to ship to the browser. `ANTHROPIC_API_KEY` never leaves M's machine or Vercel's
+project settings; it's read only inside the server-side Route Handler M owns.
 
 ---
 
