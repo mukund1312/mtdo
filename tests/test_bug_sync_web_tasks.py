@@ -52,17 +52,22 @@ def test_task_wave_none_when_no_wave_label():
     assert bug_sync.task_wave({"labels": [{"name": "web-task"}]}) is None
 
 
-def test_file_task_creates_the_missing_wave_label_and_returns_the_issue_number():
+def test_file_task_creates_both_the_missing_web_label_and_wave_label():
+    """Regression: `gh issue create --label web-task` fails outright with "could not
+    add label: 'web-task' not found" if the label doesn't already exist in the repo --
+    caught live when seeding the real Wave 1 board, since the mocked tests below only
+    ever exercised the wave label's own on-demand creation, not WEB_LABEL's."""
     with patch("mtdo.bug_sync._run", side_effect=_run_side_effect()), \
          patch("mtdo.bug_sync.subprocess.run") as mock_subrun:
         number = bug_sync.file_task("Build the Today screen", "body text", wave="w1")
     assert number == 501
-    mock_subrun.assert_called_once()
-    assert "wave:w1" in mock_subrun.call_args[0][0]
+    created = [c[0][0] for c in mock_subrun.call_args_list]
+    assert any(bug_sync.WEB_LABEL in args for args in created)
+    assert any("wave:w1" in args for args in created)
 
 
-def test_file_task_does_not_recreate_an_existing_wave_label():
-    with patch("mtdo.bug_sync._run", side_effect=_run_side_effect(existing_labels=["wave:w1"])), \
+def test_file_task_does_not_recreate_labels_that_already_exist():
+    with patch("mtdo.bug_sync._run", side_effect=_run_side_effect(existing_labels=[bug_sync.WEB_LABEL, "wave:w1"])), \
          patch("mtdo.bug_sync.subprocess.run") as mock_subrun:
         bug_sync.file_task("Build the Today screen", "body text", wave="w1")
     mock_subrun.assert_not_called()

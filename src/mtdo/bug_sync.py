@@ -232,6 +232,23 @@ def task_wave(issue):
     return None
 
 
+def _ensure_web_label():
+    """Creates the WEB_LABEL itself on demand -- `gh issue create --label <name>`
+    fails outright if the label doesn't already exist in the repo (confirmed live:
+    "could not add label: 'web-task' not found"), so this must run before the first
+    ever web task is filed, the same way _ensure_priority_labels/_ensure_assignment_labels
+    already do for their own labels."""
+    existing = set(_run([
+        "gh", "label", "list", "--repo", TRACKER_REPO, "--json", "name", "-q", ".[].name",
+    ]).splitlines())
+    if WEB_LABEL not in existing:
+        subprocess.run(
+            ["gh", "label", "create", WEB_LABEL, "--repo", TRACKER_REPO,
+             "--color", "1d76db", "--description", "Web-dev work item -- see docs/designs/mtdo-web-dev-split-plan.md"],
+            capture_output=True,
+        )
+
+
 def _ensure_wave_label(wave):
     """Creates the `wave:<wave>` label on demand if it doesn't exist yet -- waves aren't a
     fixed enum like PRIORITIES, so (unlike _ensure_priority_labels) this checks/creates
@@ -255,6 +272,7 @@ def file_task(title, body, wave, assigned_to=None):
     new issue number. `assigned_to` must be a login in PEOPLE or None (unassigned, to be
     picked up by hand -- there's no auto-triage equivalent for tasks, since balancing
     "how many tasks" is far less meaningful than balancing bugs by priority)."""
+    _ensure_web_label()
     _ensure_wave_label(wave)
     args = [
         "gh", "issue", "create", "--repo", TRACKER_REPO,
