@@ -110,6 +110,52 @@ for that category — this is the concrete mapping schema.md §2 left implicit.
 work against an already-decided shape; Opus is reserved for schema/RLS/session-authority/tutor-
 retrieval design, which this task wasn't).
 
+## 2c. Event instrumentation wiring status (Wave 2, `web/lib/analytics/record-event.ts`)
+
+`record_event()` (schema.md §4) existed from W0 with no client call sites. This wave wired the
+ones with a real trigger point in the app as it exists today and deliberately left the rest
+unwired rather than fabricating a UI moment for them.
+
+**Wired:**
+
+| `kind` | Call site | Note |
+|---|---|---|
+| `screen_opened` | `web/app/session/page.tsx`, on mount (`useEffect`, empty deps) | `payload: { screen: "session" }`. Only the session screen — no other real screen exists in M's scope; `(marketing)/page.tsx` is J-owned UI (split-plan §1) and wasn't touched. If J wants marketing-page `screen_opened`, that's J calling `recordEvent()` from `lib/analytics/record-event.ts` directly, not a new RPC or schema change. |
+| `plan_generated` | `web/app/api/onboarding/plan/route.ts`, right after `persistGeneratedPlan()` resolves (both the primary path and the fallback-after-persist-failure path) | Fired once, after persistence succeeds, not before — a persist failure that falls through to fallback doesn't double-count. |
+
+**Decided: `goal_created` is not fired alongside `plan_generated`.** Onboarding creates exactly
+one plan at exactly one moment; firing both kinds there would be two names for the identical
+fact, which is the divergent-second-source-of-truth problem §4 rule 1 already warns about.
+`goal_created` stays reserved for a future flow that creates/edits a goal without going through
+AI plan generation (e.g. a manual goal editor, if one is ever built) — wire it there, not here.
+
+**Decided: `focus_mode_toggled` is not wired.** `web/app/session/page.tsx` has no independent
+"focus mode" toggle — its `phase` state (`ready → starting → active → exiting`) is exactly the
+session lifecycle already captured by the server-minted `session_started`/`session_completed`/
+`session_abandoned` events. Firing `focus_mode_toggled` at the same transitions would be a
+client-side duplicate of facts the server already records authoritatively, not a genuinely new
+fact (§4 rule 1). This differs from the terminal app's `analytics.record("focus_mode_toggled", …)`
+(`src/mtdo/app.py`), which toggles a UI panel layout independent of any Pomodoro session — the web
+product has no equivalent independent toggle yet. Revisit if/when the web UI grows a Focus-Mode-
+as-a-layout-setting distinct from an active session.
+
+**Left unwired — no UI trigger exists yet, do not fabricate one:** `signup`, `task_completed`,
+`task_regressed`, `proof_submitted`, `note_created`, `paywall_viewed`. There is no kanban board,
+notes UI, proof-submission flow, upgrade/signup-conversion UI, or paywall surface built yet. All
+six stay in `ClientEventKind` (`web/lib/analytics/record-event.ts`) so the type is still the
+single source of truth for what `record_event()` accepts, but have zero call sites. Wire each one
+from the screen that actually emits it, when that screen exists — don't retrofit a trigger into
+an unrelated component just to close this list out.
+
+`session_started`/`session_completed`/`session_abandoned` need no client wiring — they're minted
+server-side inside `start_session()`/`complete_session()`/`abandon_session()` (schema.md §5),
+already called from `web/app/session/page.tsx`.
+
+**Numbering note:** this section is `2c`, not `2b`, because a concurrent session was landing a
+`2b` (feedback widget) in this same working tree at the same time this section was written — see
+PROGRESS.md's 2026-09-06 "event instrumentation wiring" entry. Whichever PR merges second should
+renumber on rebase if the gap looks wrong once both have landed.
+
 ## 3. How the app talks to the database
 
 Most tables are read and written directly with the anon-key client under RLS. **Five are not**

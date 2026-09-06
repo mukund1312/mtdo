@@ -32,6 +32,7 @@ import { parseGeneratedPlan } from "@/lib/plan-generation/parse";
 import { buildFallbackPlan } from "@/lib/plan-generation/fallback";
 import { persistGeneratedPlan } from "@/lib/plan-generation/persist";
 import { PlanGenerationError, type OnboardingAnswers } from "@/lib/plan-generation/types";
+import { recordEvent } from "@/lib/analytics/record-event";
 
 // This route calls an external streaming API and writes to Postgres -- give
 // it real headroom rather than the platform default.
@@ -156,6 +157,21 @@ export async function POST(request: Request) {
 
       try {
         const persisted = await persistGeneratedPlan(supabase, user.id, plan);
+        // plan_generated (schema.md §4): fired once, right after the plan
+        // that's actually going to be shown to the user is durably persisted
+        // -- not before, so a persist failure that falls through to the
+        // catch block below doesn't double-count. goal_created is
+        // deliberately NOT also fired here: onboarding creates exactly one
+        // plan per user at this moment, so goal_created and plan_generated
+        // would be two names for the identical fact (schema.md §4 rule 1 --
+        // don't create a second, divergeable source of truth). goal_created
+        // is reserved for a future distinct "add/create a goal" flow that
+        // isn't AI plan generation (e.g. a manual goal editor); wire it there
+        // instead of here when that flow exists.
+        void recordEvent(supabase, "plan_generated", {
+          usedFallback,
+          categoryCount: persisted.categories.length,
+        });
         controller.enqueue(
           ndjson({
             type: "done",
@@ -172,6 +188,10 @@ export async function POST(request: Request) {
           try {
             const fallbackPlan = buildFallbackPlan(answers);
             const persisted = await persistGeneratedPlan(supabase, user.id, fallbackPlan);
+            void recordEvent(supabase, "plan_generated", {
+              usedFallback: true,
+              categoryCount: persisted.categories.length,
+            });
             controller.enqueue(
               ndjson({ type: "done", usedFallback: true, plan: persisted }),
             );

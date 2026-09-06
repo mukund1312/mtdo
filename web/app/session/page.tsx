@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { EmberMorph, type EmberMorphTrigger } from "@/components/EmberMorph";
 import { createClient } from "@/lib/supabase/client";
+import { recordEvent } from "@/lib/analytics/record-event";
 import styles from "./session.module.css";
 
 type FocusSession = {
@@ -65,6 +66,14 @@ export default function SessionPage() {
     setElapsedS(secondsSince(running.started_at));
     setPhase("active");
     setNotice(null);
+  }, []);
+
+  // screen_opened (schema.md §4): one row per real mount, not per render --
+  // note the empty dependency array is deliberate. This is a fire-and-forget
+  // ledger append; recordEvent() already swallows its own errors so this
+  // effect body never needs to.
+  useEffect(() => {
+    void recordEvent(createClient(), "screen_opened", { screen: "session" });
   }, []);
 
   // A tab can close mid-session. Restore that server-authoritative row instead
