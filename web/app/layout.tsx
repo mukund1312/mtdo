@@ -1,4 +1,5 @@
 import type { Metadata, Viewport } from "next";
+import { FeedbackWidget } from "@/components/FeedbackWidget";
 import "./styles/tokens.css";
 import "./globals.css";
 
@@ -42,7 +43,10 @@ export default function RootLayout({
           }}
         />
       </head>
-      <body>{children}</body>
+      <body>
+        {children}
+        <FeedbackWidget />
+      </body>
     </html>
   );
 }
