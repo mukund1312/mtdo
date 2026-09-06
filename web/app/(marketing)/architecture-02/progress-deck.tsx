@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { createClient } from "@/lib/supabase/client";
 
@@ -104,17 +104,53 @@ export function ProgressDeck() {
 
 function RecordCard({ rollups, totals, onClose }: { rollups: DailyRollup[]; totals: { blocks: number; focusSeconds: number; sessions: number }; onClose: () => void }) {
   const activeDays = rollups.filter((rollup) => rollup.focus_seconds > 0 || rollup.blocks_done > 0).length;
+  const cardRef = useRef<HTMLElement>(null);
+  const [exportState, setExportState] = useState<"idle" | "exporting" | "error">("idle");
+
+  // DESIGN.md's Record Card spec: "milestone artifact at 1080x1920, sized to
+  // screenshot into a WhatsApp status or Instagram story uncropped." The
+  // on-screen card is already `aspect-ratio: 9/16` (product-deck.css) for
+  // exactly this reason -- toPng's `pixelRatio` scales that same node up to
+  // real 1080x1920 output instead of needing a separate hidden export
+  // template. Deliberately does not touch daily_rollups or any backend
+  // state; this is a pure client-side render-to-image of what's already on
+  // screen.
+  const exportAsImage = useCallback(async () => {
+    if (!cardRef.current || exportState === "exporting") return;
+    setExportState("exporting");
+    try {
+      const { toPng } = await import("html-to-image");
+      const node = cardRef.current;
+      const scale = 1080 / node.offsetWidth;
+      const dataUrl = await toPng(node, {
+        pixelRatio: scale,
+        backgroundColor: "#101534",
+      });
+      const link = document.createElement("a");
+      link.href = dataUrl;
+      link.download = "mtdo-record-card.png";
+      link.click();
+      setExportState("idle");
+    } catch (err) {
+      console.error("[record-card] export failed:", err);
+      setExportState("error");
+    }
+  }, [exportState]);
+
   return <section className="a02-record-overlay" role="dialog" aria-modal="true" aria-labelledby="record-card-title">
     <div className="a02-record-dialog">
       <button className="a02-lens-close" type="button" onClick={onClose}>ESC / close ×</button>
-      <article className="a02-record-card">
+      <article className="a02-record-card" ref={cardRef}>
         <span>MTDO / PERSONAL RECORD</span>
         <h2 id="record-card-title">The work<br /><em>is real.</em></h2>
         <p>A six-week record assembled from settled sessions and completed blocks.</p>
         <dl><div><dt>FOCUS TIME</dt><dd>{formatDuration(totals.focusSeconds)}</dd></div><div><dt>SESSIONS</dt><dd>{totals.sessions}</dd></div><div><dt>ACTIVE DAYS</dt><dd>{activeDays}</dd></div><div><dt>BLOCKS DONE</dt><dd>{totals.blocks}</dd></div></dl>
         <footer>MTDO / SIGNAL DECK / UTC RECORD</footer>
       </article>
-      <p className="a02-record-export-note">Export is not enabled yet—the format has not been decided.</p>
+      <button className="a02-record-export-btn" type="button" onClick={() => void exportAsImage()} disabled={exportState === "exporting"}>
+        {exportState === "exporting" ? "Rendering…" : "Download as image ↓"}
+      </button>
+      {exportState === "error" && <p className="a02-record-export-note">Could not render the image. Try again, or screenshot the card above.</p>}
     </div>
   </section>;
 }

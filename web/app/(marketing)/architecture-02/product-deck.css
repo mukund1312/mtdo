@@ -29,6 +29,9 @@
 .a02-record-card dd { margin:6px 0 0; font:900 25px/.9 "Archivo Black",sans-serif; letter-spacing:-.08em; }
 .a02-record-card footer { color:var(--dim); }
 .a02-record-export-note { margin:15px 0 0; color:var(--dim); font-size:10px; text-align:center; }
+.a02-record-export-btn { display:block; width:100%; margin:15px 0 0; padding:11px; border:1px solid var(--aqua); border-radius:999px; background:transparent; color:var(--aqua); font:10px "DM Mono",monospace; letter-spacing:.08em; text-transform:uppercase; cursor:pointer; }
+.a02-record-export-btn:hover,.a02-record-export-btn:focus-visible { color:var(--acid); border-color:var(--acid); outline:none; }
+.a02-record-export-btn:disabled { opacity:.5; cursor:progress; }
 @keyframes a02-product-shimmer { to { background-position:-200% 0; } }
 @media(max-width:900px){.a02-board--today{grid-template-columns:repeat(3,minmax(220px,1fr));overflow-x:auto;padding-bottom:4px}.a02-today-lane{min-height:280px}.a02-record-dialog{max-height:calc(100dvh - 38px);overflow:auto}.a02-record-card{min-height:unset}}
 @media(max-width:560px){.a02-board--today{grid-template-columns:repeat(3,minmax(190px,1fr));margin-top:38px}.a02-today-lane{display:block!important}.a02-record-overlay{padding:14px}.a02-record-dialog{padding:40px 14px 14px}.a02-record-card{min-height:490px}}
