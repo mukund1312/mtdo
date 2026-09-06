@@ -95,13 +95,83 @@ Notes for call sites:
 shell`). The engineering contract on top of that:
 
 - **Ships as a standalone component**, not logic inlined into the session route:
-  `<EmberMorph trigger={...} />` (exact prop shape decided by the W1 implementer, but it must be
-  importable and triggerable from outside the session page).
+  `<EmberMorph trigger={...} />`, importable and triggerable from outside the session page.
 - **Why this matters beyond W1:** the marketing site (`WM`, see the delivery plan) reuses this
   exact component for its web↔terminal showcase, rather than building a second, separately
   maintained transition. WM's showcase section is blocked until this component exists.
 - Respects `prefers-reduced-motion` internally — collapses to an instant state change, never a
   blank screen. Callers should not need to handle this themselves.
+
+### 4.1 Trigger prop shape — locked
+
+The hard constraint driving this shape: the marketing showcase must be able to play the exact
+same component with **no session, no auth, and no Supabase import inside EmberMorph at all**.
+So EmberMorph takes plain values, never a `focus_sessions` row, never a Supabase client, and
+never calls `start_session`/`complete_session`/`abandon_session` itself — the caller (Session
+screen or marketing page) owns the RPC calls and the client-side elapsed clock, and just feeds
+EmberMorph the result each tick.
+
+```ts
+type EmberMorphTrigger =
+  | { phase: "idle" }
+  | {
+      phase: "active";
+      sessionId: string;                    // opaque; stable across ticks, changes only on a
+                                             // genuinely new session (real or demo)
+      plannedDurationS: number;             // > 0; mirrors focus_sessions.planned_duration_s
+      elapsedS: number;                     // caller ticks this (e.g. setInterval); EmberMorph
+                                             // runs no clock of its own and never derives this
+                                             // from started_at/now() itself
+      originRect: DOMRectReadOnly | null;   // bloom's expand-from point — the rect of the
+                                             // "start" control that was clicked; null falls
+                                             // back to viewport center
+    }
+  | {
+      // set by the caller when the user ends the session (complete or abandon); EmberMorph
+      // plays the faster reverse-bloom and then fires onExitComplete — it does not decide
+      // when a session ends
+      phase: "exiting";
+      sessionId: string;
+      plannedDurationS: number;
+      elapsedS: number;
+    };
+
+interface EmberMorphProps {
+  trigger: EmberMorphTrigger;
+  /** Rendered inside the settled terminal focus shell: task context, pause/complete/abandon
+   *  controls, whatever the caller wants alongside the timer. The real Session screen wires
+   *  these to the session RPCs; the marketing showcase wires them to no-ops or fake state.
+   *  EmberMorph itself only renders the shell chrome and the timer readout computed from
+   *  elapsedS/plannedDurationS — it never reaches into `focus_sessions` or any RPC. */
+  children?: React.ReactNode;
+  /** Fires once the reverse-bloom finishes settling back on the `idle` visual. This is the
+   *  caller's cue to unmount/navigate away — without it there's no way to know the "coming up"
+   *  exit animation (DESIGN.md §Motion) has actually finished versus been cut short. */
+  onExitComplete?: () => void;
+  className?: string;
+}
+```
+
+- **`sessionId` is a key, not a lookup.** EmberMorph never fetches anything by it. Its only job
+  is telling EmberMorph "this is still the same session" across re-renders (so an `elapsedS`
+  tick doesn't replay the entrance bloom) versus "a new session started" (so it should). The
+  marketing showcase can pass any stable string, e.g. `"demo"`.
+- **`elapsedS` is caller-owned and caller-ticked.** Session screen derives it from the real
+  session's `started_at` (server-stamped, per §3) on its own interval; the showcase can just
+  increment a `useState` counter. EmberMorph only ever reads it to compute the timer readout and
+  progress ring — it does not validate it against `plannedDurationS` or treat overrun specially
+  beyond display (no session-authority logic belongs in a presentational component).
+- **`originRect` is what makes the bloom "expand from the timer's origin point"** (DESIGN.md).
+  Callers get it from the triggering control via `element.getBoundingClientRect()` at click time
+  and pass a snapshot, not a live ref — EmberMorph must not depend on the trigger element still
+  existing after the page it lived on unmounts.
+- **Entering vs. exiting is a `phase` transition, not a boolean.** A `boolean isOpen` prop would
+  force the caller to also track "is a reverse animation currently playing," which is exactly the
+  state `onExitComplete` exists to make unnecessary — the caller sets `phase: "exiting"` once, and
+  waits for the callback rather than guessing a duration.
+- **No `prefers-reduced-motion` prop.** It's a media query EmberMorph checks internally
+  (matches the `.rv`/`prefers-reduced-motion` handling already in `tokens.css`); exposing it as a
+  prop would let a caller accidentally override an accessibility requirement.
 
 ## 5. Dual vocabulary — presentation layer only
 
