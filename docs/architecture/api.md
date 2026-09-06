@@ -226,8 +226,17 @@ Notes for call sites:
 - **Retiring a goal is `update plans set is_active = false`.** There is no delete path;
   `.delete()` on `plans` or `plan_categories` silently affects zero rows (RLS makes them
   invisible to the DELETE), which is a confusing thing to debug if you expected an error.
-- **Generated types** (`web/lib/supabase/`) should be regenerated after any migration change so
-  the RPC signatures above are typed rather than stringly-called.
+- **Generated types** (`web/lib/supabase/database.types.ts`, wired into `client.ts`/`server.ts`
+  via `createBrowserClient<Database>`/`createServerClient<Database>`) exist now — regenerate with
+  `supabase gen types typescript --linked > web/lib/supabase/database.types.ts` after any migration
+  change. It's a plain generated file, not committed-then-diffed by hand — just overwrite it.
+- **A generated RPC arg is marked optional (`?:`) whenever its SQL parameter has a `DEFAULT`, but
+  the generator does not union the type with `null`, even when the function body genuinely accepts
+  a null value for that argument** (e.g. `start_session`'s `p_block_id`, migrations/0004). Passing
+  `{ p_block_id: null }` explicitly will not typecheck. The fix is at the call site, not the
+  generated file: omit the key entirely rather than passing `null` — hitting the SQL `DEFAULT` this
+  way is runtime-identical to passing `null` explicitly (see `web/app/session/page.tsx`'s
+  `startSession`).
 
 ## 4. The EmberMorph component contract
 

@@ -1,4 +1,5 @@
 import { createBrowserClient } from "@supabase/ssr";
+import type { Database } from "./database.types";
 
 // Browser-side Supabase client. Anonymous auth (docs/architecture/schema.md
 // §6) is initiated from a call site that needs a session, not here — this
@@ -8,8 +9,13 @@ import { createBrowserClient } from "@supabase/ssr";
 // those tables are select-only to clients by design. Use the RPCs listed in
 // docs/architecture/api.md §3 (start_session, complete_session,
 // abandon_session, record_event, tutor_context).
+//
+// Typed against database.types.ts (generated via `supabase gen types
+// typescript --linked` -- see that file's own header for the regenerate
+// command). Every .from("...")/.rpc("...") call site now gets real
+// autocomplete and a compile error on a typo'd table/column/RPC name.
 export function createClient() {
-  return createBrowserClient(
+  return createBrowserClient<Database>(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
   );
