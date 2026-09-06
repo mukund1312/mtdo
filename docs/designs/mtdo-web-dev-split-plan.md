@@ -123,6 +123,19 @@ Codex diff touching a file M also touches shouldn't happen per the ownership tab
 that doesn't depend on M reading J's Codex output line-by-line (which defeats the point of
 splitting the work in the first place).
 
+**Addendum, 2026-09-06 (Theme Studio incident):** the rule above ("spot-check rather than gate")
+correctly describes reviewing PRs that map to an assigned ticket. It didn't cover the failure mode
+that actually happened: `feat/theme-studio` (PR #104) — five alternate visual directions plus a
+prototype checkout, none tracing to a tracker issue, a design canvas, or `DESIGN.md` — merged with
+no `/code-review` run and no evidence either owner looked at it before merge. Spot-checking assumes
+the work is expected; it doesn't catch work nobody asked for.
+
+Concrete fix, not just a restated intention: **a PR with no corresponding open (or recently closed)
+`web-task` tracker issue is flagged for the other owner's review before merge, not spot-checked
+after.** "Before merge" here means a comment or message, not blocking CI — the point is a second
+set of eyes sees unscoped work *before* it's live, not that a machine enforces it. A PR that does
+map to a ticket keeps working exactly as this section already describes.
+
 ---
 
 ## 5. Token/AI-usage discipline, per tool
