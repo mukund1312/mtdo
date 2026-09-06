@@ -11,6 +11,19 @@
 // three. If categories or curriculum_items fail after the plan row exists,
 // the caller (route.ts) must not leave that plan marked is_active: true --
 // see markPlanInactive below, called from route.ts's catch block.
+//
+// Concurrency note (gh90): the new plan is inserted as is_active: false and
+// only flipped to true at the very end, after deactivating every *other*
+// plan (excluding this row's own id). An earlier version deactivated the
+// old active plan up front, before inserting the new one -- which meant a
+// second, concurrent request's "deactivate the active plan" step could match
+// the *first* request's just-inserted, already-active plan instead of a
+// genuinely old one, silently deactivating a plan that request had already
+// reported success for. Inserting inactive first means this row can never
+// be an accidental target of a sibling request's deactivate step; the two
+// requests' final activate calls then race against the plans_one_active
+// unique index instead, so the loser gets an explicit, catchable conflict
+// rather than a plan that goes inactive without anyone being told.
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { GeneratedPlan } from "./types";
@@ -28,31 +41,25 @@ export interface PersistedPlanSummary {
   categories: PersistedCategorySummary[];
 }
 
-/** Deactivates any existing active plan (plans_one_active, schema.md §2), then
- * inserts the new plan + its categories + curriculum items. Throws on any
- * write failure -- callers must catch and either fall back or surface an
- * error; never assume partial success is usable. */
+/** Inserts the new plan (inactive) + its categories + curriculum items, then
+ * deactivates every other plan and activates this one (plans_one_active,
+ * schema.md §2) -- see the concurrency note above for why in that order.
+ * Throws on any write failure -- callers must catch and either fall back or
+ * surface an error; never assume partial success is usable. */
 export async function persistGeneratedPlan(
   supabase: SupabaseClient,
   userId: string,
   plan: GeneratedPlan,
 ): Promise<PersistedPlanSummary> {
-  const { error: deactivateError } = await supabase
-    .from("plans")
-    .update({ is_active: false })
-    .eq("user_id", userId)
-    .eq("is_active", true);
-  if (deactivateError) {
-    throw new Error(`Failed to deactivate the previous plan: ${deactivateError.message}`);
-  }
-
+  // Inserted inactive on purpose -- see the concurrency note above. Nothing
+  // else can mistake this row for "the" active plan until we say so below.
   const { data: planRow, error: planError } = await supabase
     .from("plans")
     .insert({
       user_id: userId,
       app_name: plan.app_name,
       goal_line: plan.goal_line,
-      is_active: true,
+      is_active: false,
     })
     .select("id")
     .single();
@@ -136,6 +143,35 @@ export async function persistGeneratedPlan(
       if (itemsError) {
         throw new Error(`Failed to insert curriculum_items: ${itemsError.message}`);
       }
+    }
+
+    // Deactivate every *other* plan for this user (never this row -- it
+    // can't be "the previous plan" to itself), then activate this one. The
+    // `.neq` is what makes this safe against a concurrent request's own
+    // insert: that request's plan is also inactive until its own activate
+    // step runs, so it can never be caught by this deactivate.
+    const { error: deactivateError } = await supabase
+      .from("plans")
+      .update({ is_active: false })
+      .eq("user_id", userId)
+      .eq("is_active", true)
+      .neq("id", planId);
+    if (deactivateError) {
+      throw new Error(`Failed to deactivate the previous plan: ${deactivateError.message}`);
+    }
+
+    const { error: activateError } = await supabase
+      .from("plans")
+      .update({ is_active: true })
+      .eq("id", planId);
+    if (activateError) {
+      // A concurrent request's activate step won the race first --
+      // plans_one_active (schema.md §2) now points at their plan, not ours.
+      // Surface this as an explicit, retryable failure instead of leaving
+      // two callers who both believe they created "the" active plan.
+      throw new Error(
+        `Another plan was activated concurrently for this account: ${activateError.message}`,
+      );
     }
 
     return {
