@@ -208,7 +208,7 @@ policy or a grant. `schema.md` §6 has the full privilege table.
 
 | Instead of | Call |
 |---|---|
-| `from('focus_sessions').insert(...)` | `rpc('start_session', { p_block_id, p_planned_duration_s })` |
+| `from('focus_sessions').insert(...)` | `rpc('start_session', { p_planned_duration_s })` — omit `p_block_id` entirely for an unscheduled session; see §3's note below on why passing `null` there won't typecheck |
 | `from('focus_sessions').update({ state: 'completed' })` | `rpc('complete_session', { p_id })` |
 | `from('focus_sessions').update({ state: 'abandoned' })` | `rpc('abandon_session', { p_id })` |
 | `from('activity_events').insert({ kind, occurred_at, payload })` | `rpc('record_event', { p_kind, p_payload })` |
@@ -236,8 +236,27 @@ Notes for call sites:
 - **Retiring a goal is `update plans set is_active = false`.** There is no delete path;
   `.delete()` on `plans` or `plan_categories` silently affects zero rows (RLS makes them
   invisible to the DELETE), which is a confusing thing to debug if you expected an error.
-- **Generated types** (`web/lib/supabase/`) should be regenerated after any migration change so
-  the RPC signatures above are typed rather than stringly-called.
+- **Generated types** (`web/lib/supabase/database.types.ts`, wired into `client.ts`/`server.ts`
+  via `createBrowserClient<Database>`/`createServerClient<Database>`) exist now — regenerate with
+  `supabase gen types typescript --linked > web/lib/supabase/database.types.ts` after any migration
+  change. It's a plain generated file, not committed-then-diffed by hand — just overwrite it.
+- **A generated RPC arg is marked optional (`?:`) whenever its SQL parameter has a `DEFAULT`, but
+  the generator does not union the type with `null`, even when the function body genuinely accepts
+  a null value for that argument** (e.g. `start_session`'s `p_block_id`, migrations/0004). Passing
+  `{ p_block_id: null }` explicitly will not typecheck. The fix is at the call site, not the
+  generated file: omit the key entirely rather than passing `null` — hitting the SQL `DEFAULT` this
+  way is runtime-identical to passing `null` explicitly (see `web/app/session/page.tsx`'s
+  `startSession`).
+- **The reverse gotcha, same root cause:** `start_session`'s `p_planned_duration_s` is a genuinely
+  *required* argument (the function's first check rejects a null one with a `22023` error) but is
+  typed `p_planned_duration_s?: number` — optional — anyway, because Postgres only allows `DEFAULT`
+  on trailing parameters, and `p_block_id` (which needs one) comes first, so `p_planned_duration_s`
+  got a `default null` it doesn't semantically want just to satisfy that ordering rule
+  (`migrations/0004`). TypeScript will not catch a call site that omits `p_planned_duration_s` — a
+  `22023` at runtime is the only thing that will. There is no generated-types fix for this; it's a
+  gap between "has a SQL default" and "is optional in practice" that the generator can't see past.
+  Always pass it explicitly, and don't trust `?:` on an RPC arg as "safe to omit" without checking
+  the actual function body first.
 
 ## 4. The EmberMorph component contract
 
