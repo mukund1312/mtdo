@@ -11,6 +11,22 @@
 // three. If categories or curriculum_items fail after the plan row exists,
 // the caller (route.ts) must not leave that plan marked is_active: true --
 // see markPlanInactive below, called from route.ts's catch block.
+//
+// KNOWN LIMITATION, NOT FIXED HERE (gh90): two concurrent
+// POST /api/onboarding/plan calls for the same user can race on which plan
+// ends up active. Whichever request's deactivate-the-previous-plan step
+// runs last can silently deactivate the OTHER request's plan, even after
+// that request already returned a success response referencing it -- no
+// combination of `.neq(id, ...)` scoping on separate `.update()` calls
+// closes this, since each call is its own PostgREST round trip/transaction;
+// a genuine fix needs the whole deactivate+activate sequence serialized per
+// user (e.g. a security-definer RPC holding `pg_advisory_xact_lock` for the
+// duration), which is a real architecture change to how these three tables
+// are written (they were deliberately kept RPC-free -- schema.md §6).
+// Deferred: no concurrent real users exist yet to trigger it. Do not
+// "fix" this with another ad hoc `.update()` reordering -- a prior attempt
+// (PR #95) did exactly that and moved the race without closing it; verified
+// by tracing the actual interleaving, not assumed.
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { GeneratedPlan } from "./types";
