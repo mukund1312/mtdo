@@ -12,6 +12,7 @@ type FocusSession = {
 };
 
 type SessionPhase = "ready" | "starting" | "active" | "exiting";
+type NoticeKind = "success" | "warning";
 
 const DEFAULT_DURATION_S = 50 * 60;
 const TASK = {
@@ -24,9 +25,19 @@ function secondsSince(startedAt: string) {
   return Math.max(0, Math.floor((Date.now() - new Date(startedAt).getTime()) / 1000));
 }
 
-function messageFrom(error: { message?: string } | null) {
+// PostgREST puts the SQLSTATE in `error.code`, not in the message text -- the
+// migration's actual RAISE message ("start_session: a session is already
+// running") contains no digits, so a message-only "55006" check can never
+// match and silently relies on the substring fallback alone. Checked first
+// here; the substring check stays only as a defensive fallback.
+function isAlreadyRunningError(error: { code?: string; message?: string } | null) {
+  if (!error) return false;
+  return error.code === "55006" || (error.message?.includes("already running") ?? false);
+}
+
+function messageFrom(error: { code?: string; message?: string } | null) {
   if (!error) return "Something interrupted the session. Try again.";
-  if (error.message?.includes("55006") || error.message?.includes("already running")) {
+  if (isAlreadyRunningError(error)) {
     return "A session is already running. Resume it or end it before starting another.";
   }
   return error.message ?? "Something interrupted the session. Try again.";
@@ -39,7 +50,15 @@ export default function SessionPage() {
   const [elapsedS, setElapsedS] = useState(0);
   const [originRect, setOriginRect] = useState<DOMRectReadOnly | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const [noticeKind, setNoticeKind] = useState<NoticeKind>("warning");
   const [isSettling, setIsSettling] = useState(false);
+  // Set only on a genuine 55006 conflict from startSession -- a running
+  // session the server found that this attempt didn't create. Per the
+  // documented recovery contract (schema.md, api.md §3), the client must
+  // offer resume-or-discard here, never auto-resume into whatever the server
+  // happens to be holding.
+  const [pendingConflict, setPendingConflict] = useState<FocusSession | null>(null);
+  const lastSettleKind = useRef<"complete" | "abandon" | null>(null);
 
   const resume = useCallback((running: FocusSession) => {
     setSession(running);
@@ -82,6 +101,7 @@ export default function SessionPage() {
   const startSession = useCallback(async () => {
     if (phase !== "ready") return;
     setNotice(null);
+    setPendingConflict(null);
     setOriginRect(startButtonRef.current?.getBoundingClientRect() ?? null);
     setPhase("starting");
 
@@ -92,19 +112,24 @@ export default function SessionPage() {
     });
 
     if (error || !data) {
-      // 55006 is a recovery state, not a generic failure: find the row the
-      // server refused to replace and offer its real clock back to the user.
-      if (error?.message?.includes("55006") || error?.message?.includes("already running")) {
+      // 55006 is a recovery state, not a generic failure -- but it is a real
+      // conflict, not this attempt's own session, so the server's row is
+      // surfaced as a resume-or-discard choice rather than entered silently
+      // (schema.md / api.md §3: "must offer resume-or-discard, calling
+      // abandon_session() before starting a new one").
+      if (isAlreadyRunningError(error)) {
         const { data: running } = await supabase
           .from("focus_sessions")
           .select("id, started_at, planned_duration_s")
           .eq("state", "running")
           .maybeSingle();
         if (running) {
-          resume(running as FocusSession);
+          setPendingConflict(running as FocusSession);
+          setPhase("ready");
           return;
         }
       }
+      setNoticeKind("warning");
       setNotice(messageFrom(error));
       setPhase("ready");
       return;
@@ -112,6 +137,27 @@ export default function SessionPage() {
 
     resume(data as FocusSession);
   }, [phase, resume]);
+
+  const resumeConflict = useCallback(() => {
+    if (!pendingConflict) return;
+    resume(pendingConflict);
+    setPendingConflict(null);
+  }, [pendingConflict, resume]);
+
+  const discardConflict = useCallback(async () => {
+    if (!pendingConflict || isSettling) return;
+    setIsSettling(true);
+    const supabase = createClient();
+    const { error } = await supabase.rpc("abandon_session", { p_id: pendingConflict.id });
+    setIsSettling(false);
+    if (error) {
+      setNoticeKind("warning");
+      setNotice(messageFrom(error));
+      return;
+    }
+    setPendingConflict(null);
+    setNotice(null);
+  }, [isSettling, pendingConflict]);
 
   const settleSession = useCallback(
     async (kind: "complete" | "abandon") => {
@@ -126,23 +172,32 @@ export default function SessionPage() {
       );
 
       if (error) {
+        setNoticeKind("warning");
         setNotice(messageFrom(error));
         setIsSettling(false);
         return;
       }
 
+      lastSettleKind.current = kind;
       setPhase("exiting");
     },
     [isSettling, phase, session],
   );
 
   const finishExit = useCallback(() => {
+    const kind = lastSettleKind.current;
+    lastSettleKind.current = null;
     setSession(null);
     setElapsedS(0);
     setOriginRect(null);
     setIsSettling(false);
     setPhase("ready");
-    setNotice("Session saved. Name one thing that moved before you leave it.");
+    setNoticeKind("success");
+    setNotice(
+      kind === "abandon"
+        ? "Session ended early. That's fine -- pick it back up whenever you're ready."
+        : "Session saved. Name one thing that moved before you leave it.",
+    );
   }, []);
 
   const trigger: EmberMorphTrigger =
@@ -182,17 +237,48 @@ export default function SessionPage() {
           <span className={`${styles.duration} num`}>50:00</span>
         </div>
 
-        <button
-          ref={startButtonRef}
-          className={styles.startButton}
-          type="button"
-          onClick={() => void startSession()}
-          disabled={phase === "starting"}
-        >
-          <span aria-hidden="true">{phase === "starting" ? "…" : "→"}</span>
-          {phase === "starting" ? "Starting session" : "Begin focus"}
-        </button>
-        {notice && <p className={styles.notice} role="status">{notice}</p>}
+        {pendingConflict ? (
+          <div className={styles.conflictPrompt} role="status">
+            <p className={styles.conflictText}>
+              A focus session is already running. Resume where you left off, or discard it and
+              start fresh?
+            </p>
+            <div className={styles.sessionActions}>
+              <button
+                className={styles.startButton}
+                type="button"
+                onClick={resumeConflict}
+                disabled={isSettling}
+              >
+                Resume it
+              </button>
+              <button
+                className={styles.abandonButton}
+                type="button"
+                onClick={() => void discardConflict()}
+                disabled={isSettling}
+              >
+                {isSettling ? "Discarding…" : "Discard & start fresh"}
+              </button>
+            </div>
+          </div>
+        ) : (
+          <button
+            ref={startButtonRef}
+            className={styles.startButton}
+            type="button"
+            onClick={() => void startSession()}
+            disabled={phase === "starting"}
+          >
+            <span aria-hidden="true">{phase === "starting" ? "…" : "→"}</span>
+            {phase === "starting" ? "Starting session" : "Begin focus"}
+          </button>
+        )}
+        {notice && (
+          <p className={`${styles.notice} ${noticeKind === "success" ? styles.noticeSuccess : ""}`} role="status">
+            {notice}
+          </p>
+        )}
       </section>
 
       <EmberMorph trigger={trigger} onExitComplete={finishExit}>

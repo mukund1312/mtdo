@@ -1,5 +1,4 @@
 .shell {
-  --shell-ground: #111317;
   position: fixed;
   isolation: isolate;
   inset: 0;
@@ -7,7 +6,9 @@
   min-height: 100dvh;
   overflow-y: auto;
   color: var(--text);
-  background: var(--shell-ground);
+  /* DESIGN.md: the terminal focus shell is built "using these tokens, not a
+   * second design system" -- --bg directly, not a bespoke near-black. */
+  background: var(--bg);
 }
 
 .grid,
@@ -68,7 +69,8 @@
   display: inline-flex;
   align-items: center;
   gap: 8px;
-  color: #f6b281;
+  /* "the running timer is --live; it is the canonical use of Ember" (DESIGN.md) */
+  color: var(--live);
   font-size: 11px;
   font-weight: 500;
   letter-spacing: 0.14em;
@@ -158,7 +160,7 @@
   font-weight: 900;
   letter-spacing: -0.06em;
   line-height: 0.9;
-  background: linear-gradient(180deg, #fff 8%, #9d9ca2 110%);
+  background: linear-gradient(180deg, var(--text) 8%, var(--muted) 110%);
   background-clip: text;
   -webkit-background-clip: text;
 }
