@@ -29,6 +29,20 @@
 .a02-record-card dd { margin:6px 0 0; font:900 25px/.9 "Archivo Black",sans-serif; letter-spacing:-.08em; }
 .a02-record-card footer { color:var(--dim); }
 .a02-record-export-note { margin:15px 0 0; color:var(--dim); font-size:10px; text-align:center; }
+.a02-composer { position:relative; width:min(560px,100%); padding:47px 28px 24px; border:1px solid rgba(137,117,255,.78); border-radius:14px; background:#151940; box-shadow:0 28px 90px rgba(0,0,0,.65); }
+.a02-composer h2 { margin:13px 0 26px; font:900 clamp(38px,7vw,58px)/.8 "Archivo Black",sans-serif; letter-spacing:-.1em; text-transform:uppercase; }
+.a02-composer h2 em { color:var(--acid); font-style:normal; }
+.a02-composer label { display:flex; flex-direction:column; gap:7px; margin-top:14px; color:var(--dim); font:9px "DM Mono",monospace; letter-spacing:.08em; }
+.a02-composer label small { color:var(--dim); font-size:8px; }
+.a02-composer input,.a02-composer select,.a02-composer textarea { width:100%; border:1px solid var(--line); border-radius:5px; padding:10px; background:#101332; color:var(--ink); font:13px "Space Grotesk",sans-serif; letter-spacing:0; }
+.a02-composer textarea { min-height:82px; resize:vertical; }
+.a02-composer input:focus-visible,.a02-composer select:focus-visible,.a02-composer textarea:focus-visible { outline:2px solid var(--aqua); outline-offset:2px; }
+.a02-composer-empty,.a02-composer-error { color:var(--dim); font-size:12px; line-height:1.5; }
+.a02-composer-error { color:var(--coral); }
+.a02-composer-actions { display:flex; justify-content:flex-end; gap:9px; margin-top:22px; }
+.a02-composer-actions button { border:1px solid var(--line); border-radius:5px; padding:10px 13px; background:transparent; color:var(--dim); font-size:11px; }
+.a02-composer-actions .a02-add { border-color:var(--acid); background:var(--acid); color:#151729; font-weight:700; }
+.a02-composer-actions .a02-add:disabled { opacity:.6; cursor:wait; }
 @keyframes a02-product-shimmer { to { background-position:-200% 0; } }
 @media(max-width:900px){.a02-board--today{grid-template-columns:repeat(3,minmax(220px,1fr));overflow-x:auto;padding-bottom:4px}.a02-today-lane{min-height:280px}.a02-record-dialog{max-height:calc(100dvh - 38px);overflow:auto}.a02-record-card{min-height:unset}}
 @media(max-width:560px){.a02-board--today{grid-template-columns:repeat(3,minmax(190px,1fr));margin-top:38px}.a02-today-lane{display:block!important}.a02-record-overlay{padding:14px}.a02-record-dialog{padding:40px 14px 14px}.a02-record-card{min-height:490px}}

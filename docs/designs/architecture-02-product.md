@@ -9,6 +9,10 @@ only the prototype data inside its existing **Work** and **Review** decks.
 
 - Source: the authenticated user's `blocks` rows for the UTC date returned by
   `new Date().toISOString().slice(0, 10)`, ordered by `position`.
+- The existing **+ New signal** control is functional: it reads the user's
+  active plan and its categories, then inserts a real block for today under
+  the existing RLS policy. The user chooses its name, optional context,
+  category, and initial `todo`/`in_progress`/`done` state.
 - Columns map exactly to the table's valid values: `todo`, `in_progress`, and
   `done`. The UI labels are Todo, In progress, and Done.
 - Moving a block updates `status` and `claimed` directly under existing RLS.
@@ -21,6 +25,14 @@ only the prototype data inside its existing **Work** and **Review** decks.
   Its visual presentation is otherwise unchanged.
 - Loading, empty, request-error, and in-progress/claimed states are explicit;
   there are no sample task rows in the Work deck.
+
+## Hydration
+
+The root layout no longer renders an `html.no-js` class and immediately removes
+it with an inline script. That pre-hydration mutation made the server's
+`class="no-js"` disagree with the browser's empty class list. No current
+surface uses reveal-gated `.rv` content, so removing the unused mechanism
+eliminates the warning without changing rendered product UI.
 
 ## Review / Progress deck
 
