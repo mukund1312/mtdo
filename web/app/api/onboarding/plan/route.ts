@@ -168,7 +168,12 @@ export async function POST(request: Request) {
         // is reserved for a future distinct "add/create a goal" flow that
         // isn't AI plan generation (e.g. a manual goal editor); wire it there
         // instead of here when that flow exists.
-        void recordEvent(supabase, "plan_generated", {
+        // Awaited, not fire-and-forget: this Route Handler can be a
+        // serverless function instance that's frozen/torn down as soon as
+        // controller.close() runs and the response finishes -- a `void`
+        // call here would race that teardown and could silently drop the
+        // very event this code exists to record.
+        await recordEvent(supabase, "plan_generated", {
           usedFallback,
           categoryCount: persisted.categories.length,
         });
@@ -188,7 +193,7 @@ export async function POST(request: Request) {
           try {
             const fallbackPlan = buildFallbackPlan(answers);
             const persisted = await persistGeneratedPlan(supabase, user.id, fallbackPlan);
-            void recordEvent(supabase, "plan_generated", {
+            await recordEvent(supabase, "plan_generated", {
               usedFallback: true,
               categoryCount: persisted.categories.length,
             });

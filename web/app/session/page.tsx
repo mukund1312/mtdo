@@ -68,10 +68,14 @@ export default function SessionPage() {
     setNotice(null);
   }, []);
 
-  // screen_opened (schema.md §4): one row per real mount, not per render --
-  // note the empty dependency array is deliberate. This is a fire-and-forget
-  // ledger append; recordEvent() already swallows its own errors so this
-  // effect body never needs to.
+  // screen_opened (schema.md §4): fires on mount, not per render -- note the
+  // empty dependency array is deliberate. This is a fire-and-forget ledger
+  // append (safe here, unlike the Route Handler's serverless teardown risk --
+  // the browser tab stays alive); recordEvent() already swallows its own
+  // errors so this effect body never needs to. In local dev, React 18 Strict
+  // Mode double-invokes mount effects, so two rows land per visit -- that's
+  // a dev-only artifact of Strict Mode, not this effect; production fires
+  // once per real mount.
   useEffect(() => {
     void recordEvent(createClient(), "screen_opened", { screen: "session" });
   }, []);

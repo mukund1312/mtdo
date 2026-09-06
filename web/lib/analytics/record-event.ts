@@ -9,7 +9,7 @@
 //   session_started, session_completed, session_abandoned, tutor_message_sent
 //
 // Included but not yet wired to any call site (no screen exists yet to emit
-// them -- see docs/architecture/api.md §2b for the tracking note): signup,
+// them -- see docs/architecture/api.md §2c for the tracking note): signup,
 // task_completed, task_regressed, proof_submitted, note_created,
 // paywall_viewed. They're kept in the union now so the type stays the single
 // source of truth for "what record_event will accept," even before a caller
@@ -43,13 +43,24 @@ export async function recordEvent(
   kind: ClientEventKind,
   payload: Record<string, unknown> = {},
 ): Promise<boolean> {
-  const { error } = await supabase.rpc("record_event", {
-    p_kind: kind,
-    p_payload: payload,
-  });
-  if (error) {
-    console.error(`[analytics] record_event(${kind}) failed:`, error);
+  // try/catch around the call itself, not just the Postgrest {error} return:
+  // a network-level failure (offline, DNS, timeout) makes the RPC promise
+  // reject, not resolve-with-error -- every call site uses `void
+  // recordEvent(...)` with no `.catch()`, so an uncaught rejection here would
+  // become an unhandled promise rejection, contradicting the "errors are
+  // swallowed, instrumentation never breaks the feature" contract below.
+  try {
+    const { error } = await supabase.rpc("record_event", {
+      p_kind: kind,
+      p_payload: payload,
+    });
+    if (error) {
+      console.error(`[analytics] record_event(${kind}) failed:`, error);
+      return false;
+    }
+    return true;
+  } catch (err) {
+    console.error(`[analytics] record_event(${kind}) threw:`, err);
     return false;
   }
-  return true;
 }
