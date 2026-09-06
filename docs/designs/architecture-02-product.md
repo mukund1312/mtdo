@@ -13,9 +13,12 @@ only the prototype data inside its existing **Work** and **Review** decks.
   active plan and its categories, then inserts a real block for today under
   the existing RLS policy. The user chooses its name, optional context,
   category, and initial `todo`/`in_progress`/`done` state.
-- Columns map exactly to the table's valid values: `todo`, `in_progress`, and
-  `done`. The UI labels are Todo, In progress, and Done.
-- Moving a block updates `status` and `claimed` directly under existing RLS.
+- Columns map exactly to the table's valid values: `backlog`, `todo`,
+  `in_progress`, and `done`. The UI labels are Backlog, Todo, In progress,
+  and Done.
+- Blocks are moved between lanes with drag-and-drop; no per-card status
+  dropdown remains. Moving a block updates `status` and `claimed` directly
+  under existing RLS.
   Entering `done` appends `task_completed` with the required `block_id`; moving
   a completed block back appends `task_regressed` with that same shape.
 - Opening a task uses the existing Signal Deck task lens. Launching focus routes
