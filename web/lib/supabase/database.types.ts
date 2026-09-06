@@ -75,6 +75,7 @@ export type Database = {
           claimed: boolean
           coaching: Json | null
           completed_at: string | null
+          curriculum_item_id: string | null
           date: string
           elapsed_seconds: number
           id: string
@@ -91,6 +92,7 @@ export type Database = {
           claimed?: boolean
           coaching?: Json | null
           completed_at?: string | null
+          curriculum_item_id?: string | null
           date: string
           elapsed_seconds?: number
           id?: string
@@ -107,6 +109,7 @@ export type Database = {
           claimed?: boolean
           coaching?: Json | null
           completed_at?: string | null
+          curriculum_item_id?: string | null
           date?: string
           elapsed_seconds?: number
           id?: string
@@ -125,6 +128,13 @@ export type Database = {
             isOneToOne: false
             referencedRelation: "plan_categories"
             referencedColumns: ["id", "plan_id"]
+          },
+          {
+            foreignKeyName: "blocks_curriculum_item_fk"
+            columns: ["curriculum_item_id", "category_id"]
+            isOneToOne: false
+            referencedRelation: "curriculum_items"
+            referencedColumns: ["id", "category_id"]
           },
           {
             foreignKeyName: "blocks_plan_fk"
@@ -334,6 +344,8 @@ export type Database = {
           days: number[]
           id: string
           label: string
+          menu_unlocked_iso_week: string | null
+          menu_unlocked_week_index: number
           min_blocks: number
           name: string
           plan_id: string
@@ -346,6 +358,8 @@ export type Database = {
           days?: number[]
           id?: string
           label: string
+          menu_unlocked_iso_week?: string | null
+          menu_unlocked_week_index?: number
           min_blocks?: number
           name: string
           plan_id: string
@@ -358,6 +372,8 @@ export type Database = {
           days?: number[]
           id?: string
           label?: string
+          menu_unlocked_iso_week?: string | null
+          menu_unlocked_week_index?: number
           min_blocks?: number
           name?: string
           plan_id?: string
@@ -611,6 +627,46 @@ export type Database = {
         SetofOptions: {
           from: "*"
           to: "focus_sessions"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
+      ensure_curriculum_menu: {
+        Args: never
+        Returns: {
+          category_id: string
+          category_label: string
+          category_name: string
+          category_sort_order: number
+          curriculum_item_id: string
+          item_position: number
+          meta: Json
+          task: string
+          week_index: number
+        }[]
+      }
+      pick_curriculum_item: {
+        Args: { p_item_id: string }
+        Returns: {
+          category_id: string
+          claimed: boolean
+          coaching: Json | null
+          completed_at: string | null
+          curriculum_item_id: string | null
+          date: string
+          elapsed_seconds: number
+          id: string
+          notes: string | null
+          plan_id: string
+          position: number
+          started_at: string | null
+          status: string
+          text: string
+          user_id: string
+        }
+        SetofOptions: {
+          from: "*"
+          to: "blocks"
           isOneToOne: true
           isSetofReturn: false
         }
