@@ -94,11 +94,16 @@ export function AccountUpgradeForm({
       const redirectTo = `${window.location.origin}/auth/callback?next=${encodeURIComponent(next)}`;
       const result = await upgradeWithOAuth(supabase, provider, redirectTo);
 
-      // A success here means the redirect didn't happen (unusual) -- an
-      // ordinary success navigates the browser away before this line runs.
+      // An ordinary success navigates the browser away before this line
+      // runs, so both branches here are "the redirect didn't happen" --
+      // either a real error, or the unusual ok:true case (a blocked
+      // redirect, an SSR/test environment). Either way, reaching this line
+      // at all means the button must not be left stuck on "Connecting...".
+      setOauthPending(null);
       if (!result.ok) {
-        setOauthPending(null);
         setError(result.message);
+      } else {
+        setError("Couldn't redirect to finish connecting that account. Try again.");
       }
     },
     [oauthPending, returnTo],

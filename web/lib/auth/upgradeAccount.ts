@@ -54,6 +54,9 @@ function classifyLinkIdentityError(error: AuthError): string {
   if (code ? IDENTITY_TAKEN_CODES.has(code) : /already.*linked|already exists/i.test(msg)) {
     return "That account is already linked to a different mtdo login. Log in with it directly instead.";
   }
+  if (/rate limit/i.test(msg)) {
+    return "Too many attempts. Wait a moment and try again.";
+  }
   return error.message || "Couldn't connect that account. Try again.";
 }
 
@@ -110,7 +113,21 @@ export async function upgradeWithEmailPassword(
   // call, not necessarily the confirmed state -- re-check via getUser() so
   // the flag we persist is accurate rather than optimistic.
   const { isAnonymous } = await syncIsAnonymousFlag(supabase);
-  const stillPendingConfirmation = isAnonymous !== false;
+
+  if (isAnonymous === null) {
+    // getUser() itself failed (network blip, cookie propagation race) right
+    // after a successful updateUser() call. The credential IS saved -- don't
+    // conflate "we can't confirm the resulting state" with "still anonymous,
+    // check your email," which would tell the user to look for a link that
+    // may not exist and may already be fully upgraded.
+    return {
+      ok: true,
+      pendingEmailConfirmation: undefined,
+      message: "Saved, but we couldn't confirm the upgrade finished -- refresh the page to check.",
+    };
+  }
+
+  const stillPendingConfirmation = isAnonymous === true;
 
   return {
     ok: true,
