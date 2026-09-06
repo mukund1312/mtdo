@@ -1,0 +1,318 @@
+.page {
+  min-height: 100dvh;
+  padding: 32px;
+}
+
+.readyShell {
+  display: grid;
+  width: min(100%, 720px);
+  min-height: calc(100dvh - 64px);
+  margin: 0 auto;
+  align-content: center;
+  justify-items: start;
+}
+
+.kicker,
+.cardEyebrow {
+  margin: 0;
+  color: var(--accent);
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.readyShell h1 {
+  max-width: 600px;
+  margin: 14px 0 16px;
+  font-size: clamp(44px, 7vw, 76px);
+  font-weight: 900;
+  letter-spacing: -0.055em;
+  line-height: 0.94;
+}
+
+.intro {
+  max-width: 520px;
+  margin: 0;
+  color: var(--muted);
+  font-size: 18px;
+  font-weight: 300;
+  line-height: 1.55;
+}
+
+.readyCard {
+  display: flex;
+  width: 100%;
+  margin: 44px 0 24px;
+  padding: 24px;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 24px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-xl);
+  background: var(--surface);
+}
+
+.readyCard h2,
+.taskPanel h1,
+.coachRail h2 {
+  margin: 7px 0 8px;
+  font-weight: 700;
+  letter-spacing: -0.035em;
+}
+
+.readyCard h2 {
+  font-size: 23px;
+}
+
+.readyCard p:not(.cardEyebrow),
+.taskPanel > p:not(.cardEyebrow),
+.coachCopy {
+  margin: 0;
+  color: var(--muted);
+  font-size: 15px;
+  font-weight: 300;
+  line-height: 1.5;
+}
+
+.duration {
+  color: var(--text);
+  font-size: 18px;
+  font-weight: 700;
+  letter-spacing: -0.04em;
+}
+
+.startButton,
+.completeButton,
+.abandonButton,
+.askButton {
+  min-height: 44px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-full);
+  font: inherit;
+  font-size: 14px;
+  font-weight: 500;
+  transition: transform 200ms var(--ease-spring), background 200ms ease, border-color 200ms ease;
+  cursor: pointer;
+}
+
+.startButton {
+  display: inline-flex;
+  min-width: 178px;
+  padding: 0 20px;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  color: #071012;
+  background: var(--accent);
+}
+
+.startButton:hover:not(:disabled),
+.completeButton:hover:not(:disabled) {
+  transform: scale(1.045);
+}
+
+.startButton:disabled,
+.completeButton:disabled,
+.abandonButton:disabled {
+  cursor: wait;
+  opacity: 0.6;
+}
+
+.notice,
+.focusNotice {
+  margin: 14px 0 0;
+  color: var(--warning);
+  font-size: 13px;
+  font-weight: 400;
+}
+
+.focusLayout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 252px;
+  gap: 14px;
+  align-items: stretch;
+}
+
+.taskPanel,
+.coachRail {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-xl);
+  background: rgba(255, 255, 255, 0.026);
+}
+
+.taskPanel {
+  padding: clamp(26px, 4vw, 42px);
+}
+
+.taskPanel h1 {
+  max-width: 470px;
+  font-size: clamp(32px, 4vw, 48px);
+  line-height: 1;
+}
+
+.steps {
+  display: grid;
+  padding: 0;
+  margin: 36px 0 0;
+  list-style: none;
+  border-top: 1px solid var(--border);
+}
+
+.steps li {
+  display: grid;
+  grid-template-columns: 30px 1fr;
+  gap: 14px;
+  padding: 16px 0;
+  border-bottom: 1px solid var(--border);
+  color: #d0d0d3;
+  font-size: 14px;
+  font-weight: 300;
+  line-height: 1.45;
+}
+
+.steps span {
+  color: var(--dim);
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.08em;
+}
+
+.sessionActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 28px;
+}
+
+.completeButton {
+  padding: 0 18px;
+  color: #160b04;
+  background: var(--live);
+}
+
+.abandonButton {
+  padding: 0 16px;
+  color: var(--muted);
+  border-color: var(--border);
+  background: transparent;
+}
+
+.abandonButton:hover:not(:disabled) {
+  color: var(--text);
+  border-color: rgba(255, 255, 255, 0.2);
+}
+
+.coachRail {
+  display: flex;
+  min-height: 100%;
+  padding: 22px;
+  flex-direction: column;
+}
+
+.coachHead {
+  display: grid;
+  grid-template-columns: 28px 1fr;
+  gap: 10px;
+  align-items: start;
+}
+
+.coachMark {
+  display: grid;
+  width: 28px;
+  height: 28px;
+  place-items: center;
+  border: 1px solid rgba(34, 211, 238, 0.32);
+  border-radius: var(--radius-sm);
+  color: var(--accent);
+  font-size: 16px;
+}
+
+.coachRail h2 {
+  font-size: 17px;
+  line-height: 1.08;
+}
+
+.coachCopy {
+  margin-top: 22px;
+}
+
+.coachPrompt {
+  margin-top: 24px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border);
+}
+
+.coachPrompt span {
+  color: var(--dim);
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.13em;
+  text-transform: uppercase;
+}
+
+.coachPrompt p {
+  margin: 7px 0 0;
+  color: #d6d6d9;
+  font-size: 13px;
+  font-weight: 400;
+  line-height: 1.4;
+}
+
+.askButton {
+  width: 100%;
+  margin-top: auto;
+  padding: 0 12px;
+  color: var(--accent);
+  border-color: rgba(34, 211, 238, 0.28);
+  background: rgba(34, 211, 238, 0.055);
+}
+
+.askButton:hover {
+  border-color: var(--accent);
+  background: rgba(34, 211, 238, 0.1);
+}
+
+.startButton:focus-visible,
+.completeButton:focus-visible,
+.abandonButton:focus-visible,
+.askButton:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+}
+
+@media (max-width: 620px) {
+  .page {
+    padding: 24px 16px;
+  }
+
+  .readyShell {
+    min-height: calc(100dvh - 48px);
+  }
+
+  .readyCard {
+    margin-top: 32px;
+    padding: 20px;
+  }
+
+  .focusLayout {
+    grid-template-columns: 1fr;
+  }
+
+  .coachRail {
+    min-height: 310px;
+  }
+
+  .askButton {
+    margin-top: 26px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .startButton,
+  .completeButton,
+  .abandonButton,
+  .askButton {
+    transition: none;
+  }
+}

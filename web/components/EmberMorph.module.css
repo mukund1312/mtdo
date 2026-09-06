@@ -1,0 +1,258 @@
+.shell {
+  --shell-ground: #111317;
+  position: fixed;
+  isolation: isolate;
+  inset: 0;
+  z-index: 20;
+  min-height: 100dvh;
+  overflow-y: auto;
+  color: var(--text);
+  background: var(--shell-ground);
+}
+
+.grid,
+.bloom {
+  position: fixed;
+  pointer-events: none;
+  inset: 0;
+}
+
+.grid {
+  z-index: -2;
+  opacity: 0.5;
+  background-image:
+    linear-gradient(rgba(255, 255, 255, 0.025) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.025) 1px, transparent 1px);
+  background-size: 28px 28px;
+  mask-image: linear-gradient(to bottom, black, transparent 82%);
+}
+
+.bloom {
+  z-index: -1;
+  background: radial-gradient(
+    circle at var(--ember-origin-x) var(--ember-origin-y),
+    var(--ember-deep),
+    var(--live) 24%,
+    transparent 62%
+  );
+  opacity: 0;
+  transform: scale(0.02);
+  transform-origin: var(--ember-origin-x) var(--ember-origin-y);
+}
+
+.entering .bloom {
+  animation: ember-enter 900ms var(--ease-reveal) forwards;
+}
+
+.exiting .bloom {
+  animation: ember-exit 420ms var(--ease-reveal) forwards;
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: min(100% - 48px, 1360px);
+  margin: 0 auto;
+  padding: 24px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.wordmark {
+  font-size: 15px;
+  font-weight: 900;
+  letter-spacing: -0.045em;
+}
+
+.liveStatus {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: #f6b281;
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.liveDot {
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  background: var(--live);
+  box-shadow: 0 0 0 0 rgba(249, 115, 22, 0.55);
+  animation: live-pulse 2s ease-out infinite;
+}
+
+.frame {
+  display: grid;
+  grid-template-columns: minmax(340px, 1fr) minmax(0, 730px);
+  gap: clamp(40px, 8vw, 128px);
+  align-items: center;
+  width: min(100% - 48px, 1360px);
+  min-height: calc(100dvh - 80px);
+  margin: 0 auto;
+  padding: 48px 0;
+}
+
+.timerArea {
+  display: flex;
+  align-items: center;
+  gap: 22px;
+}
+
+.ringWrap {
+  position: relative;
+  display: grid;
+  flex: 0 0 auto;
+  width: 112px;
+  height: 112px;
+  place-items: center;
+}
+
+.ring {
+  position: absolute;
+  width: 100%;
+  height: 100%;
+  transform: rotate(-90deg);
+}
+
+.ringTrack,
+.ringProgress {
+  fill: none;
+  stroke-width: 3;
+}
+
+.ringTrack {
+  stroke: rgba(255, 255, 255, 0.1);
+}
+
+.ringProgress {
+  stroke: var(--live);
+  stroke-linecap: round;
+  transition: stroke-dashoffset 900ms var(--ease-reveal);
+}
+
+.ringMark {
+  width: 15px;
+  height: 15px;
+  border-radius: 999px;
+  background: var(--live);
+  box-shadow: 0 0 24px rgba(249, 115, 22, 0.55);
+}
+
+.timerLabel,
+.elapsed {
+  margin: 0;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.timer {
+  margin: 7px 0 5px;
+  color: transparent;
+  font-size: clamp(58px, 8.2vw, 108px);
+  font-weight: 900;
+  letter-spacing: -0.06em;
+  line-height: 0.9;
+  background: linear-gradient(180deg, #fff 8%, #9d9ca2 110%);
+  background-clip: text;
+  -webkit-background-clip: text;
+}
+
+.elapsed {
+  color: var(--dim);
+  letter-spacing: 0.08em;
+}
+
+.content {
+  min-width: 0;
+}
+
+@keyframes ember-enter {
+  0% {
+    opacity: 0.98;
+    transform: scale(0.02);
+  }
+  46% {
+    opacity: 0.78;
+    transform: scale(2.8);
+  }
+  100% {
+    opacity: 0;
+    transform: scale(4.5);
+  }
+}
+
+@keyframes ember-exit {
+  0% {
+    opacity: 0;
+    transform: scale(4.5);
+  }
+  35% {
+    opacity: 0.6;
+    transform: scale(2.8);
+  }
+  100% {
+    opacity: 0.9;
+    transform: scale(0.02);
+  }
+}
+
+@keyframes live-pulse {
+  0% {
+    box-shadow: 0 0 0 0 rgba(249, 115, 22, 0.5);
+  }
+  75%,
+  100% {
+    box-shadow: 0 0 0 8px rgba(249, 115, 22, 0);
+  }
+}
+
+@media (max-width: 900px) {
+  .frame {
+    grid-template-columns: 1fr;
+    gap: 48px;
+    align-content: start;
+  }
+}
+
+@media (max-width: 560px) {
+  .header,
+  .frame {
+    width: min(100% - 32px, 1360px);
+  }
+
+  .header {
+    padding: 18px 0;
+  }
+
+  .frame {
+    min-height: calc(100dvh - 59px);
+    padding: 36px 0;
+  }
+
+  .timerArea {
+    gap: 14px;
+  }
+
+  .ringWrap {
+    width: 82px;
+    height: 82px;
+  }
+
+  .timer {
+    font-size: clamp(54px, 16vw, 78px);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .entering .bloom,
+  .exiting .bloom {
+    animation: none;
+    opacity: 0;
+  }
+}
