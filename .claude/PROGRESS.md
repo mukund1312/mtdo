@@ -9,6 +9,30 @@ Add each session's PROGRESS.md entry to the same branch as the code it describes
 
 ---
 
+## [web] 2026-09-07 (PR pending) — Architecture 02 Signal Deck first-run walkthrough
+
+Added a short, product-native walkthrough to the existing `/architecture-02` Signal Deck. It
+does not replace the route-setup form or touch the onboarding API/data model: it explains the
+shipped loop as **goal route → Work → Focus → Review / Record Card**, using only terms and
+behaviour already present in the web app.
+
+- New users see it after hydration once per browser profile; dismissal is safely stored as
+  `mtdo:signal-deck:walkthrough:v1`. The compact Guide control and `?` shortcut replay it.
+- It provides Next, Back, Skip, Close, a four-step progress readout, Arrow/Escape controls,
+  standard Tab/Enter button access, modal Tab containment, motion-reduced fallbacks, and
+  step-specific Signal Deck previews.
+- Each step switches only the visual deck underneath the overlay. It makes no API call and cannot
+  alter a route, block, session, rollup, or Record Card.
+- Documented in `docs/designs/architecture-02-walkthrough.md`; added a data-level test asserting
+  the tour covers only the existing Architecture 02 loop.
+
+Validated: `npm run test` (12 passed), `npm run typecheck`, `npm run lint`, and `git diff --check`.
+
+**Next / open items:** browser QA the guide at desktop and mobile widths before merge; keep any
+future walkthrough steps anchored to a shipped interaction rather than prototype content.
+
+---
+
 ## [web] 2026-09-06 (PR https://github.com/mukund1312/mtdo/pull/92) -- onboarding plan-generation Route Handler (Wave 1, api.md §2)
 
 Wave 1 task #8 (M's item #3, split-plan §7): `POST /api/onboarding/plan`, a Route Handler
