@@ -27,21 +27,9 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <html lang="en" className="no-js">
+    <html lang="en">
       <head>
         <link rel="stylesheet" href={SATOSHI_HREF} />
-        {/*
-          No-JS fallback (DESIGN.md §Accessibility): remove `no-js` the
-          instant JS runs, before any reveal-gated content would otherwise
-          render blank. Inline and synchronous on purpose — this must not
-          wait on a bundle.
-        */}
-        <script
-          dangerouslySetInnerHTML={{
-            __html:
-              "document.documentElement.classList.remove('no-js')",
-          }}
-        />
       </head>
       <body>
         {children}
