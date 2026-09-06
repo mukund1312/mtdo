@@ -24,6 +24,7 @@ plan docs (`docs/designs/*.md`). Each entry: the call, and the reason.
 | 2026-09-04 | **Server-authoritative writes are `security definer` RPCs, not RLS policies** (sessions, ledger); client tables carry explicit `REVOKE`s, not just missing policies | Full writeup below — an adversarial audit found D12/D13/D14/D17/D21 were unenforced and the ledger forgeable |
 | 2026-09-04 | **Every pinned version and config choice above was verified**, not assumed | `npm view <pkg> version`/`versions` for real current releases, then a full `rm -rf node_modules && npm ci` + `tsc --noEmit` + `eslint .` + `next build` pass before committing — three real, current ecosystem incompatibilities (TS7, FlatCompat, `getFilename`) were caught this way and would otherwise have shipped broken |
 | 2026-09-06 | **`EmberMorph` takes plain `sessionId`/`plannedDurationS`/`elapsedS`/`originRect` values via a `phase`-tagged `trigger` prop, never a `focus_sessions` row or a Supabase client** (`api.md` §4.1) | The marketing showcase has no auth and no real session, so the component can't assume either; a `phase` union plus an `onExitComplete` callback also means neither caller has to separately track "is the reverse animation still playing" |
+| 2026-09-06 | **`daily_rollups` is materialized by a scheduled full recompute (pg_cron), not by a trigger on the ledger** (`0009`/`0010`, api.md §3a) | A trigger would put aggregation on the user's write path, where a failure fails the session or task write for the sake of a derived number; and incremental counters cannot self-heal, so a full recompute has to exist anyway — at which point the trigger is a second, divergeable writer into a table whose whole rule is "derived, NEVER hand-written". `computed_at` ("how stale is this row") is job-shaped and meaningless under a trigger. In-database cron over an Edge Function or a Vercel cron route because the aggregation is one SQL statement over data already in Postgres: no network hop, no service-role key in a second platform's environment, no third deploy target to keep in step with the migration |
 
 ---
 
@@ -107,9 +108,79 @@ product decision, not a schema one; it is flagged in a prominent comment on `act
 
 ---
 
+## 2026-09-06 — `daily_rollups` recompute job (mtdo-bugs #93)
+
+`0001_seam.sql` shipped the table, its RLS and its grants with a comment saying it would be
+"written by a future service-role recompute job". Nothing ever was. Found while writing the
+Wave 1 frontend briefs: the Progress heatmap (mtdo-bugs #89) could be built perfectly and would
+still read empty, and "empty table" is indistinguishable from "broken UI" for whoever builds it.
+
+**The decisions that were not obvious.**
+
+*Sessions are read from `focus_sessions`, not from the `session_*` ledger events*, which is a
+deliberate departure from the issue's own wording ("aggregates `activity_events`"). The two
+cannot disagree — `settle_session()` writes the row and appends the event in one transaction, and
+neither table has a client write path — so this is the same source of truth in its typed form.
+The events do not carry `started_at` at all, which is the timestamp the job actually needs, and
+`elapsed_s`/`planned_duration_s` live in an unconstrained `jsonb` payload where a shape change
+would turn into silent nulls. A heatmap that quietly reads zero is the worst failure this table
+has. `blocks.status`/`blocks.elapsed_seconds` were never candidates: `blocks` is ordinary
+client-writable data, so its timestamps are whatever the client says.
+
+*Focus time is attributed to the day the session **started**.* The alternative — the day it
+settled — gets two real cases wrong in the same direction: a session across midnight, and the
+session left running overnight that `start_session()`'s `55006` recovery contract has the user
+abandon the next morning, which would credit yesterday's work to today.
+
+*Elapsed is capped at `planned_duration_s`.* `settle_session()`'s own comment anticipated this
+("so the job can decide its own policy"). A 25-minute block whose tab stayed open for nine hours
+is 25 minutes of focus. `DESIGN.md`'s "the app never exaggerates the user's record" is the rule.
+
+*`blocks_done` counts distinct blocks, last event of the day wins.* Counting `task_completed`
+rows would let a double-fired click or an over-eager re-render inflate the number, and would let
+a complete-then-regress pair still read as a completion. A regression on a *later* day
+deliberately does not rewrite the earlier day: Monday's record is that a block was finished on
+Monday, and past heatmap cells should not silently change. This puts a requirement on the Today
+screen that did not exist before — `task_completed`/`task_regressed` must carry
+`payload.block_id` (api.md §2d).
+
+*The bucketing time zone is UTC and is a property of the table, not of a call.* No per-user time
+zone is stored anywhere (`profiles` has no such column), and adding one needs a UI to set it.
+UTC matches the "use the date the server considers today" convention already handed to the Today
+screen. It is a genuine limitation for users far from UTC and is the first thing to revisit if
+the heatmap looks shifted; the zone is a function parameter so that upgrade is a join, not a
+rewrite. Running the job in a *second* zone over an already-computed window does not migrate the
+old rows — it writes new ones under new dates and leaves the originals, counting one event on two
+days. That is pinned by test, and changing the zone is a delete-then-backfill.
+
+*Verified by execution again, and the harness was kept this time.* The 2026-09-04 audit used a
+local cluster with a stubbed `auth` schema and Supabase's real default privileges, then threw it
+away; it had to be rebuilt from scratch to validate this. `supabase/tests/run.sh` is that setup,
+committed — 63 assertions over a local PostgreSQL 18, covering the aggregation rules above,
+idempotence, that a correction can move a number *down*, window bounds, the privilege surface
+from `authenticated`/`anon`/`service_role`, that the window predicates actually become index
+conditions rather than per-row filters, and the advisory lock. No Docker required, runs in about
+a second. **Not covered:** `0010`'s pg_cron path — pg_cron is not in a stock Homebrew Postgres,
+so the suite exercises that migration's "extension unavailable" branch and runs the scheduled
+statement directly. Confirm the job registered after the first `db push`:
+`select jobname, schedule, active from cron.job where jobname = 'mtdo-daily-rollups';`
+
+**Still empty after this ships, and not a bug in it:** `blocks_done` stays `0` for every user
+until the Today kanban wires `task_completed`/`task_regressed`, which have no call site anywhere
+yet (api.md §2c). `focus_seconds` and `sessions_completed` populate immediately — the session
+RPCs are already wired.
+
+---
+
 ## Open, not yet decided
 
 - Whether the founder-facing analytics need anything beyond PostHog (deferred until W2 has real
   users — don't build speculatively).
 - Realtime infrastructure choice for room presence (Supabase Realtime is the working assumption
   from the product plan; not re-validated at the engineering level since rooms are still W4a+).
+- **Per-user time zones.** `daily_rollups.date` (and `blocks.date`, and anything else that means
+  "a day") is currently a UTC date for every user. Fixing it properly means a `profiles` column,
+  a UI to set it, a decision about what happens to already-computed rollups when a user changes
+  it, and agreement with `blocks.date` so Today and Progress cannot disagree about what "today"
+  is. Deliberately not pre-empted — it is a product decision with a schema consequence, and UTC
+  is coherent until there are users far enough from it to notice.

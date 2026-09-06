@@ -141,11 +141,16 @@ feedback(id uuid pk, user_id, screen text not blank, message text not blank (<= 
   -- Insert path: web/lib/feedback.ts's submitFeedback() (api.md §2b).
 
 -- derived, NEVER hand-written (D13) — materialized from activity_events
+-- (task completions) + focus_sessions (focus time); see api.md §3a
 daily_rollups(id uuid pk, user_id, date, room_id null,
               blocks_done, focus_seconds, sessions_completed (each check >= 0),
               computed_at,
               unique nulls not distinct (user_id, date, room_id))
-  -- Clients get SELECT only. Written by a future service-role recompute job.
+  -- Clients get SELECT only. Written by recompute_daily_rollups() (migration
+  -- 0009), on a pg_cron schedule (0010) -- service role only, never a client.
+  -- Derivation rules, day-attribution and backfill: api.md §3a. `date` is a
+  -- LOCAL date in the zone the job runs with (UTC today); it is a property of
+  -- the whole table, not of one run.
 ```
 
 **The composite foreign keys are the point, not decoration.** `user_id` on a row proves only
@@ -335,7 +340,7 @@ erroring; where the grant itself is revoked, it errors with `42501`.
 | `feedback` | select, insert (**no update/delete**) | client |
 | `activity_events` | **select only** | `record_event()` / `append_event()` |
 | `focus_sessions` | **select only** | `start_session()` / `complete_session()` / `abandon_session()` |
-| `daily_rollups` | **select only** | future service-role recompute job |
+| `daily_rollups` | **select only** | `recompute_daily_rollups()` (0009), scheduled by pg_cron (0010) |
 | `tutor_memory_summaries` | **select only** | future service-role summarization job |
 | `tutor_messages` | **nothing** | future service-role chat backend; read via `tutor_context()` |
 
@@ -360,6 +365,14 @@ Other rules, all enforced in the SQL:
   path. Inside each function, the `user_id = auth.uid()` check *is* the access control, not a
   duplicate of a policy. `append_event()` and `settle_session()` are internal and are executable
   by nobody but the owner.
+- **`recompute_daily_rollups()` (migrations/0009) is the only writer of `daily_rollups`**, and
+  is granted to `service_role` alone — `revoke execute ... from public, anon, authenticated` is
+  what makes that true, since Supabase's default privileges hand every new public function to
+  anon/authenticated. It is not exploitable in the "write someone else's row" sense (it takes no
+  user id; every value is derived from the source tables), but it is an unbounded aggregate over
+  every user's ledger, so a client that could call it at will would hold a free amplification
+  lever against the database. It reads `activity_events` and `focus_sessions` and writes nothing
+  else. Derivation rules and the day-attribution policy: api.md §3a.
 - **`activate_plan(p_plan_id)` (migrations/0005, guarded by 0006/0007) is a structural
   access-control boundary, not just a convention.** `plans` stays ordinary client-writable (the
   table above) — `plans_update_own`/`plans_insert_own` still permit a direct
