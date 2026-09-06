@@ -78,10 +78,17 @@ function parseTask(raw: unknown, context: string): string | GeneratedTask {
   };
 }
 
-function parseCurriculum(raw: unknown, context: string): GeneratedCurriculumDay[] {
+function parseCurriculum(raw: unknown, context: string, daysPerWeek: number): GeneratedCurriculumDay[] {
   if (raw === undefined || raw === null) return [];
   if (!Array.isArray(raw)) {
     throw new PlanGenerationError(`${context}: "curriculum" should be an array.`);
+  }
+  const expectedLength = daysPerWeek * 2;
+  if (raw.length !== expectedLength) {
+    throw new PlanGenerationError(
+      `${context}: "curriculum" has ${raw.length} day-menus, expected ${expectedLength} ` +
+        `(days.length ${daysPerWeek} * 2 weeks).`,
+    );
   }
   return raw.map((dayList, i) => {
     if (!Array.isArray(dayList)) {
@@ -159,7 +166,7 @@ function parseCategory(raw: unknown, index: number): GeneratedCategory {
     score_weight: scoreWeight,
     topic_type: topicType,
     coaching_framework: parseCoachingFramework(obj.coaching_framework, context),
-    curriculum: parseCurriculum(obj.curriculum, context),
+    curriculum: parseCurriculum(obj.curriculum, context, obj.days.length),
   };
 }
 
