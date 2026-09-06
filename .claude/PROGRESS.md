@@ -3815,3 +3815,47 @@ Verification: `tsc --noEmit`, `eslint .`, `next build --webpack` clean;
 re-verified live against the linked project using separate `supabase db
 query --linked` invocations (separate transactions) to match real request
 isolation.
+
+## 2026-09-07 [web] Test coverage: app/api/onboarding/plan/route.ts
+
+Added `web/app/api/onboarding/plan/route.test.ts` (17 tests, vitest) covering
+the onboarding plan-generation Route Handler: request validation (bad JSON,
+missing fields, focusAreas >6, weeklyDaysAvailable out of range, invalid
+experienceLevel), auth (no user / getUser error -> 401), the happy path
+(streamed deltas + done event, persistGeneratedPlan/recordEvent called
+correctly), every documented fallback branch (Anthropic call throws, model
+output doesn't parse, duplicate category name), the persist-failure retry
+path (generated-plan persist fails -> fallback persist attempted once ->
+succeeds or also fails -> `error` event, never double-retries a fallback
+that was already the fallback), and the client-disconnect/abort branch
+(`request.signal.aborted` -> no persist, no recordEvent, stream never
+closes by design). Mocks `@anthropic-ai/sdk`, `@/lib/supabase/server`,
+`persistGeneratedPlan`, and `recordEvent`; runs the real
+`parseGeneratedPlan`/`buildFallbackPlan`/`buildPlanPrompt` so the fallback
+branching is exercised for real, not stubbed away.
+
+Infra fix required to make this possible at all: added `web/vitest.config.mts`
+with a `"@"` -> repo-root resolve alias, matching `tsconfig.json`'s path
+alias. Vitest doesn't read tsconfig paths on its own; before this, any test
+importing a module that (transitively) used the `@/...` alias -- which is
+most of `app/` and `lib/`, including route.ts itself -- failed to resolve at
+import time regardless of mocking. Verified this was the actual gap with a
+throwaway probe test before adding the config. The existing `parse.test.ts`
+happened to dodge this by only ever using relative imports.
+
+Found along the way (fixed here, not left for whoever owns the e2e setup):
+`web/e2e/**/*.spec.ts` (Playwright, PR #124, not yet merged when this was
+written) collides with Vitest's default `*.spec.ts` include glob --
+Playwright's `test()` throws immediately when Vitest's own worker imports
+it ("Playwright Test did not expect test() to be called here"), which is
+exactly what broke `web-build`/`gate` on PR #124's CI run. Added
+`test.exclude: [...configDefaults.exclude, "e2e/**"]` to
+`vitest.config.mts` -- extends Vitest's own default excludes rather than
+replacing them. Verified: `npm run test` now runs 4 files / 29 tests clean
+with no e2e directory present on this branch yet; PR #124 will pick this up
+once its branch merges main.
+
+Verification: `tsc --noEmit`, `eslint .`, `npm run test` (29/29), and
+`next build --webpack` all clean.
+
+No bug found in route.ts itself -- not modified.
