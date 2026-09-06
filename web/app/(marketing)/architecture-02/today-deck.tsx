@@ -39,7 +39,7 @@ function databaseErrorMessage(error: unknown, fallback: string): string {
   const candidate = error as { code?: string; details?: string; hint?: string; message?: string };
   const detail = [candidate.message, candidate.details, candidate.hint].filter(Boolean).join(" ");
   if (candidate.code === "23514" && detail.includes("status")) {
-    return "Backlog is ready in the UI, but the database migration that allows it has not been deployed yet.";
+    return "We could not save this signal status. Refresh and try again.";
   }
   return candidate.message || candidate.details || fallback;
 }

@@ -1,12 +1,15 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { ProgressDeck } from "./progress-deck";
+import { SignalDeckWalkthrough } from "./signal-deck-walkthrough";
 import { TodayDeck, type TodayBlock } from "./today-deck";
+import { SIGNAL_DECK_WALKTHROUGH_STORAGE_KEY } from "./walkthrough-data";
 import "./signal-deck.css";
 import "./route-entry.css";
 import "./product-deck.css";
+import "./signal-deck-walkthrough.css";
 
 type Deck = "home" | "work" | "calendar" | "review";
 
@@ -18,6 +21,40 @@ export default function ArchitectureTwoPage() {
   const [focusOpen, setFocusOpen] = useState(false);
   const [playing, setPlaying] = useState(true);
   const [activeBlock, setActiveBlock] = useState<TodayBlock | null>(null);
+  const [walkthroughOpen, setWalkthroughOpen] = useState(false);
+
+  useEffect(() => {
+    try {
+      if (!window.localStorage.getItem(SIGNAL_DECK_WALKTHROUGH_STORAGE_KEY)) {
+        const timer = window.setTimeout(() => setWalkthroughOpen(true), 0);
+        return () => window.clearTimeout(timer);
+      }
+    } catch {
+      // Storage is only a convenience. A blocked storage API must not stop the deck.
+    }
+  }, []);
+
+  useEffect(() => {
+    const openWithShortcut = (event: KeyboardEvent) => {
+      const target = event.target;
+      if (event.key !== "?" || event.metaKey || event.ctrlKey || event.altKey ||
+        target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement || target instanceof HTMLSelectElement ||
+        (target instanceof HTMLElement && target.isContentEditable)) return;
+      event.preventDefault();
+      setWalkthroughOpen(true);
+    };
+    window.addEventListener("keydown", openWithShortcut);
+    return () => window.removeEventListener("keydown", openWithShortcut);
+  }, []);
+
+  const dismissWalkthrough = () => {
+    try {
+      window.localStorage.setItem(SIGNAL_DECK_WALKTHROUGH_STORAGE_KEY, "seen");
+    } catch {
+      // A user can still dismiss the guide when browser storage is unavailable.
+    }
+    setWalkthroughOpen(false);
+  };
 
   const openBlock = (block: TodayBlock | null) => {
     setActiveBlock(block);
@@ -43,7 +80,10 @@ export default function ArchitectureTwoPage() {
       <header className="a02-topline">
         <button className="a02-wordmark" onClick={() => setDeck("home")} aria-label="Open signal deck">mtdo<span>◒</span></button>
         <div className="a02-live-readout"><span className="a02-live-pip" /> TUESDAY / 06 SEP / 09:24 <i>{"///"}</i> PERSONAL ROUTE</div>
-        <button className="a02-command" onClick={() => setTutorOpen(true)}>⌘ &nbsp; Ask anything <kbd>space</kbd></button>
+        <div className="a02-top-actions">
+          <button className="a02-guide-trigger" onClick={() => setWalkthroughOpen(true)} aria-keyshortcuts="?">? Guide</button>
+          <button className="a02-command" onClick={() => setTutorOpen(true)}>⌘ &nbsp; Ask anything <kbd>space</kbd></button>
+        </div>
       </header>
 
       {deck === "home" && <HomeDeck onTask={() => openBlock(null)} onFocus={() => setFocusOpen(true)} onCalendar={() => setDeck("calendar")} onReview={() => setDeck("review")} />}
@@ -56,6 +96,7 @@ export default function ArchitectureTwoPage() {
       <DeckDock active={deck} onChange={setDeck} />
       {lensOpen && <ObjectLens block={activeBlock} onClose={() => setLensOpen(false)} onFocus={beginActiveBlock} onTutor={() => setTutorOpen(true)} />}
       {tutorOpen && <TutorConsole onClose={() => setTutorOpen(false)} />}
+      {walkthroughOpen && <SignalDeckWalkthrough onDeckChange={setDeck} onDismiss={dismissWalkthrough} />}
     </main>
   );
 }
