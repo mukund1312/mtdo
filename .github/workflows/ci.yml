@@ -2,21 +2,45 @@ name: CI
 
 on:
   pull_request:
-    paths:
-      - "src/**"
-      - "tests/**"
-      - "pyproject.toml"
-      - ".github/workflows/ci.yml"
   push:
     branches: [main]
-    paths:
-      - "src/**"
-      - "tests/**"
-      - "pyproject.toml"
-      - ".github/workflows/ci.yml"
 
 jobs:
-  test:
+  # Path-based fan-out. `needs:` can't span workflow files, and GitHub's
+  # required-status-checks feature doesn't understand path filters -- a
+  # required check from a path-filtered workflow simply never reports on a
+  # PR outside its path, and GitHub blocks the merge forever waiting on it.
+  # Verified live: PR #107 (supabase/** + docs/** only) merged with no
+  # `build` check at all, only bypassed because enforce_admins was off.
+  # Fix: one workflow file, one always-runs `gate` job as the only required
+  # context, three real jobs that skip cleanly when their path didn't change.
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      python: ${{ steps.filter.outputs.python }}
+      web: ${{ steps.filter.outputs.web }}
+      supabase: ${{ steps.filter.outputs.supabase }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            python:
+              - 'src/**'
+              - 'tests/**'
+              - 'pyproject.toml'
+              - '.github/workflows/ci.yml'
+            web:
+              - 'web/**'
+              - '.github/workflows/ci.yml'
+            supabase:
+              - 'supabase/**'
+              - '.github/workflows/ci.yml'
+
+  python-tests:
+    needs: changes
+    if: needs.changes.outputs.python == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -33,3 +57,74 @@ jobs:
 
       - name: Run tests
         run: python -m pytest tests/ -v
+
+  web-build:
+    needs: changes
+    if: needs.changes.outputs.web == 'true'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+          cache-dependency-path: web/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Unit tests
+        run: npm run test
+
+      - name: Build
+        run: npm run build
+
+  supabase-tests:
+    needs: changes
+    if: needs.changes.outputs.supabase == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install PostgreSQL
+        run: sudo apt-get update && sudo apt-get install -y postgresql
+
+      - name: Run migration + rollup test suite
+        run: |
+          PGBIN_DIR=$(find /usr/lib/postgresql -maxdepth 2 -type d -name bin | head -1)
+          export PATH="$PGBIN_DIR:$PATH"
+          ./supabase/tests/run.sh
+
+  # The single required status check. Passes when every job that actually
+  # ran succeeded, and when every job that didn't run was correctly skipped
+  # (its path didn't change) -- never blocks on a job that had no reason to
+  # run. `if: always()` is required so this job still runs (and can fail
+  # deliberately) even when an upstream job failed.
+  gate:
+    needs: [changes, python-tests, web-build, supabase-tests]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check all applicable jobs succeeded
+        run: |
+          for result in \
+            "${{ needs.python-tests.result }}" \
+            "${{ needs.web-build.result }}" \
+            "${{ needs.supabase-tests.result }}"; do
+            echo "job result: $result"
+            if [ "$result" = "failure" ] || [ "$result" = "cancelled" ]; then
+              echo "A required job failed or was cancelled."
+              exit 1
+            fi
+          done
+          echo "All applicable checks passed (or were correctly skipped)."
