@@ -386,6 +386,78 @@ event ends up counted on two days. Changing the zone is a `delete from daily_rol
 backfill. When `profiles` eventually gains a time zone, the upgrade is to join it and pass the
 per-user value; the parameter exists so that is a small change rather than a rewrite.
 
+## 3b. Curriculum → blocks: the weekly menu (migrations/0012)
+
+`curriculum_items` was written by onboarding from W1 and read by nothing. This is the path from
+generated curriculum to a card on the Today board.
+
+**Read this before building against it: curriculum is not scheduled onto calendar dates.** The
+obvious bridge — `week_index = floor((today - plan_start) / 7)`, place a block on every date whose
+weekday is in `plan_categories.days` — is wrong, and three places already say so: `prompt.ts`
+rule 2 ("`curriculum` is a WEEKLY MENU, not a day-by-day schedule … it is not locked to a specific
+calendar day"), `src/mtdo/core.py`'s `categories_for_day()`, and `types.ts` on
+`GeneratedCurriculumDay`.
+
+**So `plan_categories.days` means two different things and you need the right one.** On the
+onboarding *input* it is the weekdays the user said they can study
+(`OnboardingAnswers.weeklyDaysAvailable`). For a *curriculum* category, only `days.length`
+survives into the model — it is how many day-lists make up one week of content, which is exactly
+how `week_index` was assigned at import (§2a). It is **not** a set of weekdays to schedule on.
+Reading it as one rebuilds the day-by-day schedule the product deliberately abandoned.
+
+```sql
+public.ensure_curriculum_menu()
+  returns table (category_id, category_name, category_label, category_sort_order,
+                 curriculum_item_id, week_index, item_position, task, meta)
+
+public.pick_curriculum_item(p_item_id uuid) returns blocks
+```
+
+Both are `authenticated`-callable; both derive the user from `auth.uid()` and take no user id.
+
+**The model.**
+
+- **Unlocking.** Each category unlocks one more week of curriculum per ISO week, and only when
+  `ensure_curriculum_menu()` is actually called — so call it from the board's load path. Weeks
+  the user is away cost nothing, because nothing advances while nobody calls it. The first call
+  ever unlocks week 0 only.
+- **Carry-forward.** The menu is every unlocked item not yet pulled onto a board, not just the
+  current week's slice. Unpicked items persist. This is a deliberate divergence from the terminal
+  app (which drops them): a generated plan holds exactly **two weeks** of content, so
+  use-it-or-lose-it would mean one missed week costs half the plan.
+- **"Picked" is derived, never stored** — it means *a block exists with this
+  `curriculum_item_id`*. Delete the block and the item returns to the menu. There is no picked
+  flag to keep in sync.
+- **Nothing is auto-placed.** Picking is an explicit user action. The board does not fill itself.
+
+**Notes for call sites.**
+
+- `ensure_curriculum_menu()` **writes** (it advances the cursor), so it is a `POST`-shaped call
+  despite reading like a query. Don't call it from a render path you expect to be idempotent-free;
+  it *is* idempotent within an ISO week, but it is not read-only.
+- **No active plan returns an empty set, not an error** — that's onboarding-incomplete, a normal
+  state. Same for a retired plan.
+- **An empty menu is also the normal end state.** Two weeks of content means the menu legitimately
+  runs dry after two unlock steps. Design for it: it means "time for a check-in / extend the plan",
+  not a failure. There is no auto-regeneration yet.
+- `pick_curriculum_item()` is **idempotent per (user, item)** — a double-clicked pick returns the
+  block the user already has rather than a `23505` you'd have to decode. It allocates `position`
+  server-side under an advisory lock.
+- It copies `task` → `blocks.text` and `meta` → `blocks.coaching` (empty `meta` becomes `null`).
+  The copy is what lets the block survive the curriculum item being edited or deleted;
+  `blocks.curriculum_item_id` is `on delete set null`.
+- **Blocks land on today (UTC)**, consistent with §3a and the Today brief. There is no target-date
+  parameter.
+- The item's `meta` is the Learning Coach payload (`focus_points`, `questions`, `mistakes`,
+  `tips`, `mental_models`, …) — read it from the menu row for a preview, or from
+  `blocks.coaching` once picked.
+
+**One latent bug this does not fix.** `today-deck.tsx`'s hand-composer allocates `position` with
+a client-side `select max(position)` then `insert`. `blocks_slot_key` is DEFERRABLE, so two
+concurrent composes into one category don't collide on INSERT — they both succeed and one fails at
+COMMIT, after the transaction looked fine. `pick_curriculum_item()` avoids this by allocating
+under the same lock; the composer still has it. Worth a follow-up, out of scope here.
+
 ## 4. The EmberMorph component contract
 
 `DESIGN.md` §Motion specifies the morph itself (`Graphite home → ember bloom → terminal focus

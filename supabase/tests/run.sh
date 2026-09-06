@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Runs the daily_rollups recompute suite (mtdo-bugs #93) against a throwaway
+# Runs the Supabase migration test suite against a throwaway
 # PostgreSQL cluster.
 #
 # decisions.md's "Verified by execution, not by reading" note describes how
@@ -49,8 +49,18 @@ for _ in $(seq 1 20); do "$PGBIN/pg_isready" -q && break; sleep 0.2; done
 "$PGBIN/psql" -d postgres -q -c "create database $PGDATABASE" >/dev/null
 
 "$PGBIN/psql" -v ON_ERROR_STOP=1 -q -f "$ROOT/supabase/tests/00_stub_supabase.sql" >/dev/null
+# A failing migration must stop the run. The previous form piped psql into
+# grep and appended `|| true`, so a migration that errored outright was
+# silently skipped and the suite carried on -- a broken migration then passed
+# CI green for as long as no assertion happened to touch it. Caught by 0012
+# failing to apply while the run still reported success.
 for f in "$ROOT"/supabase/migrations/*.sql; do
-  "$PGBIN/psql" -v ON_ERROR_STOP=1 -q -f "$f" 2>&1 | grep -E "^NOTICE" || true
+  if ! out=$("$PGBIN/psql" -v ON_ERROR_STOP=1 -q -f "$f" 2>&1); then
+    echo "MIGRATION FAILED: $(basename "$f")"
+    printf '%s\n' "$out" | grep -v '^NOTICE' | head -20
+    exit 1
+  fi
+  printf '%s\n' "$out" | grep -E '^NOTICE' || true
 done
 
 fail=0
@@ -59,10 +69,11 @@ fail=0
   -f "$ROOT/supabase/tests/02_aggregation.sql" \
   -f "$ROOT/supabase/tests/03_idempotence_and_windows.sql" \
   -f "$ROOT/supabase/tests/04_privileges_and_plans.sql" \
-  -f "$ROOT/supabase/tests/05_blocks_backlog_status.sql" 2>&1 \
+  -f "$ROOT/supabase/tests/05_blocks_backlog_status.sql" \
+  -f "$ROOT/supabase/tests/06_curriculum_menu_bridge.sql" 2>&1 \
   | sed 's/^psql:[^ ]* //; s/^NOTICE:  //' | grep -E "^(PASS|FAIL|ERROR|---)" || fail=1
 
 echo
-if [ "$fail" = 0 ]; then echo "daily_rollups suite: all assertions passed"; else echo "daily_rollups suite: FAILED"; fi
+if [ "$fail" = 0 ]; then echo "migration suite: all assertions passed"; else echo "migration suite: FAILED"; fi
 "$PGBIN/pg_ctl" -D "$PGDATA" stop -m fast >/dev/null 2>&1 || true
 exit $fail

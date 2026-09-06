@@ -74,8 +74,15 @@ plans(id, user_id, app_name, goal_line, is_active, created_at,
   -- unique index plans_one_active (user_id) where is_active  → free tier's "one goal"
 plan_categories(id, plan_id, name, label, days int[], min_blocks, score_weight,
                 topic_type, coaching_framework jsonb, sort_order,
+                menu_unlocked_week_index (check >= 0), menu_unlocked_iso_week,
                 unique(plan_id, name), unique(id, plan_id))
-curriculum_items(id, category_id, week_index, position, task, meta jsonb)
+  -- `days` means two things and the difference matters. On the onboarding
+  -- INPUT it's the weekdays the user can study. For a CURRICULUM category
+  -- only days.length survives: how many day-lists make one week of content.
+  -- It is NOT a set of weekdays to schedule curriculum onto (api.md §3b).
+  -- menu_unlocked_* is the weekly-menu cursor added in 0012.
+curriculum_items(id, category_id, week_index, position, task, meta jsonb,
+                 unique(id, category_id))
   -- meta keeps focus_points/questions/mistakes/tips/mental_models as jsonb:
   -- rich, nested, always read whole. Do not over-normalize.
   -- week_index/position derivation (api.md §2a): a generated/imported plan's
@@ -84,6 +91,9 @@ curriculum_items(id, category_id, week_index, position, task, meta jsonb)
   -- week_index = floor(day_list_index / category.days.length), and position
   -- is a running counter across the whole flattened curriculum for that
   -- category (not reset per day or per week).
+  -- week_index is a SEQUENCE POSITION IN THE CURRICULUM, not a calendar week.
+  -- Which calendar week it surfaces in depends on the user's unlock cursor
+  -- (plan_categories.menu_unlocked_*), never on today's date. api.md §3b.
 
 -- daily work (ports state.json per-date entries)
 blocks(id, user_id, plan_id, category_id, date, position, text,
@@ -93,6 +103,10 @@ blocks(id, user_id, plan_id, category_id, date, position, text,
        -- are all unaffected (recompute_daily_rollups() never reads
        -- blocks.status -- see 0009's "SOURCE CHOICE" comment).
        claimed, started_at, elapsed_seconds check (>= 0), completed_at,
+       curriculum_item_id null,   -- provenance; added in 0012
+       unique(user_id, curriculum_item_id) where curriculum_item_id is not null,
+       fk (curriculum_item_id, category_id) → curriculum_items (id, category_id)
+           on delete set null (curriculum_item_id),
        unique(user_id, date, category_id, position) DEFERRABLE INITIALLY DEFERRED,
        unique(id, user_id),
        fk (plan_id, user_id)     → plans (id, user_id)              on delete restrict,
@@ -340,7 +354,7 @@ erroring; where the grant itself is revoked, it errors with `42501`.
 |---|---|---|
 | `profiles` | select, insert, update | client (own row); trigger on `auth.users` insert |
 | `plans`, `plan_categories` | select, insert, update (**no delete**) | client |
-| `curriculum_items`, `blocks`, `proofs`, `notes`, `companies`, `tutor_conversations` | select, insert, update, delete | client |
+| `curriculum_items`, `blocks`, `proofs`, `notes`, `companies`, `tutor_conversations` | select, insert, update, delete | client; `blocks` also by `pick_curriculum_item()` (0012) |
 | `feedback` | select, insert (**no update/delete**) | client |
 | `activity_events` | **select only** | `record_event()` / `append_event()` |
 | `focus_sessions` | **select only** | `start_session()` / `complete_session()` / `abandon_session()` |
@@ -377,6 +391,17 @@ Other rules, all enforced in the SQL:
   every user's ledger, so a client that could call it at will would hold a free amplification
   lever against the database. It reads `activity_events` and `focus_sessions` and writes nothing
   else. Derivation rules and the day-attribution policy: api.md §3a.
+- **`ensure_curriculum_menu()` / `pick_curriculum_item()` (migrations/0012) are correctness
+  RPCs, not access-control ones.** `blocks`, `plan_categories` and `curriculum_items` all stay
+  ordinary client-writable tables — nothing here is fenced off, and a user rewriting their own
+  unlock cursor is a self-service action on their own plan that nothing downstream derives from
+  (`daily_rollups` reads the ledger and `focus_sessions`, never this). The RPCs exist because two
+  things are genuinely unsafe from the client: advancing the unlock cursor (two tabs both see
+  "new ISO week" and each advance it), and allocating `blocks.position` by
+  `select max(position) + 1` (`blocks_slot_key` is DEFERRABLE, so concurrent inserts don't collide
+  — they both succeed and one fails at COMMIT). Both are serialized on a per-user advisory lock,
+  the same pattern as `activate_plan()`. Ownership is still re-checked inside each function,
+  because a `security definer` function is exempt from RLS.
 - **`activate_plan(p_plan_id)` (migrations/0005, guarded by 0006/0007) is a structural
   access-control boundary, not just a convention.** `plans` stays ordinary client-writable (the
   table above) — `plans_update_own`/`plans_insert_own` still permit a direct
