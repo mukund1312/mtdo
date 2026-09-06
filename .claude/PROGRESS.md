@@ -3679,3 +3679,41 @@ UI, proof flow, or paywall should wire the corresponding event from
   $$` block against the linked database (inserted a throwaway auth.users +
   two plans rows, confirmed the raw update path and the RPC path behave as
   documented, cleaned up the test rows).
+
+### gh90 follow-up: 0006's guard was UPDATE-only, closed the INSERT bypass too
+
+A second `/code-review 102` pass (run after 0006 was pushed) found the trigger
+guard only fired `before update`, and `plans.is_active` defaults to `true`
+with `plans_insert_own` checking nothing but `user_id` — so a raw
+`supabase.from("plans").insert({ user_id, app_name, goal_line })` created an
+already-active plan via `INSERT`, completely bypassing 0006 and making
+schema.md's "structural access-control boundary" claim false for that path.
+
+- `supabase/migrations/0007_plans_activation_guard_insert.sql`: extends
+  `plans_guard_activation` to also fire `before insert`, rejecting any insert
+  with `is_active = true` unless the same transaction-local flag is set.
+  Zero behavior change for real callers — `persist.ts` has only ever inserted
+  plans `is_active: false`. Verified live: raw insert with `is_active`
+  omitted (defaulting true) now raises `insufficient_privilege`; the real
+  `insert(is_active: false)` + `activate_plan()` sequence still works.
+- Also addressed from the same review pass, as documentation rather than a
+  behavior change (matching this PR's own established precedent for the
+  double-submission residual risk in 0005's header): `persist.ts`'s header
+  comment and `markPlanInactive`'s docstring now describe the real residual
+  risk in the two-round-trip insert-then-activate design — if
+  `activate_plan()`'s response is lost after its transaction already
+  committed (network drop/timeout), `markPlanInactive()` can incorrectly
+  deactivate an already-active plan, and separately, a crash between the
+  `curriculum_items` insert and the `activate_plan()` call can leave a valid
+  plan permanently inactive with no repair path. Real, low-probability,
+  requires a crash/network-loss window, not fixed here (would mean folding
+  all four writes into one transaction/RPC) — filed as a known limitation,
+  not silently left for a future session to rediscover.
+- Other findings from that pass (advisory-lock-vs-row-lock design, duplicated
+  function body between 0005/0006/0007) were left as-is: the duplicated-body
+  pattern matches this repo's own established convention for `CREATE OR
+  REPLACE`-based RPC migrations (0004 did the same for `start_session`), and
+  the advisory-lock choice is already deliberate and commented in 0005.
+- Verification: `tsc --noEmit`, `eslint .` clean; 0007 applied via
+  `supabase db push --linked`; insert-bypass and legit-path behavior both
+  verified live against the linked project, not just by inspection.

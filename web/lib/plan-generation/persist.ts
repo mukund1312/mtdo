@@ -19,14 +19,35 @@
 // prior attempt (PR #95) reordered those calls and was reviewed/hand-traced
 // as moving the race rather than closing it: no combination of `.neq(id,
 // ...)` scoping on separate PostgREST round trips can make them atomic
-// against each other. The actual fix is activate_plan() (migrations/0005),
-// a security-definer RPC that holds `pg_advisory_xact_lock` for the
-// duration of its own deactivate+activate pair, serializing concurrent
-// calls for the same user -- see that migration's own comment for exactly
-// what this does and does not close (the write race is now closed; a
-// genuine double-submission where the loser's HTTP response was already
-// sent before the winner supersedes it is a separate, UI-layer problem no
-// database lock can fix).
+// against each other. The actual fix is activate_plan() (migrations/0005,
+// guarded against a raw-write bypass by 0006/0007), a security-definer RPC
+// that holds `pg_advisory_xact_lock` for the duration of its own
+// deactivate+activate pair, serializing concurrent calls for the same user
+// -- see that migration's own comment for exactly what this does and does
+// not close (the write race is now closed; a genuine double-submission
+// where the loser's HTTP response was already sent before the winner
+// supersedes it is a separate, UI-layer problem no database lock can fix).
+//
+// Residual risk from this still being two round trips (insert, then a
+// separate activate_plan() call), not one transaction: if the activate_plan
+// RPC's response is lost after its transaction already committed
+// server-side (network drop, function timeout) -- as opposed to the RPC
+// genuinely failing/rolling back -- this code cannot tell the difference.
+// It treats a lost response as a hard failure, and the catch block's
+// markPlanInactive() below will then incorrectly deactivate a plan that is
+// actually already correctly active, after which route.ts's caller may
+// persist a second, redundant fallback plan. Symmetrically, if the process
+// dies between the curriculum_items insert succeeding and the
+// activate_plan() call returning at all, a fully-valid plan is left
+// permanently is_active: false with no repair path (no DELETE policy on
+// plans, no background retry job). Both are the same class of problem as
+// the double-submission risk documented above: real, requires a specific
+// crash/network-loss window to trigger, and -- like that one -- not fixed
+// here because Wave 1 has no concurrent real users yet for it to matter.
+// Closing it for real means making the insert-then-activate sequence one
+// transaction (e.g. moving all four writes inside activate_plan() itself,
+// or a dedicated create_and_activate_plan() RPC) -- a larger change than
+// this review cycle's scope; filed separately if it turns out to matter.
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { GeneratedPlan } from "./types";
@@ -179,9 +200,17 @@ export async function persistGeneratedPlan(
 
 /** Best-effort cleanup, not a guarantee -- there's no DELETE path for plans
  * (schema.md: "no DELETE policy on plans"), so this update is the only
- * recovery available. Logged loudly on failure rather than swallowed: if this
- * itself fails (transient DB error, RLS), the plan is left broken AND active,
- * exactly the state this function exists to prevent, so it must be visible
+ * recovery available. In the common failure case (categories/curriculum_items
+ * insert failed) this is a no-op: the plan was inserted is_active: false and
+ * never got as far as activate_plan(), so there's nothing to undo -- it's
+ * called unconditionally anyway because that's cheaper and safer than trying
+ * to track "did activation actually happen" in the caller. The case where it
+ * does real work -- and where its own failure matters -- is when
+ * activate_plan() itself errored (or its response was lost after committing;
+ * see the residual-risk note above), which is also the one case where this
+ * update might race the RPC's own already-committed write. Logged loudly on
+ * failure rather than swallowed: if this itself fails (transient DB error,
+ * RLS), the plan may be left broken AND active, so that must be visible
  * somewhere rather than silently discarded alongside the original error. */
 export async function markPlanInactive(supabase: SupabaseClient, planId: string): Promise<void> {
   const { error } = await supabase.from("plans").update({ is_active: false }).eq("id", planId);

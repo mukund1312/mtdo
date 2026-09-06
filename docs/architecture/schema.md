@@ -360,15 +360,18 @@ Other rules, all enforced in the SQL:
   path. Inside each function, the `user_id = auth.uid()` check *is* the access control, not a
   duplicate of a policy. `append_event()` and `settle_session()` are internal and are executable
   by nobody but the owner.
-- **`activate_plan(p_plan_id)` (migrations/0005, guarded by 0006) is a structural access-control
-  boundary, not just a convention.** `plans` stays ordinary client-writable (the table above) —
-  `plans_update_own` still permits a direct `.update({is_active: false})`, which is the documented
-  "retire a goal" path and must keep working — but a `before update` trigger
-  (`plans_guard_activation`, 0006) rejects any `UPDATE` that flips `is_active` from false to true
-  unless a transaction-local flag (`mtdo.activating_plan`) is set, and `activate_plan()` is the
-  only place that ever sets it, immediately before its own writes. So a raw client
-  `.update({is_active: true})` now fails at the database with `insufficient_privilege`, not just
-  "isn't the path the app happens to use." The RPC still exists primarily to solve the
+- **`activate_plan(p_plan_id)` (migrations/0005, guarded by 0006/0007) is a structural
+  access-control boundary, not just a convention.** `plans` stays ordinary client-writable (the
+  table above) — `plans_update_own`/`plans_insert_own` still permit a direct
+  `.update({is_active: false})` (the documented "retire a goal" path) and a direct
+  `.insert({..., is_active: false})` (the app's own onboarding write, always inactive until
+  activated), both of which must keep working — but the `plans_guard_activation` trigger (0006,
+  extended to also fire `before insert` by 0007 after the insert-side bypass was found) rejects
+  any `INSERT` or `UPDATE` that would leave a row `is_active = true` unless a transaction-local
+  flag (`mtdo.activating_plan`) is set, and `activate_plan()` is the only place that ever sets it,
+  immediately before its own writes. So a raw client `.update({is_active: true})` **or**
+  `.insert({..., is_active: true})` now fails at the database with `insufficient_privilege`, not
+  just "isn't the path the app happens to use." The RPC still exists primarily to solve the
   concurrency problem (gh90: two unprotected `.update()` calls from concurrent requests race),
   solved with `pg_advisory_xact_lock` serializing per user — the trigger closes the separate gap
   of a write path that skips the RPC (and therefore the lock) entirely.
