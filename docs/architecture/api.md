@@ -1,7 +1,8 @@
 # mtdo web — API surface & component contracts
 
 **Status:** ACTIVE. **Created:** 2026-09-04.
-**Last revised:** 2026-09-04 (adversarial schema/RLS audit — §3 is new; see `decisions.md`).
+**Last revised:** 2026-09-06 (§2a added — onboarding plan-generation Route Handler contract, implemented).
+Previously revised 2026-09-04 (adversarial schema/RLS audit — §3 is new; see `decisions.md`).
 **Related:** `schema.md`, `DESIGN.md`.
 
 ## 1. Repo layout
@@ -16,8 +17,12 @@ mtdo/
 │   │   ├── (onboarding)/  # goal → AI plan
 │   │   ├── (app)/         # today, session, progress, vault, kanban
 │   │   └── styles/tokens.css
+│   ├── app/api/           # Route Handlers holding secrets (M-owned regardless of path —
+│   │   │                  # ownership is by content, not directory; see split-plan §1).
+│   │   │                  # e.g. api/onboarding/plan/route.ts (§2 below).
 │   ├── components/        # primitives built from DESIGN.md
 │   ├── lib/supabase/      # typed client, generated types
+│   ├── lib/plan-generation/  # pure prompt/parse/persist helpers for onboarding plan generation (§2)
 │   ├── lib/copy.ts        # the web↔terminal vocabulary dictionary (DESIGN.md §Vocabulary)
 │   └── package.json
 ├── supabase/migrations/   # SQL, source of truth for schema (see schema.md)
@@ -31,7 +36,7 @@ this, a CSS-only PR costs four minutes of unrelated Python CI.
 ## 2. AI integration
 
 - **Plan generation** (onboarding): Route Handler → Anthropic API, streamed. One-time and
-  user-facing, so a loading state is acceptable here.
+  user-facing, so a loading state is acceptable here. **Implemented** — full contract below.
 - **Coaching content**: mostly *not* an AI call. `curriculum_items.meta` and
   `plan_categories.coaching_framework` (schema.md §2) carry real authored content — the terminal
   app already renders full coaching with no AI backend configured at all. Preserve that failure
@@ -45,6 +50,65 @@ this, a CSS-only PR costs four minutes of unrelated Python CI.
 - **AI manager** (rooms, W4b, per group-study D15): **async only** — Vercel Cron or `pg_cron` →
   job row → worker reads `activity_events` → writes a summary row. Never in a request path, never
   a chatbot.
+
+## 2a. Onboarding plan generation — contract (Wave 1, implemented)
+
+`POST /api/onboarding/plan` — `web/app/api/onboarding/plan/route.ts`. Placed under `app/api/`
+(not literally inside the `(onboarding)` route group) because a route group doesn't affect the
+URL, and a Route Handler holding `ANTHROPIC_API_KEY` is M-owned regardless of directory (split-plan
+§1) — `app/api/**` is the convention going forward for any Route Handler with a secret, so it
+never collides with a page route J adds under `(onboarding)/`.
+
+**Ported vs. written fresh.** The terminal app's `plan_wizard.py` (PERSONAS/QUESTIONS/build_prompt
+design) is superseded — it now just hands `goals_template.json` to whatever AI the user already
+has open (see that file's own module docstring, `gh47`). What *is* ported: `goals_template.json`'s
+`_read_this_first` rules (one-subject-per-category, curriculum-as-weekly-menu, rich per-task
+coaching metadata — rules 1/5/9/9b/9c) into `web/lib/plan-generation/prompt.ts`'s prompt, and
+`config.py`'s `goals_to_config()` shape (categories → curriculum → rich task objects) into the
+`GeneratedPlan`/`GeneratedCategory`/`GeneratedTask` types and the DB-row mapping in
+`web/lib/plan-generation/persist.ts`. The onboarding **questionnaire itself** (`OnboardingAnswers`:
+`goalLine`, `focusAreas[]`, `experienceLevel`, `weeklyDaysAvailable[]`, optional `appName`/`notes`)
+is written fresh — there's no existing structured Q&A to port, since `plan_wizard.py`'s original
+persona/question design was already retired before this session. J builds the onboarding form
+against `OnboardingAnswers` (`web/lib/plan-generation/types.ts`).
+
+**Request:** JSON body matching `OnboardingAnswers`. 400 (plain JSON, not streamed) if malformed.
+401 (plain JSON) if there's no authenticated session — the anonymous-auth proxy (`proxy.ts`)
+already guarantees one exists by the time onboarding runs, so this should not happen in practice.
+
+**Response:** `200`, `Content-Type: application/x-ndjson`, one JSON object per line (read with
+`response.body.getReader()` + a line splitter — not `EventSource`, since this is a `POST`):
+
+| line | when | shape |
+|---|---|---|
+| `delta` | streamed as the model generates | `{"type":"delta","text":string}` — raw text chunks, for a live "building your plan…" loading state (api.md §2's "loading state is acceptable") |
+| `done` | exactly once, at the end, on success | `{"type":"done","usedFallback":bool,"plan":{"planId","appName","goalLine","categories":[{"id","name","label"}]}}` |
+| `error` | only if generation *and* the fallback plan both failed to persist | `{"type":"error","message":string}` |
+
+**Failure contract.** If the Anthropic call errors, times out, or its output doesn't parse into a
+valid plan (`web/lib/plan-generation/parse.ts` validates every field), the route falls back to a
+static two-category starter plan (`web/lib/plan-generation/fallback.ts`) and still returns a
+`done` event with `usedFallback: true` — onboarding never dead-ends a new user on an AI failure,
+extending the existing "coaching degrades to static content" contract to plan *generation* too.
+J's onboarding UI should treat `usedFallback: true` as a real, if less personalized, plan (e.g. a
+one-line "we started you with a simple plan — you can customize it" note), not an error state.
+
+**Writes.** `plans`/`plan_categories`/`curriculum_items` are ordinary client-writable tables
+(schema.md §6) — no RPC, insert directly under the user's RLS session via `lib/supabase/server.ts`.
+`persist.ts` deactivates any existing active plan first (`plans_one_active`), then does exactly
+three insert statements (plan → categories batch → curriculum_items batch), each atomic on its own
+table but **not atomic across all three** — there is no security-definer RPC for this because these
+tables don't need one. If categories or curriculum_items fail to insert after the plan row exists,
+`persist.ts` marks that plan `is_active: false` (there's no DELETE path — `schema.md`'s "no DELETE
+policy on plans" — so this is the only cleanup available) rather than leaving a half-written plan
+active. `week_index`/`position` on `curriculum_items` are derived, not model-supplied: every
+`category.days.length` consecutive `curriculum` entries are one week (`week_index = floor(dayListIndex
+/ category.days.length)`), and `position` is a running counter across the whole flattened curriculum
+for that category — this is the concrete mapping schema.md §2 left implicit.
+
+**Model:** `claude-sonnet-5` (split-plan §5: Sonnet for Route Handlers/RPC-shaped implementation
+work against an already-decided shape; Opus is reserved for schema/RLS/session-authority/tutor-
+retrieval design, which this task wasn't).
 
 ## 3. How the app talks to the database
 

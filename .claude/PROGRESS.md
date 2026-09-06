@@ -9,6 +9,69 @@ Add each session's PROGRESS.md entry to the same branch as the code it describes
 
 ---
 
+## [web] 2026-09-06 (PR https://github.com/mukund1312/mtdo/pull/92) -- onboarding plan-generation Route Handler (Wave 1, api.md §2)
+
+Wave 1 task #8 (M's item #3, split-plan §7): `POST /api/onboarding/plan`, a Route Handler
+holding `ANTHROPIC_API_KEY` server-side, streaming a generated study plan and persisting
+it into `plans`/`plan_categories`/`curriculum_items`.
+
+**Ported vs. written fresh.** Checked `src/mtdo/plan_wizard.py` first, per the task's own
+brief -- its PERSONAS/QUESTIONS/build_prompt design is already superseded (gh47,
+2026-08-24): the terminal app no longer calls an AI itself for onboarding, it just hands
+`goals_template.json` to whatever AI the user already has open. What *is* real and worth
+porting: that template's `_read_this_first` rules (one-subject-per-category, curriculum-
+as-a-weekly-menu-not-a-schedule, rich per-task coaching metadata -- rules 1/5/9/9b/9c) and
+`config.py`'s `goals_to_config()` shape (categories → curriculum → rich task objects).
+Ported both into `web/lib/plan-generation/{prompt,parse,persist}.ts`. The onboarding
+questionnaire (`OnboardingAnswers`: goalLine, focusAreas[], experienceLevel,
+weeklyDaysAvailable[], optional appName/notes) has no terminal-app precedent to port --
+written fresh, documented in `web/lib/plan-generation/types.ts` for J to build the form
+against.
+
+**Contract:** NDJSON stream (`delta`/`done`/`error` lines) rather than SSE, since this is
+a `POST` (EventSource is GET-only). Full request/response/failure-contract writeup in
+`docs/architecture/api.md` §2a (new section) -- J needs this to build the onboarding
+screen, not just this session's memory of it.
+
+**Failure contract:** if the Anthropic call fails or its output doesn't parse into a valid
+plan (every field validated in `parse.ts`, mirroring `coaching.py`'s
+`parse_ai_coaching_response` defensiveness), falls back to a static two-category starter
+plan (`fallback.ts`) and still returns a usable `done` event with `usedFallback: true` --
+extends the existing "coaching degrades to static content, never blocks the core loop"
+contract to plan *generation*, which the terminal app never had to handle (its onboarding
+was always a copy-paste-to-an-external-AI flow, not an in-app call).
+
+**Writes go through ordinary RLS-scoped `.insert()`**, not an RPC -- `plans`/
+`plan_categories`/`curriculum_items` are plain client-writable per schema.md §6, unlike
+the five RPC-gated tables. No migration needed, so no generated-types regen either.
+`persist.ts` documents the concrete `week_index`/`position` derivation for
+`curriculum_items` (also added to schema.md §2, since that was previously implicit) and
+marks a plan `is_active: false` on partial-insert failure rather than leaving a
+half-written plan active (there's no DELETE path on `plans`, by design).
+
+Model: `claude-sonnet-5`, per split-plan §5's token discipline (Sonnet for Route-Handler-
+shaped implementation work against an already-decided shape; Opus reserved for schema/
+RLS/session-authority/tutor-retrieval design).
+
+Verified: `tsc --noEmit`, `eslint .`, `next build` all clean on the new files (ran against
+`origin/main` post the just-merged EmberMorph PR #91, not stale). Branch
+`feature/m/w1-onboarding-plan-route`, opened as PR #92 into `main`, not merged by this
+session (M reviews/merges own backend PRs, but per workflow this session doesn't
+self-merge without the user's separate go-ahead).
+
+**Loose end flagged, not caused by this session:** a stray untracked
+`web/components/EmberMorph.tsx` + `.module.css` exist in the working tree (picked up by a
+`git stash -u` while switching branches, not committed by this or any prior session --
+`git log --all` shows no commit ever touched that path). It has one real lint finding
+(`react-hooks/set-state-in-effect`) and is J's ownership area (`web/components/**`), left
+untouched and unstaged here. Whoever picks up EmberMorph's actual component build should
+check whether this file is meant to be that work-in-progress before overwriting it.
+
+**Next / open items:** J builds the onboarding screen against api.md §2a once this PR
+merges. The stray `EmberMorph.tsx` above needs triage.
+
+---
+
 ## 2026-09-05 (PR pending) -- dev-split plan committed; dashboard now carries web-dev tasks
 
 Not a bug fix -- organizational/tooling work to get two human developers (Mukund on
