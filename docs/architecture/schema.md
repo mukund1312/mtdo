@@ -78,6 +78,12 @@ plan_categories(id, plan_id, name, label, days int[], min_blocks, score_weight,
 curriculum_items(id, category_id, week_index, position, task, meta jsonb)
   -- meta keeps focus_points/questions/mistakes/tips/mental_models as jsonb:
   -- rich, nested, always read whole. Do not over-normalize.
+  -- week_index/position derivation (api.md §2a): a generated/imported plan's
+  -- `curriculum` is a flat array of "day" menus (goals_template.json rule_5) --
+  -- every `category.days.length` consecutive entries are one week, so
+  -- week_index = floor(day_list_index / category.days.length), and position
+  -- is a running counter across the whole flattened curriculum for that
+  -- category (not reset per day or per week).
 
 -- daily work (ports state.json per-date entries)
 blocks(id, user_id, plan_id, category_id, date, position, text,
