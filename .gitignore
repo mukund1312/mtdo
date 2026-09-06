@@ -20,6 +20,10 @@ web/out/
 web/.env*.local
 web/next-env.d.ts
 web/*.tsbuildinfo
+web/test-results/
+web/playwright-report/
+web/blob-report/
+web/playwright/.cache/
 
 # Supabase CLI local state
 supabase/.branches/
