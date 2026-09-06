@@ -1,32 +1,32 @@
 // Writes a GeneratedPlan into plans/plan_categories/curriculum_items under
 // RLS, as the calling user (schema.md §2/§6: these three tables are ordinary
-// client-writable tables -- no RPC needed, unlike focus_sessions/
-// activity_events/etc.).
+// client-writable tables -- no RPC needed for the inserts themselves, unlike
+// focus_sessions/activity_events/etc.).
 //
-// Atomicity note: there is no single-transaction RPC for this (by design --
-// these tables don't need security-definer writes). Each `.insert()` call is
-// its own statement; a plan is inserted, then all its categories in one
-// batch insert, then all curriculum_items in one batch insert -- three
-// round trips, each atomic on its own table, but not atomic across all
-// three. If categories or curriculum_items fail after the plan row exists,
-// the caller (route.ts) must not leave that plan marked is_active: true --
-// see markPlanInactive below, called from route.ts's catch block.
+// Atomicity note: there is no single-transaction RPC for the three inserts.
+// Each `.insert()` call is its own statement; a plan is inserted, then all
+// its categories in one batch insert, then all curriculum_items in one
+// batch insert -- three round trips, each atomic on its own table, but not
+// atomic across all three. If categories or curriculum_items fail after the
+// plan row exists, the caller (route.ts) must not leave that plan marked
+// is_active: true -- see markPlanInactive below, called from route.ts's
+// catch block. This is why the plan is inserted `is_active: false` and only
+// flipped on at the very end, once every write has actually succeeded.
 //
-// KNOWN LIMITATION, NOT FIXED HERE (gh90): two concurrent
-// POST /api/onboarding/plan calls for the same user can race on which plan
-// ends up active. Whichever request's deactivate-the-previous-plan step
-// runs last can silently deactivate the OTHER request's plan, even after
-// that request already returned a success response referencing it -- no
-// combination of `.neq(id, ...)` scoping on separate `.update()` calls
-// closes this, since each call is its own PostgREST round trip/transaction;
-// a genuine fix needs the whole deactivate+activate sequence serialized per
-// user (e.g. a security-definer RPC holding `pg_advisory_xact_lock` for the
-// duration), which is a real architecture change to how these three tables
-// are written (they were deliberately kept RPC-free -- schema.md §6).
-// Deferred: no concurrent real users exist yet to trigger it. Do not
-// "fix" this with another ad hoc `.update()` reordering -- a prior attempt
-// (PR #95) did exactly that and moved the race without closing it; verified
-// by tracing the actual interleaving, not assumed.
+// gh90 (real fix): "which plan ends up active" used to be decided by two
+// separate, unprotected `.update()` calls -- a genuine data race between
+// concurrent requests for the same user, with undefined interleaving. A
+// prior attempt (PR #95) reordered those calls and was reviewed/hand-traced
+// as moving the race rather than closing it: no combination of `.neq(id,
+// ...)` scoping on separate PostgREST round trips can make them atomic
+// against each other. The actual fix is activate_plan() (migrations/0005),
+// a security-definer RPC that holds `pg_advisory_xact_lock` for the
+// duration of its own deactivate+activate pair, serializing concurrent
+// calls for the same user -- see that migration's own comment for exactly
+// what this does and does not close (the write race is now closed; a
+// genuine double-submission where the loser's HTTP response was already
+// sent before the winner supersedes it is a separate, UI-layer problem no
+// database lock can fix).
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { GeneratedPlan } from "./types";
@@ -44,8 +44,10 @@ export interface PersistedPlanSummary {
   categories: PersistedCategorySummary[];
 }
 
-/** Deactivates any existing active plan (plans_one_active, schema.md §2), then
- * inserts the new plan + its categories + curriculum items. Throws on any
+/** Inserts the new plan (inactive) + its categories + curriculum items, then
+ * calls activate_plan() (plans_one_active, schema.md §2) to atomically
+ * deactivate every other plan and activate this one -- see the gh90 note
+ * above for why that's an RPC and not a raw `.update()`. Throws on any
  * write failure -- callers must catch and either fall back or surface an
  * error; never assume partial success is usable. */
 export async function persistGeneratedPlan(
@@ -53,22 +55,16 @@ export async function persistGeneratedPlan(
   userId: string,
   plan: GeneratedPlan,
 ): Promise<PersistedPlanSummary> {
-  const { error: deactivateError } = await supabase
-    .from("plans")
-    .update({ is_active: false })
-    .eq("user_id", userId)
-    .eq("is_active", true);
-  if (deactivateError) {
-    throw new Error(`Failed to deactivate the previous plan: ${deactivateError.message}`);
-  }
-
+  // Inserted inactive on purpose: nothing else can mistake this row for
+  // "the" active plan until activate_plan() says so, at the very end, once
+  // every other write below has actually succeeded.
   const { data: planRow, error: planError } = await supabase
     .from("plans")
     .insert({
       user_id: userId,
       app_name: plan.app_name,
       goal_line: plan.goal_line,
-      is_active: true,
+      is_active: false,
     })
     .select("id")
     .single();
@@ -152,6 +148,14 @@ export async function persistGeneratedPlan(
       if (itemsError) {
         throw new Error(`Failed to insert curriculum_items: ${itemsError.message}`);
       }
+    }
+
+    // Every write above succeeded -- now, and only now, make this plan the
+    // active one. See migrations/0005 for what the advisory lock inside
+    // this RPC actually serializes against.
+    const { error: activateError } = await supabase.rpc("activate_plan", { p_plan_id: planId });
+    if (activateError) {
+      throw new Error(`Failed to activate plan: ${activateError.message}`);
     }
 
     return {

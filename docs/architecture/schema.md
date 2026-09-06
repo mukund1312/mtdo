@@ -360,6 +360,13 @@ Other rules, all enforced in the SQL:
   path. Inside each function, the `user_id = auth.uid()` check *is* the access control, not a
   duplicate of a policy. `append_event()` and `settle_session()` are internal and are executable
   by nobody but the owner.
+- **`activate_plan(p_plan_id)` (migrations/0005) is a convention, not an access-control boundary
+  like the RPCs above.** `plans` stays ordinary client-writable (the table above), so RLS alone
+  would still let a client `.update({is_active: true})` directly — the RPC exists because
+  "which plan is active" is a genuine concurrency problem (gh90: two unprotected `.update()` calls
+  from concurrent requests race), solved with `pg_advisory_xact_lock` serializing per user, not
+  because the write itself needs to be forbidden. `persist.ts` calling this RPC instead of a raw
+  update is the enforced path in practice; nothing at the grant/policy level blocks bypassing it.
 - **Auth model:** Supabase **anonymous auth from first visit**, upgraded in place to a real
   account. Every ledger event carries a real `user_id` from event #1 — no pre-signup gap in the
   data, and no migration needed when a user later signs up (same row, same id). A `profiles` row
