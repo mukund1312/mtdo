@@ -12,6 +12,12 @@ type FocusSession = {
   planned_duration_s: number;
 };
 
+type LinkedBlock = {
+  id: string;
+  notes: string | null;
+  text: string;
+};
+
 type SessionPhase = "ready" | "starting" | "active" | "exiting";
 type NoticeKind = "success" | "warning";
 
@@ -59,7 +65,15 @@ export default function SessionPage() {
   // offer resume-or-discard here, never auto-resume into whatever the server
   // happens to be holding.
   const [pendingConflict, setPendingConflict] = useState<FocusSession | null>(null);
+  const [linkedBlock, setLinkedBlock] = useState<LinkedBlock | null>(null);
   const lastSettleKind = useRef<"complete" | "abandon" | null>(null);
+  const task = linkedBlock
+    ? {
+        eyebrow: "Today · linked block",
+        title: linkedBlock.text,
+        detail: linkedBlock.notes?.trim() || "Stay with this one task until you have a clear next step.",
+      }
+    : TASK;
 
   const resume = useCallback((running: FocusSession) => {
     setSession(running);
@@ -101,6 +115,38 @@ export default function SessionPage() {
     };
   }, [resume]);
 
+  // Today hands the selected block across in the URL. The block is fetched
+  // under the user's RLS scope rather than trusting a title supplied by the
+  // browser, then passed to start_session as the server-authoritative link.
+  useEffect(() => {
+    const linkedBlockId = new URLSearchParams(window.location.search).get("blockId");
+    if (!linkedBlockId) return;
+    // Keep a non-null local for the async closure below; TypeScript does not
+    // retain the URLSearchParams narrowing across that closure boundary.
+    const requestedBlockId: string = linkedBlockId;
+    let cancelled = false;
+
+    async function loadLinkedBlock() {
+      const supabase = createClient();
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+      if (!user) return;
+      const { data, error } = await supabase
+        .from("blocks")
+        .select("id, text, notes")
+        .eq("id", requestedBlockId)
+        .eq("user_id", user.id)
+        .maybeSingle();
+      if (!cancelled && !error && data) setLinkedBlock(data);
+    }
+
+    void loadLinkedBlock();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   // The screen owns this display-only client tick. The server's started_at is
   // the source of truth; EmberMorph merely receives the resulting number.
   useEffect(() => {
@@ -113,6 +159,13 @@ export default function SessionPage() {
 
   const startSession = useCallback(async () => {
     if (phase !== "ready") return;
+    // Do not create an unlinked generic session while a task passed from
+    // Architecture 02 is still being resolved under RLS.
+    if (new URLSearchParams(window.location.search).get("blockId") && !linkedBlock) {
+      setNoticeKind("warning");
+      setNotice("Loading the selected task. Try Begin focus again in a moment.");
+      return;
+    }
     setNotice(null);
     setPendingConflict(null);
     setOriginRect(startButtonRef.current?.getBoundingClientRect() ?? null);
@@ -127,6 +180,7 @@ export default function SessionPage() {
     // default (NULL) with no runtime difference from passing null explicitly.
     const { data, error } = await supabase.rpc("start_session", {
       p_planned_duration_s: DEFAULT_DURATION_S,
+      ...(linkedBlock ? { p_block_id: linkedBlock.id } : {}),
     });
 
     if (error || !data) {
@@ -154,7 +208,16 @@ export default function SessionPage() {
     }
 
     resume(data as FocusSession);
-  }, [phase, resume]);
+    if (linkedBlock) {
+      // This convenience state is client-writable by design. It must not
+      // block a valid session if a transient update failure occurs.
+      const { error: blockError } = await supabase
+        .from("blocks")
+        .update({ claimed: true, status: "in_progress" })
+        .eq("id", linkedBlock.id);
+      if (blockError) console.error("[session] could not mark linked block in progress:", blockError);
+    }
+  }, [linkedBlock, phase, resume]);
 
   const resumeConflict = useCallback(() => {
     if (!pendingConflict) return;
@@ -248,9 +311,9 @@ export default function SessionPage() {
 
         <div className={styles.readyCard}>
           <div>
-            <p className={styles.cardEyebrow}>{TASK.eyebrow}</p>
-            <h2>{TASK.title}</h2>
-            <p>{TASK.detail}</p>
+            <p className={styles.cardEyebrow}>{task.eyebrow}</p>
+            <h2>{task.title}</h2>
+            <p>{task.detail}</p>
           </div>
           <span className={`${styles.duration} num`}>50:00</span>
         </div>
@@ -302,9 +365,9 @@ export default function SessionPage() {
       <EmberMorph trigger={trigger} onExitComplete={finishExit}>
         <div className={styles.focusLayout}>
           <section className={styles.taskPanel} aria-labelledby="focus-task-title">
-            <p className={styles.cardEyebrow}>{TASK.eyebrow}</p>
-            <h1 id="focus-task-title">{TASK.title}</h1>
-            <p>{TASK.detail}</p>
+            <p className={styles.cardEyebrow}>{task.eyebrow}</p>
+            <h1 id="focus-task-title">{task.title}</h1>
+            <p>{task.detail}</p>
 
             <ol className={styles.steps}>
               <li>
