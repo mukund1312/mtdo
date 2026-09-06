@@ -67,6 +67,27 @@ Conductor's generated path afterward -- the untracked-file gap is the same eithe
 - **Nothing changes about the push/PR flow.** Each worktree still pushes its own branch
   and goes through a normal PR into `main` (see `GITHUB_SYNC_WORKFLOW.md`) -- worktrees
   just mean this now happens on N branches in parallel instead of one at a time.
+- **Verify a Conductor/Herdr workspace is actually an isolated worktree before trusting
+  it, don't assume the sidebar label means it.** On 2026-09-06, four tasks (W2 backend
+  work assigned to separate-looking Conductor workspaces) all ended up building real,
+  uncommitted work directly in the shared `~/mtdo` checkout at the same time --
+  `feedback.ts`+a migration, `AccountUpgradeForm`+`upgradeAccount.ts`, and
+  `record-event.ts`, all sitting uncommitted together, plus interleaved hunks in
+  `PROGRESS.md`/`api.md` from more than one task. Nothing was lost -- each task's own
+  agent had left a clear enough PROGRESS.md entry to reconstruct and separate onto its
+  own branch by hand -- but doing that for three tasks, then resolving the resulting
+  merge conflicts against each other, cost real time a worktree per task would have
+  avoided outright. **Check with `git rev-parse --show-toplevel` (or just `pwd`) inside
+  the workspace/agent's own terminal before assigning it real work** -- it should print
+  a path under `~/conductor/workspaces/mtdo/<name>` or `~/mtdo-worktrees/<slug>`, never
+  bare `~/mtdo`. `scripts/hooks/post-checkout` (install once per clone:
+  `cp scripts/hooks/post-checkout .git/hooks/ && chmod +x .git/hooks/post-checkout` --
+  `.git/hooks/` itself is never git-tracked, so this tracked copy is what survives a
+  fresh clone) prints a reminder whenever a non-`main` branch is checked out directly in
+  the primary checkout -- not a block, since a quick one-branch-at-a-time review/fix
+  there is fine (most of this session's own PR reviews and fixes were done exactly that
+  way, safely); it exists to catch the case where that turns into multiple concurrent
+  tasks' work piling up unnoticed. Already installed on this machine as of 2026-09-06.
 
 ## Cleaning up
 

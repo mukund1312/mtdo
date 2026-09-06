@@ -1,0 +1,26 @@
+#!/bin/sh
+# Non-blocking reminder, not an enforcement mechanism: on 2026-09-06, several
+# agents built real, uncommitted W2 work (feedback widget, anon-account
+# upgrade, event instrumentation) directly in the shared ~/mtdo checkout
+# instead of isolated git worktrees, at the same time. None of it was lost,
+# but untangling three PRs' worth of interleaved PROGRESS.md/api.md hunks
+# from one shared working tree cost real time that a worktree per task would
+# have avoided entirely. See PARALLEL_AGENTS.md for the actual mechanism.
+#
+# Shared across every worktree of this repo (hooks live in the common .git
+# dir), but this only ever fires for checkouts happening in the PRIMARY
+# checkout specifically -- a real worktree's toplevel is never this path, so
+# agents already working correctly in one see nothing.
+
+toplevel=$(git rev-parse --show-toplevel 2>/dev/null)
+branch=$(git symbolic-ref --short HEAD 2>/dev/null)
+primary="$HOME/mtdo"
+
+if [ "$toplevel" = "$primary" ] && [ "$branch" != "main" ] && [ "$branch" != "" ]; then
+  echo "" >&2
+  echo "You're on '$branch' in the shared checkout ($primary), not a worktree." >&2
+  echo "Fine for a quick review/fix on one PR at a time. If you're about to start" >&2
+  echo "NEW work while other tasks might also be running: scripts/new-agent-worktree.sh $branch" >&2
+  echo "" >&2
+fi
+exit 0
