@@ -31,6 +31,11 @@ Validated: `npm run test` (12 passed), `npm run typecheck`, `npm run lint`, and 
 **Next / open items:** browser QA the guide at desktop and mobile widths before merge; keep any
 future walkthrough steps anchored to a shipped interaction rather than prototype content.
 
+**Follow-up (2026-09-07):** the final **Explore the deck** action now returns to Signal Deck home
+instead of leaving the user on the Review step. The stale “Backlog migration has not been
+deployed” status error was removed after the persisted `backlog` constraint landed in shared
+Supabase migration `0011`; Work continues to read and write the exact `backlog` value.
+
 ---
 
 ## [web] 2026-09-06 (PR https://github.com/mukund1312/mtdo/pull/92) -- onboarding plan-generation Route Handler (Wave 1, api.md §2)

@@ -30,8 +30,9 @@ tasks, scores, session totals, or activity history.
 - **Next**, **Back**, **Skip**, and **Close** are available at every appropriate point.
 - Arrow keys move between steps and Escape dismisses. Standard Tab/Enter controls remain
   available for every button; the dialog traps Tab focus while open.
-- Each step brings the matching existing deck underneath the overlay into view. The walkthrough
-  never changes product data, calls the onboarding API, or writes to Supabase.
+- Each step brings the matching existing deck underneath the overlay into view. **Explore the
+  deck** finishes on Signal Deck home; the walkthrough never changes product data, calls the
+  onboarding API, or writes to Supabase.
 
 ## Visual and accessibility constraints
 

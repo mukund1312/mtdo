@@ -37,6 +37,9 @@ export function SignalDeckWalkthrough({ onDeckChange, onDismiss }: WalkthroughPr
   const previous = () => setStepIndex((current) => Math.max(0, current - 1));
   const next = () => {
     if (isLastStep) {
+      // The guide finishes on Review, but “Explore the deck” should leave a
+      // new user at Signal Deck's actual home rather than its final tour step.
+      onDeckChange("home");
       onDismiss();
       return;
     }
