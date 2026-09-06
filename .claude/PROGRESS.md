@@ -3463,6 +3463,69 @@ update entry above.
 - If ever wanted later (not requested yet): a TUI-side profile switcher, and/or extending
   AI customization to make DSA/backend/etc. content task-specific instead of shared
   generic buckets (both were explicitly deferred by the user on 2026-08-20).
+
+---
+
+## 2026-09-06 [web] — W2: anonymous → real account upgrade flow
+
+**Did:** the upgrade mechanism only (trigger logic — deciding when a streak is
+"worth losing" — is explicitly out of scope, left for J's screen work).
+
+- `web/lib/auth/upgradeAccount.ts`: `upgradeWithEmailPassword()` calls
+  `supabase.auth.updateUser({ email, password })` on the existing anonymous
+  session (never sign-out + signUp — that would orphan the anonymous user's
+  `activity_events`/`plans`/`blocks`, defeating the point of D-anonymous-auth).
+  `upgradeWithOAuth()` calls `linkIdentity()` the same way. Both classify
+  Supabase's stable error codes first (`email_exists`, `identity_already_exists`,
+  `weak_password`), falling back to message substring matching only for
+  older/self-hosted GoTrue, mirroring the `55006`-code-first pattern already in
+  `app/session/page.tsx`.
+- `syncIsAnonymousFlag()`: after any upgrade attempt, re-reads the real
+  `user.is_anonymous` off `auth.getUser()` (never assumed true/false) and
+  mirrors it onto `profiles.is_anonymous`. This matters because email/password
+  upgrades stay anonymous until the confirmation link is clicked (if email
+  confirmations are enabled on the project) — hardcoding `false` on submit
+  would have made `profiles.is_anonymous` lie. Confirmed against
+  `decisions.md`'s note that the column is informational-only, never an auth
+  signal, so this is a normal client update, not a privileged write.
+- `web/app/auth/callback/route.ts` (new): OAuth's `linkIdentity()` redirects
+  the browser away and back — nothing existed to catch that return. Exchanges
+  the code for a session and calls `syncIsAnonymousFlag()` so both upgrade
+  paths leave `profiles.is_anonymous` consistent.
+- `web/components/AccountUpgradeForm.tsx` + `.module.css`: minimal email/password
+  form plus optional OAuth buttons (`oauthProviders` prop — empty by default;
+  only pass providers actually enabled in the Supabase project's Auth
+  settings, none are configured yet). Renders as a plain card (Ember Graphite
+  tokens, no fixed/overlay positioning) so the trigger screen can drop it
+  into a modal or inline slot as it prefers.
+- **No migration.** Verified this stays true — `profiles` is already
+  client-update-able (schema.md §6) and no new table/column was needed.
+- `tsc --noEmit` and `eslint` both clean on all four new files; `next build`
+  succeeds and lists `/auth/callback` as a route.
+- Reviewed post-hoc (`/code-review`): fixed an open-redirect in
+  `auth/callback`'s `next` param (was raw string-concatenated into the
+  redirect target — now resolved via the URL constructor and rejected if it
+  doesn't stay same-origin), a confirmation-state message that conflated a
+  `getUser()` failure with "still anonymous," a missing rate-limit branch on
+  the OAuth error classifier, and an OAuth button that could get stuck on
+  "Connecting..." forever. See PR #99.
+
+**Handoff to J (frontend trigger logic), the contract to build against:**
+- `<AccountUpgradeForm onUpgraded={(info) => ...} onDismiss={() => ...}
+  oauthProviders={[]} returnTo={optional path} />` — render it when the
+  streak-worth-losing decision fires; unmount it (or call the equivalent) on
+  `onDismiss`. `onUpgraded` fires only once the account is confirmed no
+  longer anonymous — an email/password submit that only sent a confirmation
+  link shows its own in-card notice instead and does NOT call `onUpgraded`
+  (the user hasn't actually converted yet).
+- If/when an OAuth provider (Google/GitHub) gets enabled in Supabase's Auth
+  settings, pass it in `oauthProviders` — no code change needed on my side.
+
+**Next / open items:**
+- None blocking. Whoever builds the trigger UI should decide on the actual
+  streak/rollup query that gates showing this component — not designed here
+  by design.
+
 ---
 
 ## 2026-09-06 [web] — W2: event instrumentation wiring
