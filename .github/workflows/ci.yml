@@ -89,6 +89,39 @@ jobs:
       - name: Build
         run: npm run build
 
+  web-e2e:
+    needs: changes
+    if: needs.changes.outputs.web == 'true'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+          cache-dependency-path: web/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install Playwright browsers
+        run: npx playwright install --with-deps chromium
+
+      - name: Run E2E tests
+        run: npm run test:e2e
+
+      - name: Upload Playwright report on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: web/playwright-report/
+          retention-days: 14
+
   supabase-tests:
     needs: changes
     if: needs.changes.outputs.supabase == 'true'
@@ -111,7 +144,7 @@ jobs:
   # run. `if: always()` is required so this job still runs (and can fail
   # deliberately) even when an upstream job failed.
   gate:
-    needs: [changes, python-tests, web-build, supabase-tests]
+    needs: [changes, python-tests, web-build, web-e2e, supabase-tests]
     if: always()
     runs-on: ubuntu-latest
     steps:
@@ -129,6 +162,7 @@ jobs:
             "${{ needs.changes.result }}" \
             "${{ needs.python-tests.result }}" \
             "${{ needs.web-build.result }}" \
+            "${{ needs.web-e2e.result }}" \
             "${{ needs.supabase-tests.result }}"; do
             echo "job result: $result"
             if [ "$result" = "failure" ] || [ "$result" = "cancelled" ]; then
