@@ -58,6 +58,29 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { GeneratedPlan } from "./types";
 
+/** Thrown only when persistGeneratedPlan genuinely cannot determine whether
+ * activate_plan() committed -- both the activation call and the follow-up
+ * verification read failed. Deliberately distinct from a normal failure:
+ * the catch block below must NOT run markPlanInactive() on an unverified
+ * guess, since forcing is_active:false could itself be the wrong write if
+ * the plan actually did commit active (see the module header's residual-risk
+ * note). A 4th-pass /code-review 102 finding -- the original re-check logic
+ * dropped the verification read's own error and didn't handle rpc() itself
+ * throwing (vs. returning {error}), both of which could still reach
+ * markPlanInactive() on a plan that was actually active. */
+class PlanActivationAmbiguousError extends Error {
+  constructor(activateCause: unknown, recheckCause: unknown) {
+    super(
+      `Could not confirm whether the plan was actually activated -- activation failed (${
+        activateCause instanceof Error ? activateCause.message : String(activateCause)
+      }) and the verification read also failed (${
+        recheckCause instanceof Error ? recheckCause.message : String(recheckCause)
+      })`,
+    );
+    this.name = "PlanActivationAmbiguousError";
+  }
+}
+
 export interface PersistedCategorySummary {
   id: string;
   name: string;
@@ -180,28 +203,39 @@ export async function persistGeneratedPlan(
     // Every write above succeeded -- now, and only now, make this plan the
     // active one. See migrations/0005 for what the advisory lock inside
     // this RPC actually serializes against.
-    const { error: activateError } = await supabase.rpc("activate_plan", { p_plan_id: planId });
-    if (activateError) {
+    try {
+      const { error: activateError } = await supabase.rpc("activate_plan", { p_plan_id: planId });
+      if (activateError) throw activateError;
+    } catch (activateErr) {
       // A network drop or serverless timeout can lose activate_plan()'s
       // response after its transaction already committed server-side --
-      // activateError alone can't distinguish "the RPC genuinely failed" from
-      // "it succeeded but we never heard back." Trusting the error blindly
-      // would let the catch block's markPlanInactive() incorrectly
-      // deactivate a plan that is actually already correctly active,
-      // leaving the user with zero active plans (the old plan was already
-      // deactivated inside activate_plan()'s own committed transaction).
-      // Re-check the plan's real state before trusting the error.
-      const { data: recheck } = await supabase
+      // this alone can't distinguish "the RPC genuinely failed" from "it
+      // succeeded but we never heard back." The try/catch (rather than just
+      // checking `{error}`) also covers rpc() throwing outright, e.g. an
+      // aborted fetch, which would otherwise skip this recovery path
+      // entirely. Re-check the plan's real state before trusting it.
+      const { data: recheck, error: recheckError } = await supabase
         .from("plans")
         .select("is_active")
         .eq("id", planId)
         .maybeSingle();
-      if (!recheck?.is_active) {
-        throw new Error(`Failed to activate plan: ${activateError.message}`);
+
+      if (recheck?.is_active) {
+        // Confirmed: activate_plan() did commit. Only its response (or the
+        // call itself) was lost -- treat this as the success it actually
+        // was.
+      } else if (recheckError) {
+        // Can't confirm either way: activation failed AND the verification
+        // read failed. Surface this as ambiguous rather than "confirmed
+        // inactive" -- see PlanActivationAmbiguousError above.
+        throw new PlanActivationAmbiguousError(activateErr, recheckError);
+      } else {
+        throw new Error(
+          `Failed to activate plan: ${
+            activateErr instanceof Error ? activateErr.message : String(activateErr)
+          }`,
+        );
       }
-      // Fell through: activate_plan() actually committed and this plan is
-      // genuinely active. Only its response was lost -- treat this as the
-      // success it actually was.
     }
 
     return {
@@ -217,8 +251,19 @@ export async function persistGeneratedPlan(
   } catch (err) {
     // Best-effort: don't leave a half-written plan marked active. There's no
     // delete path for plans (schema.md: "no DELETE policy on plans"), by
-    // design, so this update is the only cleanup available.
-    await markPlanInactive(supabase, planId);
+    // design, so this update is the only cleanup available. Exception: a
+    // PlanActivationAmbiguousError means we genuinely couldn't determine
+    // whether activate_plan() committed -- forcing is_active:false here
+    // could itself be the wrong write, so this skips cleanup and logs the
+    // ambiguity loudly instead of guessing.
+    if (err instanceof PlanActivationAmbiguousError) {
+      console.error(
+        `[persist] could not confirm activation state for plan ${planId} -- skipping cleanup rather than guessing:`,
+        err,
+      );
+    } else {
+      await markPlanInactive(supabase, planId);
+    }
     throw err;
   }
 }
@@ -233,9 +278,12 @@ export async function persistGeneratedPlan(
  * does real work is when activate_plan() itself genuinely errored (rolled
  * back, never committed) -- the caller already re-checks the plan's real
  * is_active state before treating an activateError as a failure at all (see
- * the residual-risk note above), specifically so this function is never
- * called against a plan that actually committed active; by the time this
- * runs, is_active really is false already, and this is a no-op there too.
+ * the residual-risk note above), and skips calling this function entirely
+ * (PlanActivationAmbiguousError) when that re-check itself can't confirm
+ * either way, rather than guess. So by the time this actually runs,
+ * is_active really is false already in every remaining case, and this is a
+ * no-op there too -- it exists for the "even that shouldn't be possible"
+ * defensive case, not because it's expected to do real work.
  * Logged loudly on failure rather than swallowed: if this itself fails
  * (transient DB error, RLS), the plan may be left broken AND active, so that
  * must be visible somewhere rather than silently discarded alongside the

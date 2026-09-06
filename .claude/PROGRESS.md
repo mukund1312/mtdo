@@ -3747,3 +3747,42 @@ requires a specific crash window, no concurrent real users yet for it to
 matter, filed separately if it turns out to.
 
 Verification: `tsc --noEmit`, `eslint .`, `next build --webpack` all clean.
+
+### gh90 follow-up #3: ambiguous-recovery gap + trigger dedup (4th /code-review pass)
+
+A 4th `/code-review 102` pass (two independent fork agents plus the
+reviewer's own reading, all converging) found the previous pass's
+activate_plan() re-check fix (follow-up #2, above) had its own gap:
+
+- `persist.ts`: the re-check query's own `error` was destructured and
+  silently discarded, and `supabase.rpc()` throwing outright (vs. returning
+  `{error}`, e.g. an aborted fetch) skipped the recovery branch entirely --
+  both paths could still reach `markPlanInactive()` and re-deactivate a plan
+  that had genuinely committed active, recreating the exact bug the re-check
+  was added to close, one layer deeper. Fixed by wrapping the RPC call in a
+  real `try/catch` (so a thrown error is caught too, not just `{error}`),
+  checking the re-check's own error, and introducing
+  `PlanActivationAmbiguousError` for the case where neither the activation
+  call nor the verification read could be trusted -- in that case,
+  `markPlanInactive()` is deliberately *not* called (forcing `is_active:
+  false` on an unverified guess could itself be the wrong write), and the
+  ambiguity is logged loudly instead.
+- `supabase/migrations/0008_plans_guard_activation_simplify.sql`: collapsed
+  0007's duplicated INSERT/UPDATE raise-exception blocks in
+  `plans_guard_activation()` into one exception site, per the review's
+  code-quality finding -- a future edit to only one branch could have
+  silently reintroduced the bypass. No behavior change; re-verified live
+  (insert bypass rejected, raw update bypass rejected, direct deactivate
+  still allowed, insert(false)+activate_plan() still works) with fresh,
+  separate transactions per check this time -- the first live-verification
+  pass on 0006/0007 accidentally shared one transaction across an
+  RPC-activation step and a "raw update" step, which let
+  `mtdo.activating_plan`'s transaction-local scope leak between them and
+  silently passed a check that would fail across real, separate HTTP
+  requests. Caught and corrected before merge, not after.
+
+Verification: `tsc --noEmit`, `eslint .`, `next build --webpack` clean;
+0008 applied via `supabase db push --linked`; all four guard properties
+re-verified live against the linked project using separate `supabase db
+query --linked` invocations (separate transactions) to match real request
+isolation.
