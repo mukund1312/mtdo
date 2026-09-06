@@ -218,12 +218,31 @@ the field as required, not optional.
 
 Send the raw `blocks.id` UUID as a string. Nothing else in the payload is read by anything.
 
-**Both kinds are still unwired** (§2c) — the Today kanban (`docs/designs/wave1-frontend-briefs.md`
-§2) is the screen that will emit them, at the point a block moves into or out of the `done`
-column. Until it does, `blocks_done` is legitimately `0` for every user even with the job
-running; `focus_seconds` and `sessions_completed` populate from the session RPCs, which are
-already wired. That is a second, separate gap from mtdo-bugs #93 and is tracked with the Today
-screen, not with the job.
+**Now wired** (as of `feat: wire Signal Deck today and progress`, PR #116) — the Today screen
+(`web/app/(marketing)/architecture-02/today-deck.tsx`) emits `task_completed`/`task_regressed`
+with `payload.block_id` when a block's status changes, matching the contract above. `blocks_done`
+populates for real going forward; `focus_seconds` and `sessions_completed` were already wired via
+the session RPCs.
+
+## 2e. Observability — Sentry + PostHog (wired, Wave 1 follow-up)
+
+`web/instrumentation.ts` (server/edge, Next.js's own instrumentation convention) and
+`web/instrumentation-client.ts` (client, the `instrumentation-client` convention — see that file's
+header comment for why this isn't wired through `app/layout.tsx`) initialize Sentry and PostHog.
+Both read `NEXT_PUBLIC_SENTRY_DSN` / `NEXT_PUBLIC_POSTHOG_KEY`+`NEXT_PUBLIC_POSTHOG_HOST` and
+degrade silently when unset — same failure contract as every other integration in this product,
+never a startup error. `web/app/global-error.tsx` is the root error boundary that reports
+uncaught client errors to Sentry (required by Next.js to catch an error thrown by the root layout
+itself, which is why it renders its own `<html>/<body>` rather than composing with `layout.tsx`).
+
+PostHog's autocapture (`capture_pageview: true`) is supplementary product analytics (funnels,
+heatmaps) — it does not replace the `activity_events` ledger (`schema.md` §4) as the source of
+truth; `record-event.ts`'s explicit event vocabulary stays canonical for anything the product
+itself reads back (rollups, coaching, retention).
+
+Not done: source-map upload to Sentry on build (needs `SENTRY_AUTH_TOKEN` + org/project config,
+not yet provisioned) and a `withSentryConfig` wrap of `next.config.ts`. Neither blocks error
+capture working today; both are a later, low-urgency polish pass.
 
 ## 3. How the app talks to the database
 
