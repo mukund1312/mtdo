@@ -119,8 +119,13 @@ export default function SessionPage() {
     setPhase("starting");
 
     const supabase = createClient();
+    // p_block_id omitted, not passed as null: the generated RPC arg type is
+    // `string | undefined` (optional, from the SQL DEFAULT), not
+    // `string | null` -- the type generator infers optionality from DEFAULT
+    // presence but doesn't union with null even when the SQL body genuinely
+    // accepts it (migrations/0004). Omitting the key hits that same SQL
+    // default (NULL) with no runtime difference from passing null explicitly.
     const { data, error } = await supabase.rpc("start_session", {
-      p_block_id: null,
       p_planned_duration_s: DEFAULT_DURATION_S,
     });
 
