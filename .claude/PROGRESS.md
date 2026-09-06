@@ -3717,3 +3717,33 @@ schema.md's "structural access-control boundary" claim false for that path.
 - Verification: `tsc --noEmit`, `eslint .` clean; 0007 applied via
   `supabase db push --linked`; insert-bypass and legit-path behavior both
   verified live against the linked project, not just by inspection.
+
+### gh90 follow-up #2: close the "lost activate_plan() response" data-loss case
+
+A third `/code-review 102` pass surfaced the one item the prior pass had
+deliberately documented rather than fixed: if `activate_plan()`'s response
+is lost after its transaction already committed (network drop, function
+timeout), `persistGeneratedPlan` treated `activateError` as a hard failure
+and called `markPlanInactive()`, which re-deactivated the plan that had
+actually just succeeded -- leaving the user with **zero** active plans (the
+old plan was already deactivated inside `activate_plan()`'s own committed
+transaction).
+
+Unlike the previous pass's other residual-risk item, this one had a cheap,
+targeted fix that didn't require folding all four writes into one
+transaction: on any `activateError`, `persist.ts` now re-reads the plan's
+actual `is_active` state before trusting the error. If `activate_plan()`
+really did commit, the re-check wins and the call is treated as the success
+it actually was; `markPlanInactive()` is only ever reached when the RPC
+genuinely failed (rolled back, never committed), which is the one case where
+deactivating is correct.
+
+**Still open, still documented, still not fixed:** if the process dies
+between the `curriculum_items` insert succeeding and the `activate_plan()`
+call being attempted at all, there's no RPC error to re-check against --
+a fully-valid plan is left permanently `is_active: false` with no repair
+path. Same class as the double-submission risk in 0005's header: real,
+requires a specific crash window, no concurrent real users yet for it to
+matter, filed separately if it turns out to.
+
+Verification: `tsc --noEmit`, `eslint .`, `next build --webpack` all clean.

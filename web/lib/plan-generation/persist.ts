@@ -32,22 +32,28 @@
 // separate activate_plan() call), not one transaction: if the activate_plan
 // RPC's response is lost after its transaction already committed
 // server-side (network drop, function timeout) -- as opposed to the RPC
-// genuinely failing/rolling back -- this code cannot tell the difference.
-// It treats a lost response as a hard failure, and the catch block's
-// markPlanInactive() below will then incorrectly deactivate a plan that is
-// actually already correctly active, after which route.ts's caller may
-// persist a second, redundant fallback plan. Symmetrically, if the process
-// dies between the curriculum_items insert succeeding and the
-// activate_plan() call returning at all, a fully-valid plan is left
-// permanently is_active: false with no repair path (no DELETE policy on
-// plans, no background retry job). Both are the same class of problem as
-// the double-submission risk documented above: real, requires a specific
-// crash/network-loss window to trigger, and -- like that one -- not fixed
-// here because Wave 1 has no concurrent real users yet for it to matter.
-// Closing it for real means making the insert-then-activate sequence one
-// transaction (e.g. moving all four writes inside activate_plan() itself,
-// or a dedicated create_and_activate_plan() RPC) -- a larger change than
-// this review cycle's scope; filed separately if it turns out to matter.
+// genuinely failing/rolling back -- an activateError alone can't tell the
+// difference. A third `/code-review 102` pass flagged that blindly trusting
+// the error would let the catch block's markPlanInactive() below
+// incorrectly deactivate a plan that is actually already correctly active
+// (the old plan was already deactivated inside activate_plan()'s own
+// committed transaction, so the user would end up with zero active plans).
+// Fixed below: on any activateError, the code re-reads the plan's actual
+// is_active state before deciding it really failed -- if activate_plan()
+// did commit, that read wins and this is treated as success.
+//
+// What that re-check does NOT close, and can't: if the process dies between
+// the curriculum_items insert succeeding and the activate_plan() call being
+// attempted at all (no RPC call ever went out, nothing to re-check), a
+// fully-valid plan is left permanently is_active: false with no repair path
+// (no DELETE policy on plans, no background retry job). Same class of
+// problem as the double-submission risk documented above: real, requires a
+// specific crash window, not fixed here because Wave 1 has no concurrent
+// real users yet for it to matter. Closing it for real means making the
+// insert-then-activate sequence one transaction (e.g. moving all four
+// writes inside activate_plan() itself, or a dedicated
+// create_and_activate_plan() RPC) -- filed separately if it turns out to
+// matter.
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { GeneratedPlan } from "./types";
@@ -176,7 +182,26 @@ export async function persistGeneratedPlan(
     // this RPC actually serializes against.
     const { error: activateError } = await supabase.rpc("activate_plan", { p_plan_id: planId });
     if (activateError) {
-      throw new Error(`Failed to activate plan: ${activateError.message}`);
+      // A network drop or serverless timeout can lose activate_plan()'s
+      // response after its transaction already committed server-side --
+      // activateError alone can't distinguish "the RPC genuinely failed" from
+      // "it succeeded but we never heard back." Trusting the error blindly
+      // would let the catch block's markPlanInactive() incorrectly
+      // deactivate a plan that is actually already correctly active,
+      // leaving the user with zero active plans (the old plan was already
+      // deactivated inside activate_plan()'s own committed transaction).
+      // Re-check the plan's real state before trusting the error.
+      const { data: recheck } = await supabase
+        .from("plans")
+        .select("is_active")
+        .eq("id", planId)
+        .maybeSingle();
+      if (!recheck?.is_active) {
+        throw new Error(`Failed to activate plan: ${activateError.message}`);
+      }
+      // Fell through: activate_plan() actually committed and this plan is
+      // genuinely active. Only its response was lost -- treat this as the
+      // success it actually was.
     }
 
     return {
@@ -205,13 +230,16 @@ export async function persistGeneratedPlan(
  * never got as far as activate_plan(), so there's nothing to undo -- it's
  * called unconditionally anyway because that's cheaper and safer than trying
  * to track "did activation actually happen" in the caller. The case where it
- * does real work -- and where its own failure matters -- is when
- * activate_plan() itself errored (or its response was lost after committing;
- * see the residual-risk note above), which is also the one case where this
- * update might race the RPC's own already-committed write. Logged loudly on
- * failure rather than swallowed: if this itself fails (transient DB error,
- * RLS), the plan may be left broken AND active, so that must be visible
- * somewhere rather than silently discarded alongside the original error. */
+ * does real work is when activate_plan() itself genuinely errored (rolled
+ * back, never committed) -- the caller already re-checks the plan's real
+ * is_active state before treating an activateError as a failure at all (see
+ * the residual-risk note above), specifically so this function is never
+ * called against a plan that actually committed active; by the time this
+ * runs, is_active really is false already, and this is a no-op there too.
+ * Logged loudly on failure rather than swallowed: if this itself fails
+ * (transient DB error, RLS), the plan may be left broken AND active, so that
+ * must be visible somewhere rather than silently discarded alongside the
+ * original error. */
 export async function markPlanInactive(supabase: SupabaseClient, planId: string): Promise<void> {
   const { error } = await supabase.from("plans").update({ is_active: false }).eq("id", planId);
   if (error) {
