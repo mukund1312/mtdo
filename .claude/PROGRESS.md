@@ -3503,10 +3503,12 @@ update entry above.
 - `tsc --noEmit` and `eslint` both clean on all four new files; `next build`
   succeeds and lists `/auth/callback` as a route.
 - Reviewed post-hoc (`/code-review`): fixed an open-redirect in
-  `auth/callback`'s `next` param, a confirmation-state message that
-  conflated a `getUser()` failure with "still anonymous," a missing
-  rate-limit branch on the OAuth error classifier, and an OAuth button that
-  could get stuck on "Connecting..." forever. See PR #99.
+  `auth/callback`'s `next` param (was raw string-concatenated into the
+  redirect target — now resolved via the URL constructor and rejected if it
+  doesn't stay same-origin), a confirmation-state message that conflated a
+  `getUser()` failure with "still anonymous," a missing rate-limit branch on
+  the OAuth error classifier, and an OAuth button that could get stuck on
+  "Connecting..." forever. See PR #99.
 
 **Handoff to J (frontend trigger logic), the contract to build against:**
 - `<AccountUpgradeForm onUpgraded={(info) => ...} onDismiss={() => ...}
@@ -3573,3 +3575,70 @@ via the local PG execution test above.
 - Regenerate Supabase generated types (`web/lib/supabase/`) once the
   migration is pushed, so `feedback` is typed rather than an untyped
   `.from("feedback")` call.
+
+---
+
+## 2026-09-06 [web] — W2: event instrumentation wiring
+
+**Did:** Task #6 on the W2 board. `record_event()` (schema.md §4) existed from
+W0 with zero client call sites — wired the ones that have a real trigger
+point in the app today and left the rest deliberately unwired.
+
+- New `web/lib/analytics/record-event.ts`: thin typed wrapper over
+  `supabase.rpc('record_event', { p_kind, p_payload })`. `ClientEventKind`
+  union is the single source of truth for which kinds `record_event()`
+  accepts client-side (excludes the server-minted `session_*` and
+  `tutor_message_sent`, which it would reject with `22023` anyway). Errors
+  are logged and swallowed, not thrown — instrumentation must never break the
+  feature it's attached to.
+- Wired `screen_opened` in `web/app/session/page.tsx` (mount-only
+  `useEffect`, empty deps, `{ screen: "session" }`). Did not add it to
+  `(marketing)/page.tsx` — that's J-owned UI (split-plan §1) and out of scope
+  to edit directly.
+- Wired `plan_generated` in `web/app/api/onboarding/plan/route.ts`, right
+  after `persistGeneratedPlan()` resolves, on both the primary path and the
+  fallback-after-persist-failure path. Confirmed the route's `supabase`
+  client (`lib/supabase/server.ts`) carries the calling user's cookie session
+  (not service-role), so `record_event()` runs under normal RLS/grants as
+  that user — no new auth plumbing needed.
+- **Decided, documented in `api.md` §2c:** `goal_created` is not also fired
+  alongside `plan_generated` in onboarding — they'd be the same fact twice
+  (schema.md §4 rule 1). `goal_created` stays reserved for a future
+  non-AI-generation goal-creation flow.
+- **Decided, documented in `api.md` §2c:** `focus_mode_toggled` is not wired.
+  `session/page.tsx` has no independent focus-mode toggle — its `phase`
+  state is exactly the session lifecycle already captured by the
+  server-minted `session_started`/`completed`/`abandoned` events. Wiring it
+  at the same transitions would duplicate a fact the server already records,
+  not capture a new one. (Checked `src/mtdo/app.py`'s terminal-app usage —
+  there it's a genuinely independent UI-panel toggle; the web app has no
+  equivalent yet.)
+- **Left unwired, by design — no UI exists to emit them:** `signup`,
+  `task_completed`, `task_regressed`, `proof_submitted`, `note_created`,
+  `paywall_viewed`. No kanban board, notes UI, proof flow, or paywall is
+  built yet. All six stay in `ClientEventKind` so the type stays complete,
+  but have zero call sites. Documented as a punch list in `api.md` §2c so a
+  future session doesn't read the empty grep result as "this task forgot
+  them."
+- `docs/architecture/api.md` updated in the same session (new §2c) —
+  intentionally numbered `2c`, not `2b`: another concurrent session had
+  already claimed `2b` for the feedback-widget work landing in this same
+  working tree at the same time (untracked `0003_feedback.sql` + related
+  `api.md`/`schema.md`/`PROGRESS.md` edits) — left that work exactly as
+  found, did not commit any of it.
+- Verification: `tsc --noEmit`, `eslint .`, `next build` — see PR for actual
+  output; this session ran all three before opening the PR.
+
+**Concurrency note for the next session:** at the time of this work, the
+working tree also had uncommitted changes from at least two other concurrent
+sessions (a feedback-widget backend touching `schema.md`/`api.md`
+§2b/PROGRESS.md, and an anonymous→real-account upgrade flow touching
+`web/lib/auth/`, `web/app/auth/`, `web/components/AccountUpgradeForm.*`,
+PROGRESS.md) plus an untracked `supabase/migrations/0003_feedback.sql`. None
+of that is part of this PR — staged only the files this entry lists, via
+`git add -p` where a file (this one, `api.md`) had mixed hunks from more than
+one session.
+
+**Next / open items:** none blocking. Whoever builds the kanban board, notes
+UI, proof flow, or paywall should wire the corresponding event from
+`web/lib/analytics/record-event.ts` at that point, per `api.md` §2c.
