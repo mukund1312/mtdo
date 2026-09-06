@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import "./signal-deck.css";
+import "./route-entry.css";
 
 type Deck = "home" | "work" | "calendar" | "review";
 
@@ -53,6 +54,7 @@ function HomeDeck({ onTask, onFocus, onCalendar, onReview }: { onTask: () => voi
       <span className="a02-eyebrow">TODAY’S SIGNAL</span>
       <h1>Build<br /><em>momentum.</em></h1>
       <p>One clean session moves the route forward. The rest is noise.</p>
+      <a className="a02-route-setup" href="/architecture-02/onboarding">Set up your route <i>↗</i></a>
     </section>
     <button className="a02-focus-node" onClick={onFocus}>
       <span className="a02-node-orbit a02-o1" /><span className="a02-node-orbit a02-o2" /><span className="a02-node-core">▶</span>
