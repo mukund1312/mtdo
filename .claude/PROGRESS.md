@@ -3642,3 +3642,40 @@ one session.
 **Next / open items:** none blocking. Whoever builds the kanban board, notes
 UI, proof flow, or paywall should wire the corresponding event from
 `web/lib/analytics/record-event.ts` at that point, per `api.md` §2c.
+
+## gh90: activate_plan() advisory-lock RPC + structural bypass close (PR #102)
+
+- `supabase/migrations/0005_activate_plan_rpc.sql`: `activate_plan(p_plan_id)`,
+  `security definer`, serializes concurrent activations per user via
+  `pg_advisory_xact_lock(hashtext(v_uid::text))`, replaces `persist.ts`'s two
+  independent `.update()` calls (proven racy in PR #95, closed unmerged —
+  see that PR's history) with one RPC call.
+- `supabase/migrations/0006_plans_activation_guard.sql`: `/code-review 102`
+  correctly flagged that 0005 alone didn't close the actual access-control
+  gap — `plans_update_own` (0001_seam.sql) still let any authenticated
+  client `.update({is_active: true})` directly, skipping the lock entirely.
+  Fixed with a `before update` trigger (`plans_guard_activation`) that
+  rejects any `UPDATE` flipping `is_active` false→true unless a
+  transaction-local flag (`mtdo.activating_plan`, set via `set_config(...,
+  true)`) is set — and `activate_plan()` is the only place that ever sets
+  it. Verified live against the linked project (not just read by
+  inspection): a raw `UPDATE plans SET is_active = true` now raises
+  `insufficient_privilege`, and `activate_plan()` still succeeds through the
+  RPC path. Direct `.update({is_active: false})` (the documented "retire a
+  goal" pattern) is untouched — the trigger only fires on the false→true
+  transition.
+- Also caught by the same review: `web/lib/supabase/database.types.ts` had
+  been regenerated locally (confirmed to contain `activate_plan`) but never
+  committed after a `git merge origin/main`. Regenerated again (now
+  including 0006, though 0006 doesn't change any RPC signature) and
+  committed.
+- `docs/architecture/schema.md` §6 updated: the `activate_plan()` bullet
+  previously and correctly described this as "a convention, not an
+  access-control boundary" — that caveat is no longer true after 0006 and
+  has been rewritten to describe the actual structural guarantee.
+- Verification: `tsc --noEmit`, `eslint .`, `next build --webpack` all
+  clean; migration applied via `supabase db push --linked` against
+  `loqhtqrekrmgywekihrh`; trigger behavior verified with a live `do $$ ...
+  $$` block against the linked database (inserted a throwaway auth.users +
+  two plans rows, confirmed the raw update path and the RPC path behave as
+  documented, cleaned up the test rows).

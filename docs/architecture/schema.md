@@ -360,13 +360,18 @@ Other rules, all enforced in the SQL:
   path. Inside each function, the `user_id = auth.uid()` check *is* the access control, not a
   duplicate of a policy. `append_event()` and `settle_session()` are internal and are executable
   by nobody but the owner.
-- **`activate_plan(p_plan_id)` (migrations/0005) is a convention, not an access-control boundary
-  like the RPCs above.** `plans` stays ordinary client-writable (the table above), so RLS alone
-  would still let a client `.update({is_active: true})` directly — the RPC exists because
-  "which plan is active" is a genuine concurrency problem (gh90: two unprotected `.update()` calls
-  from concurrent requests race), solved with `pg_advisory_xact_lock` serializing per user, not
-  because the write itself needs to be forbidden. `persist.ts` calling this RPC instead of a raw
-  update is the enforced path in practice; nothing at the grant/policy level blocks bypassing it.
+- **`activate_plan(p_plan_id)` (migrations/0005, guarded by 0006) is a structural access-control
+  boundary, not just a convention.** `plans` stays ordinary client-writable (the table above) —
+  `plans_update_own` still permits a direct `.update({is_active: false})`, which is the documented
+  "retire a goal" path and must keep working — but a `before update` trigger
+  (`plans_guard_activation`, 0006) rejects any `UPDATE` that flips `is_active` from false to true
+  unless a transaction-local flag (`mtdo.activating_plan`) is set, and `activate_plan()` is the
+  only place that ever sets it, immediately before its own writes. So a raw client
+  `.update({is_active: true})` now fails at the database with `insufficient_privilege`, not just
+  "isn't the path the app happens to use." The RPC still exists primarily to solve the
+  concurrency problem (gh90: two unprotected `.update()` calls from concurrent requests race),
+  solved with `pg_advisory_xact_lock` serializing per user — the trigger closes the separate gap
+  of a write path that skips the RPC (and therefore the lock) entirely.
 - **Auth model:** Supabase **anonymous auth from first visit**, upgraded in place to a real
   account. Every ledger event carries a real `user_id` from event #1 — no pre-signup gap in the
   data, and no migration needed when a user later signs up (same row, same id). A `profiles` row
