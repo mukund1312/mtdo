@@ -86,6 +86,20 @@ export async function POST(request: Request) {
   }
   const answers = body;
 
+  // The marketing/prototype surfaces intentionally remain viewable without
+  // Supabase configuration. Plan generation is different: it creates an
+  // anonymous user and persists an active plan, so fail with an actionable
+  // JSON response rather than letting the server client throw a generic 500.
+  if (!process.env.NEXT_PUBLIC_SUPABASE_URL || !process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY) {
+    return Response.json(
+      {
+        error:
+          "Plan generation needs Supabase configuration. Add NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY to web/.env.local, then restart the dev server.",
+      },
+      { status: 503 },
+    );
+  }
+
   const supabase = await createClient();
   const {
     data: { user },
