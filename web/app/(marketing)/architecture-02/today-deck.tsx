@@ -34,6 +34,16 @@ function isBlockStatus(value: string): value is BlockStatus {
   return value === "backlog" || value === "todo" || value === "in_progress" || value === "done";
 }
 
+function databaseErrorMessage(error: unknown, fallback: string): string {
+  if (!error || typeof error !== "object") return fallback;
+  const candidate = error as { code?: string; details?: string; hint?: string; message?: string };
+  const detail = [candidate.message, candidate.details, candidate.hint].filter(Boolean).join(" ");
+  if (candidate.code === "23514" && detail.includes("status")) {
+    return "Backlog is ready in the UI, but the database migration that allows it has not been deployed yet.";
+  }
+  return candidate.message || candidate.details || fallback;
+}
+
 function roughDuration(seconds: number): string | null {
   return seconds > 0 ? `${Math.max(1, Math.round(seconds / 60))} min logged` : null;
 }
@@ -42,6 +52,7 @@ export function TodayDeck({ onOpenBlock }: { onOpenBlock: (block: TodayBlock) =>
   const [blocks, setBlocks] = useState<TodayBlock[]>([]);
   const [state, setState] = useState<"loading" | "ready" | "error">("loading");
   const [updatingId, setUpdatingId] = useState<string | null>(null);
+  const [writeError, setWriteError] = useState<string | null>(null);
   const [route, setRoute] = useState<ActiveRoute | null>(null);
   const [composerOpen, setComposerOpen] = useState(false);
   const [composerError, setComposerError] = useState<string | null>(null);
@@ -91,12 +102,14 @@ export function TodayDeck({ onOpenBlock }: { onOpenBlock: (block: TodayBlock) =>
 
   const moveBlock = useCallback(async (block: TodayBlock, nextStatus: BlockStatus) => {
     if (block.status === nextStatus || updatingId) return;
+    setWriteError(null);
     setUpdatingId(block.id);
     const supabase = createClient();
     const { error } = await supabase.from("blocks")
       .update({ claimed: nextStatus === "in_progress", status: nextStatus }).eq("id", block.id);
     if (error) {
-      console.error("[today] failed to update block:", error);
+      console.error("[today] failed to update block:", databaseErrorMessage(error, "Unknown database error."));
+      setWriteError(databaseErrorMessage(error, "We could not move that signal. Try again."));
       setUpdatingId(null);
       return;
     }
@@ -156,8 +169,8 @@ export function TodayDeck({ onOpenBlock }: { onOpenBlock: (block: TodayBlock) =>
       user_id: user.id,
     }).select("id, text, status, notes, claimed, elapsed_seconds, position").single();
     if (error || !data || !isBlockStatus(data.status)) {
-      console.error("[today] failed to create block:", error);
-      setComposerError("We could not save that signal. Your route is unchanged.");
+      console.error("[today] failed to create block:", databaseErrorMessage(error, "No row returned."));
+      setComposerError(databaseErrorMessage(error, "We could not save that signal. Your route is unchanged."));
       setCreating(false);
       return;
     }
@@ -174,6 +187,7 @@ export function TodayDeck({ onOpenBlock }: { onOpenBlock: (block: TodayBlock) =>
       return <section key={lane.id} className={`a02-lane a02-today-lane a02-today-lane--${lane.id} ${dropTarget === lane.id ? "is-drop-target" : ""}`} onDragOver={(event) => { event.preventDefault(); setDropTarget(lane.id); }} onDragLeave={() => setDropTarget((current) => current === lane.id ? null : current)} onDrop={(event) => { event.preventDefault(); dropBlock(lane.id); }}><header><span>{lane.index}</span><b>{lane.label}</b><i>{state === "loading" ? "…" : laneBlocks.length}</i></header>{state === "loading" ? <LoadingBlocks /> : laneBlocks.length === 0 ? <p className="a02-lane-empty">Drop a signal here.</p> : laneBlocks.map((block) => <article className={`a02-work-unit a02-live-block ${block.claimed || block.status === "in_progress" ? "is-claimed" : ""}`} key={block.id} aria-busy={updatingId === block.id} draggable={updatingId !== block.id} onDragStart={(event) => { event.dataTransfer.effectAllowed = "move"; event.dataTransfer.setData("text/plain", block.id); setDraggedBlockId(block.id); }} onDragEnd={() => { setDraggedBlockId(null); setDropTarget(null); }}><em>{block.status === "backlog" ? "BACKLOG" : block.status === "in_progress" ? "IN MOTION" : block.status === "done" ? "CLOSED" : "READY"}</em><button type="button" className="a02-work-open" onClick={() => onOpenBlock(block)}><strong>{block.text}</strong></button><small>{roughDuration(block.elapsed_seconds) ?? (block.notes?.trim() || "Personal route")}</small>{block.status === "in_progress" && <span className="a02-unit-pulse" aria-label="In progress" />}<span className="a02-drag-hint" aria-hidden="true">Drag to move</span></article>)}</section>;
     })}</div>}
     {state === "ready" && blocks.length === 0 && <p className="a02-product-note">No blocks are scheduled for today. Add a signal to begin your route.</p>}
+    {writeError && <p className="a02-product-write-error" role="alert">{writeError}</p>}
     {composerOpen && <BlockComposer categories={route?.categories ?? []} draft={draft} error={composerError} creating={creating} onChange={setDraft} onClose={() => setComposerOpen(false)} onCreate={() => void createBlock()} />}
   </section>;
 }
