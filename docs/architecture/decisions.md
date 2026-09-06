@@ -23,6 +23,7 @@ plan docs (`docs/designs/*.md`). Each entry: the call, and the reason.
 | 2026-09-04 | **`middleware.ts` written as `proxy.ts`** | Next.js 16 renamed the file convention (function export also renamed `middleware` → `proxy`); functionality is unchanged, only the name |
 | 2026-09-04 | **Server-authoritative writes are `security definer` RPCs, not RLS policies** (sessions, ledger); client tables carry explicit `REVOKE`s, not just missing policies | Full writeup below — an adversarial audit found D12/D13/D14/D17/D21 were unenforced and the ledger forgeable |
 | 2026-09-04 | **Every pinned version and config choice above was verified**, not assumed | `npm view <pkg> version`/`versions` for real current releases, then a full `rm -rf node_modules && npm ci` + `tsc --noEmit` + `eslint .` + `next build` pass before committing — three real, current ecosystem incompatibilities (TS7, FlatCompat, `getFilename`) were caught this way and would otherwise have shipped broken |
+| 2026-09-06 | **`EmberMorph` takes plain `sessionId`/`plannedDurationS`/`elapsedS`/`originRect` values via a `phase`-tagged `trigger` prop, never a `focus_sessions` row or a Supabase client** (`api.md` §4.1) | The marketing showcase has no auth and no real session, so the component can't assume either; a `phase` union plus an `onExitComplete` callback also means neither caller has to separately track "is the reverse animation still playing" |
 
 ---
 
@@ -108,7 +109,6 @@ product decision, not a schema one; it is flagged in a prominent comment on `act
 
 ## Open, not yet decided
 
-- Exact `EmberMorph` prop API (owner: whoever implements the W1 Session screen).
 - Whether the founder-facing analytics need anything beyond PostHog (deferred until W2 has real
   users — don't build speculatively).
 - Realtime infrastructure choice for room presence (Supabase Realtime is the working assumption
