@@ -1,17 +1,11 @@
 "use client";
 
 import { useState } from "react";
+import { TodayDeck } from "./today-deck";
 import "./signal-deck.css";
 import "./route-entry.css";
 
 type Deck = "home" | "work" | "calendar" | "review";
-
-const columns = [
-  ["Backlog", ["Binary search notes", "System design: cache"]],
-  ["Queued", ["Valid Anagram", "SQL group by"]],
-  ["In motion", ["Two Sum"]],
-  ["Closed", ["Arrays: foundations", "Two pointers"]],
-];
 
 export default function ArchitectureTwoPage() {
   const [deck, setDeck] = useState<Deck>("home");
@@ -34,8 +28,8 @@ export default function ArchitectureTwoPage() {
         <button className="a02-command" onClick={() => setTutorOpen(true)}>⌘ &nbsp; Ask anything <kbd>space</kbd></button>
       </header>
 
-      {deck === "home" && <HomeDeck onTask={() => setLensOpen(true)} onFocus={() => setFocusOpen(true)} onCalendar={() => setDeck("calendar")} onReview={() => setDeck("review")} />}
-      {deck === "work" && <WorkDeck onTask={() => setLensOpen(true)} />}
+      {deck === "home" && <HomeDeck onToday={() => setDeck("work")} onFocus={() => setFocusOpen(true)} onCalendar={() => setDeck("calendar")} onReview={() => setDeck("review")} />}
+      {deck === "work" && <TodayDeck />}
       {deck === "calendar" && <CalendarDeck onTask={() => setLensOpen(true)} />}
       {deck === "review" && <ReviewDeck />}
 
@@ -48,7 +42,7 @@ export default function ArchitectureTwoPage() {
   );
 }
 
-function HomeDeck({ onTask, onFocus, onCalendar, onReview }: { onTask: () => void; onFocus: () => void; onCalendar: () => void; onReview: () => void }) {
+function HomeDeck({ onToday, onFocus, onCalendar, onReview }: { onToday: () => void; onFocus: () => void; onCalendar: () => void; onReview: () => void }) {
   return <section className="a02-home" aria-label="Signal deck home">
     <section className="a02-home-intro">
       <span className="a02-eyebrow">TODAY’S SIGNAL</span>
@@ -61,16 +55,12 @@ function HomeDeck({ onTask, onFocus, onCalendar, onReview }: { onTask: () => voi
       <div><small>ACTIVE VECTOR</small><strong>Two Sum</strong><em>45:00 / ready to launch</em></div><b>START<br />FOCUS ↗</b>
     </button>
     <section className="a02-signal-stack">
-      <button className="a02-signal-card a02-card-route" onClick={onTask}><span>01 / TASK SIGNAL</span><b>Two Sum</b><p>Find the lookup you wish you had.</p><i>OPEN LENS ↗</i></button>
+      <button className="a02-signal-card a02-card-route" onClick={onToday}><span>01 / TODAY’S BLOCKS</span><b>Open today</b><p>See the work your route has made visible.</p><i>OPEN TODAY ↗</i></button>
       <button className="a02-signal-card a02-card-room"><span>02 / ROOM PULSE</span><div className="a02-people"><i>AK</i><i>JM</i><i>+1</i></div><b>3 learners live</b><p>SQL route resumes at 19:00</p></button>
       <button className="a02-signal-card a02-card-time" onClick={onCalendar}><span>03 / TIME FIELD</span><strong>3<span>h</span> 20<span>m</span></strong><p>Open space left today</p><i>VIEW AGENDA ↗</i></button>
       <button className="a02-signal-card a02-card-proof" onClick={onReview}><span>04 / PROOF LOOP</span><div className="a02-proof-bars"><i /><i /><i /><i /><i /><i /><i /></div><b>4-day signal</b><p>Your rhythm strengthens before 10 AM.</p></button>
     </section>
   </section>;
-}
-
-function WorkDeck({ onTask }: { onTask: () => void }) {
-  return <section className="a02-work"><div className="a02-view-head"><div><span className="a02-eyebrow">WORK SURFACE / FLOW MAP</span><h1>Move the<br /><em>right pieces.</em></h1></div><div className="a02-view-controls"><button>Filter +</button><button>Group: route</button><button className="a02-add">+ New signal</button></div></div><div className="a02-board">{columns.map(([label, items], col) => <section key={label as string} className={`a02-lane lane-${col}`}><header><span>0{col + 1}</span><b>{label as string}</b><i>{(items as string[]).length}</i></header>{(items as string[]).map((item, index) => <button className="a02-work-unit" key={item} onClick={onTask}><em>{col === 2 ? "LIVE" : index === 0 ? "NEXT" : "READY"}</em><strong>{item}</strong><small>{col === 2 ? "DSA / 45 min" : "Personal route"}</small>{col === 2 && <span className="a02-unit-pulse" />}</button>)}</section>)}</div></section>;
 }
 
 function CalendarDeck({ onTask }: { onTask: () => void }) {
@@ -84,7 +74,7 @@ function ReviewDeck() {
 }
 
 function DeckDock({ active, onChange }: { active: Deck; onChange: (next: Deck) => void }) {
-  const items: [Deck, string, string][] = [["home", "◉", "Deck"], ["work", "▦", "Work"], ["calendar", "⌗", "Time"], ["review", "◌", "Review"]];
+  const items: [Deck, string, string][] = [["home", "◉", "Deck"], ["work", "▦", "Today"], ["calendar", "⌗", "Time"], ["review", "◌", "Review"]];
   return <nav className="a02-dock" aria-label="Signal deck navigation">{items.map(([id, icon, label]) => <button key={id} className={active === id ? "is-active" : ""} onClick={() => onChange(id)}><i>{icon}</i><span>{label}</span></button>)}<button className="a02-dock-more"><i>···</i><span>More</span></button></nav>;
 }
 
