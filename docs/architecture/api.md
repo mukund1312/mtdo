@@ -196,6 +196,35 @@ an unrelated component just to close this list out.
 server-side inside `start_session()`/`complete_session()`/`abandon_session()` (schema.md §5),
 already called from `web/app/session/page.tsx`.
 
+## 2d. Ledger payload contracts — what the rollup job reads
+
+Most ledger payloads are free-form: nothing downstream reads them, so a call site can put
+whatever is useful for later analysis in there. **Two kinds are different**, because
+`recompute_daily_rollups()` (§3a) reads their payload to produce `daily_rollups.blocks_done`:
+
+| `kind` | Required payload | Read by |
+|---|---|---|
+| `task_completed` | `{ block_id: string }` — the `blocks.id` that was completed | the recompute job's per-day dedup key |
+| `task_regressed` | `{ block_id: string }` — the `blocks.id` that was un-completed | same |
+
+**Why it matters, concretely.** The job counts *distinct blocks* per day, taking each block's
+last event of that day. Without `block_id` it cannot tell a double-fired completion of one block
+from two genuine completions of two blocks, and it cannot tell that a later `task_regressed`
+cancels an earlier `task_completed` for the same block. An event that omits it is not dropped —
+it falls back to the ledger row's own id and counts as one standalone completion — so a missing
+`block_id` fails *loudly in the number*, by inflating `blocks_done`, rather than by erroring.
+`DESIGN.md`'s "the app never exaggerates the user's record" is the rule this protects, so treat
+the field as required, not optional.
+
+Send the raw `blocks.id` UUID as a string. Nothing else in the payload is read by anything.
+
+**Both kinds are still unwired** (§2c) — the Today kanban (`docs/designs/wave1-frontend-briefs.md`
+§2) is the screen that will emit them, at the point a block moves into or out of the `done`
+column. Until it does, `blocks_done` is legitimately `0` for every user even with the job
+running; `focus_seconds` and `sessions_completed` populate from the session RPCs, which are
+already wired. That is a second, separate gap from mtdo-bugs #93 and is tracked with the Today
+screen, not with the job.
+
 ## 3. How the app talks to the database
 
 Most tables are read and written directly with the anon-key client under RLS. **Five are not**
@@ -214,7 +243,7 @@ policy or a grant. `schema.md` §6 has the full privilege table.
 | `from('activity_events').insert({ kind, occurred_at, payload })` | `rpc('record_event', { p_kind, p_payload })` |
 | `from('tutor_messages').select(...)` | `rpc('tutor_context', { p_conversation_id, p_recent_limit })` |
 | `from('tutor_messages').insert(...)` | *not available to clients* — the W3b Route Handler (service role) only |
-| `from('daily_rollups').insert/update(...)` | *not available* — derived by a service-role recompute job (D13) |
+| `from('daily_rollups').insert/update(...)` | *not available* — derived by `recompute_daily_rollups()`, service role only (D13); see §3a |
 
 Reads of `focus_sessions`, `activity_events` and `daily_rollups` are ordinary RLS-filtered
 `select`s and need no RPC.
@@ -257,6 +286,86 @@ Notes for call sites:
   gap between "has a SQL default" and "is optional in practice" that the generator can't see past.
   Always pass it explicitly, and don't trust `?:` on an RPC arg as "safe to omit" without checking
   the actual function body first.
+
+## 3a. `daily_rollups` — the recompute job (mtdo-bugs #93)
+
+`daily_rollups` is derived and never hand-written (D13). `supabase/migrations/0009` supplies the
+job that materializes it and `0010` schedules it; before those, the table had a shape, RLS and
+grants but no writer at all, so the Progress heatmap could only ever render its empty state.
+
+```sql
+public.recompute_daily_rollups(
+  p_from date default null,     -- default: p_to - 2
+  p_to   date default null,     -- default: today, in p_timezone
+  p_timezone text default 'UTC'
+) returns integer                -- rollup rows written
+```
+
+Service role only — `EXECUTE` is revoked from `public`, `anon` and `authenticated`. Clients read
+`daily_rollups` under RLS and never call this.
+
+**Where the numbers come from.**
+
+| Column | Source | Rule |
+|---|---|---|
+| `blocks_done` | `activity_events` (`task_completed` / `task_regressed`) | Distinct blocks per day, **last event of that day wins**. Re-completing one block counts once; complete-then-regress within the day counts zero. A regression on a *later* day does not retroactively change the earlier day. |
+| `focus_seconds` | `focus_sessions` | `sum(least(completed_at - started_at, planned_duration_s))` over `completed` **and** `abandoned` sessions. Abandoned time is real time and counts; the cap keeps a tab left open for nine hours from reporting nine hours of focus. |
+| `sessions_completed` | `focus_sessions` | `state = 'completed'` only. |
+
+**Which day a fact lands on.** Tasks use the event's server-stamped `occurred_at`. Sessions use
+`started_at`, *not* the settle time — a session spanning midnight counts whole on the day the
+work began, and a session left running overnight and abandoned the next morning (the `55006`
+recovery contract, §3) is credited to the day it was actually worked.
+
+**Why sessions come from `focus_sessions` and not from the `session_*` ledger events.** They
+cannot disagree: `settle_session()` writes the row and appends the event inside one transaction,
+and neither table has a client write path. What the table has that the events do not is
+`started_at` (the events don't carry it at all) and typed, constraint-backed columns instead of
+a `jsonb` payload — reading focus time out of `payload->>'elapsed_s'` would start silently
+producing nulls the day that payload's shape changed, and a heatmap that quietly reads zero is
+the worst available failure mode for this table. `blocks.status`/`blocks.elapsed_seconds` are
+*not* used for either: `blocks` is ordinary client-writable data under RLS, so its timestamps are
+whatever the client says they are.
+
+**It is a full replace, not an increment.** Every run rewrites each in-window
+`(user_id, date, room_id)` row from source. That is what lets a number go *down* when a
+correction arrives, and what makes the job self-healing — there is no drift state to repair.
+`computed_at` is bumped on every run even when the numbers are unchanged, so a reader can answer
+"how fresh is this row" (which is what it's for) rather than "when did it last change".
+
+**Scheduling.** `0010` registers a pg_cron job, `mtdo-daily-rollups`, running
+`select public.recompute_daily_rollups(null, null, 'UTC')` every ten minutes. If pg_cron is not
+enabled on the project, that migration prints a notice and does nothing rather than failing —
+check for it after a `db push`:
+
+```sql
+select jobname, schedule, active from cron.job where jobname = 'mtdo-daily-rollups';
+```
+
+If pg_cron is unavailable, drive the identical function from any service-role caller (a Supabase
+Edge Function on a schedule, or a Next.js Route Handler behind Vercel cron holding the service
+key — note `web/lib/supabase/server.ts` is the anon client and must not gain that key). Nothing
+about the aggregation changes; only the trigger does.
+
+**Backfilling.** After importing history, or the first time the job is enabled on a project that
+already has a ledger:
+
+```sql
+select public.recompute_daily_rollups('2026-01-01', current_date, 'UTC');
+```
+
+Runs serialize against each other on an advisory lock, so a backfill and a cron tick cannot
+interleave; the backfill waits rather than being skipped.
+
+**The time zone is a property of the whole table, not of a call.** `daily_rollups.date` means
+"the local date in the zone the job ran with", and there is no per-user zone stored anywhere yet
+(`profiles` has no such column). UTC is the pinned default, consistent with the "use the date the
+server considers today" convention already given to the Today screen. **Do not run the job in a
+second zone against a window that has already been computed in another** — it does not migrate
+the existing rows, it writes new ones under new dates and leaves the originals behind, so one
+event ends up counted on two days. Changing the zone is a `delete from daily_rollups` plus a full
+backfill. When `profiles` eventually gains a time zone, the upgrade is to join it and pass the
+per-user value; the parameter exists so that is a small change rather than a rewrite.
 
 ## 4. The EmberMorph component contract
 

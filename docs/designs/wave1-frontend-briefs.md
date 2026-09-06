@@ -47,6 +47,16 @@ real data to show until a plan exists.
     persist. This is the one real failure state to design for.
 - On `done`, navigate to Today (or the plan's first day) with the returned `plan.categories`.
 
+- **Moving a block into or out of `done` must also emit a ledger event** —
+  `recordEvent(supabase, "task_completed", { block_id })` on entering `done`, and
+  `"task_regressed"` with the same shape on leaving it (`web/lib/analytics/record-event.ts`,
+  already written; both kinds are in `ClientEventKind` and currently have zero call sites).
+  **`block_id` is required, not optional:** the `daily_rollups` recompute job reads it to count
+  distinct blocks per day, and an event that omits it inflates `blocks_done` rather than
+  erroring. Full contract in `docs/architecture/api.md` §2d. This event is the *only* source of
+  the Progress heatmap's `blocks_done` — the `.update()` on `blocks.status` does not feed it, by
+  design (`blocks` is client-writable, so its timestamps aren't trustworthy for reporting).
+
 **States to design:** empty form → submitting/streaming → success (real plan) → success (fallback
 plan, softer messaging) → hard error (retry).
 
@@ -69,9 +79,13 @@ screen a returning user actually lands on and lives in.
   claimed, started_at, elapsed_seconds, completed_at)` — ordinary client-writable table under RLS
   (own rows only), no RPC needed for reads or status updates on `status`/`notes`/`claimed`.
 - `status` is `'todo' | 'in_progress' | 'done'` — this is the kanban column key.
-- Query `blocks` filtered to `date = today` (server timezone vs. client timezone: use the date the
-  server considers "today" — if this needs a decision, ask M, don't guess) and `user_id = auth
-  session user`, ordered by `position`.
+- Query `blocks` filtered to `date = today` and `user_id = auth session user`, ordered by
+  `position`. **Answered 2026-09-06 — "today" is the UTC date**, not the browser's local date.
+  `daily_rollups.date` is bucketed in UTC for the same reason (no per-user time zone is stored
+  anywhere yet — `api.md` §3a), and Today and Progress disagreeing about which day it is would be
+  a genuinely confusing bug. Use `new Date().toISOString().slice(0, 10)`, not
+  `toLocaleDateString()`. If per-user time zones ever ship, both screens change together;
+  `decisions.md`'s "Open, not yet decided" tracks it.
 - **`elapsed_seconds` on a block is a client-maintained convenience mirror, explicitly documented
   as NOT the trustworthy focus-time source** (`schema.md` §2) — fine to show as a rough per-task
   number on this screen, but Progress/reporting must never read it as ground truth. If Today needs
@@ -87,7 +101,9 @@ kanban (todo/in_progress/done columns), a block claimed/in-progress (visually di
 Session).
 
 **Boundaries:** block status transitions are direct client `.update()` calls under RLS — no RPC
-exists or is needed for this (unlike sessions/ledger). Do not invent one.
+exists or is needed for this (unlike sessions/ledger). Do not invent one. The ledger event above
+is *in addition to* that update, not a replacement for it — the `.update()` is the block's state,
+the event is the record that it happened.
 
 ---
 
@@ -101,16 +117,26 @@ call within `DESIGN.md`'s layout rules.
 - `daily_rollups(id, user_id, date, room_id null, blocks_done, focus_seconds,
   sessions_completed, computed_at)` — **read-only to clients** (`grant select ... to
   authenticated`, no insert/update/delete grant). This is the heatmap's data source.
-- **Known blocker, not yet resolved on the backend side:** nothing computes `daily_rollups` yet.
-  `schema.md`'s own comment says it's "written by a future service-role recompute job" — that job
-  does not exist in this repo as of this doc. Build the heatmap UI against the documented
-  `daily_rollups` shape now (so the screen is ready the moment real rows exist), but expect an
-  **empty table** in dev/staging until that job ships. Design an explicit empty state for this —
-  don't treat "no rollup rows yet" as a bug to work around client-side, and don't compute a
-  client-side approximation from `activity_events` directly as a substitute (that's exactly the
-  kind of derived-data reinvention `schema.md` §2's "derived, NEVER hand-written (D13)" rule
-  exists to prevent). Filed as mtdo-bugs #93 (M-owned, backend) — flag M if it's still unresolved
-  when this screen is otherwise ready to ship.
+- **~~Known blocker~~ RESOLVED 2026-09-06 (mtdo-bugs #93):** the recompute job now exists —
+  `recompute_daily_rollups()` (`supabase/migrations/0009`) on a pg_cron schedule every ten
+  minutes (`0010`). Full contract, including how each column is derived and which day a fact
+  lands on: **`docs/architecture/api.md` §3a**. Read that before deciding what the heatmap's
+  intensity scale means. Three consequences for this screen:
+  - **`focus_seconds` and `sessions_completed` populate immediately** — the session RPCs that
+    feed them are already wired.
+  - **`blocks_done` will still read `0` for every user**, and that is *not* a bug in the job or
+    in your UI. It derives from `task_completed`/`task_regressed` ledger events, which have no
+    call site anywhere yet (`api.md` §2c) — the Today kanban (§2 of this brief) is the screen
+    that will emit them. Until Today ships, the honest heatmap is focus-time-driven.
+  - **`computed_at` distinguishes the two empty states.** A missing row means "nothing happened
+    that day"; rows whose `computed_at` is hours stale means the job stopped. Still design an
+    explicit empty state, and still don't compute a client-side approximation from
+    `activity_events` as a substitute — that's exactly the derived-data reinvention
+    `schema.md` §2's "derived, NEVER hand-written (D13)" rule exists to prevent.
+- **`date` is a UTC date, for every user, deliberately** (no per-user time zone is stored
+  anywhere yet — `api.md` §3a and `decisions.md`'s "Open, not yet decided"). Render the grid from
+  the `date` values as given; do **not** re-bucket them into the browser's local time zone
+  client-side, or the heatmap will disagree with Today about what "today" is.
 - **Heatmap color ramp is already specified, do not invent one:** `DESIGN.md` §Color → "Heatmap
   ramp" — `rgba(255,255,255,.06)` → `#0E7490` → `#0891B2` → `#06B6D4` → `#22D3EE`. "Keep the grid
   DNA (dense, honest, unforgiving); change only the ramp" from the terminal app's GitHub-green
