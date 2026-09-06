@@ -132,7 +132,15 @@ export async function persistGeneratedPlan(
       min_blocks: category.min_blocks,
       score_weight: category.score_weight,
       topic_type: category.topic_type ?? null,
-      coaching_framework: category.coaching_framework ?? null,
+      // plan_categories.coaching_framework is `not null default '{}'::jsonb`
+      // (migrations/0001) -- `?? null` was sending an explicit null, which
+      // overrides the column default and violates the not-null constraint
+      // outright. `?? {}` matches what an omitted column would actually
+      // resolve to. Reproduced live: the fallback plan's second category has
+      // no coaching_framework at all (fallback.ts), so this broke every
+      // fallback-plan persist, which is the one path api.md's "onboarding
+      // never dead-ends a new user on an AI failure" guarantee depends on.
+      coaching_framework: category.coaching_framework ?? {},
       sort_order: sortOrder,
     }));
     const { data: insertedCategories, error: categoriesError } = await supabase
