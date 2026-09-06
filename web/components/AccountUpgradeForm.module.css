@@ -1,0 +1,152 @@
+/* Ember Graphite tokens only (app/styles/tokens.css) -- see DESIGN.md before
+ * changing anything here. This card is meant to compose into whatever modal
+ * or inline placement the trigger screen (Dev J) chooses, so it intentionally
+ * has no fixed/overlay positioning of its own. */
+
+.card {
+  display: grid;
+  gap: var(--space-sm);
+  width: min(100%, 380px);
+  padding: var(--space-lg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  color: var(--text);
+}
+
+.eyebrow {
+  margin: 0;
+  color: var(--accent);
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.title {
+  margin: 0;
+  font-size: 24px;
+  font-weight: 900;
+  letter-spacing: -0.03em;
+}
+
+.intro {
+  margin: 0 0 var(--space-sm);
+  color: var(--muted);
+  font-size: 14px;
+  font-weight: 300;
+  line-height: 1.5;
+}
+
+.form {
+  display: grid;
+  gap: var(--space-md);
+}
+
+.field {
+  display: grid;
+  gap: var(--space-xs);
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--muted);
+}
+
+.field input {
+  min-height: 44px;
+  padding: 0 var(--space-md);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg);
+  color: var(--text);
+  font: inherit;
+  font-size: 15px;
+}
+
+.field input:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.submitButton {
+  min-height: 44px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-full);
+  font: inherit;
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--bg);
+  background: var(--accent);
+  cursor: pointer;
+  transition: transform 200ms var(--ease-spring);
+}
+
+.submitButton:hover:not(:disabled) {
+  transform: scale(1.02);
+}
+
+.submitButton:disabled {
+  cursor: wait;
+  opacity: 0.6;
+}
+
+.oauthGroup {
+  display: grid;
+  gap: var(--space-sm);
+  margin-top: var(--space-xs);
+}
+
+.divider {
+  justify-self: center;
+  color: var(--dim);
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+}
+
+.oauthButton {
+  min-height: 44px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-full);
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 200ms ease, border-color 200ms ease;
+}
+
+.oauthButton:hover:not(:disabled) {
+  background: var(--surface-hover);
+  border-color: var(--accent);
+}
+
+.oauthButton:disabled {
+  cursor: wait;
+  opacity: 0.6;
+}
+
+.dismissButton {
+  justify-self: start;
+  border: none;
+  background: none;
+  color: var(--dim);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+  text-decoration: underline;
+  padding: 0;
+}
+
+.notice {
+  margin: 0;
+  color: var(--success);
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.error {
+  margin: 0;
+  color: var(--danger);
+  font-size: 13px;
+}
