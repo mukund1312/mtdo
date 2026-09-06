@@ -570,6 +570,7 @@ export type Database = {
           isSetofReturn: false
         }
       }
+      activate_plan: { Args: { p_plan_id: string }; Returns: undefined }
       append_event: {
         Args: {
           p_kind: string

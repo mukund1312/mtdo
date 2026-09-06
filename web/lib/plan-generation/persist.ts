@@ -1,35 +1,85 @@
 // Writes a GeneratedPlan into plans/plan_categories/curriculum_items under
 // RLS, as the calling user (schema.md §2/§6: these three tables are ordinary
-// client-writable tables -- no RPC needed, unlike focus_sessions/
-// activity_events/etc.).
+// client-writable tables -- no RPC needed for the inserts themselves, unlike
+// focus_sessions/activity_events/etc.).
 //
-// Atomicity note: there is no single-transaction RPC for this (by design --
-// these tables don't need security-definer writes). Each `.insert()` call is
-// its own statement; a plan is inserted, then all its categories in one
-// batch insert, then all curriculum_items in one batch insert -- three
-// round trips, each atomic on its own table, but not atomic across all
-// three. If categories or curriculum_items fail after the plan row exists,
-// the caller (route.ts) must not leave that plan marked is_active: true --
-// see markPlanInactive below, called from route.ts's catch block.
+// Atomicity note: there is no single-transaction RPC for the three inserts.
+// Each `.insert()` call is its own statement; a plan is inserted, then all
+// its categories in one batch insert, then all curriculum_items in one
+// batch insert -- three round trips, each atomic on its own table, but not
+// atomic across all three. If categories or curriculum_items fail after the
+// plan row exists, the caller (route.ts) must not leave that plan marked
+// is_active: true -- see markPlanInactive below, called from route.ts's
+// catch block. This is why the plan is inserted `is_active: false` and only
+// flipped on at the very end, once every write has actually succeeded.
 //
-// KNOWN LIMITATION, NOT FIXED HERE (gh90): two concurrent
-// POST /api/onboarding/plan calls for the same user can race on which plan
-// ends up active. Whichever request's deactivate-the-previous-plan step
-// runs last can silently deactivate the OTHER request's plan, even after
-// that request already returned a success response referencing it -- no
-// combination of `.neq(id, ...)` scoping on separate `.update()` calls
-// closes this, since each call is its own PostgREST round trip/transaction;
-// a genuine fix needs the whole deactivate+activate sequence serialized per
-// user (e.g. a security-definer RPC holding `pg_advisory_xact_lock` for the
-// duration), which is a real architecture change to how these three tables
-// are written (they were deliberately kept RPC-free -- schema.md §6).
-// Deferred: no concurrent real users exist yet to trigger it. Do not
-// "fix" this with another ad hoc `.update()` reordering -- a prior attempt
-// (PR #95) did exactly that and moved the race without closing it; verified
-// by tracing the actual interleaving, not assumed.
+// gh90 (real fix): "which plan ends up active" used to be decided by two
+// separate, unprotected `.update()` calls -- a genuine data race between
+// concurrent requests for the same user, with undefined interleaving. A
+// prior attempt (PR #95) reordered those calls and was reviewed/hand-traced
+// as moving the race rather than closing it: no combination of `.neq(id,
+// ...)` scoping on separate PostgREST round trips can make them atomic
+// against each other. The actual fix is activate_plan() (migrations/0005,
+// guarded against a raw-write bypass by 0006/0007), a security-definer RPC
+// that holds `pg_advisory_xact_lock` for the duration of its own
+// deactivate+activate pair, serializing concurrent calls for the same user
+// -- see that migration's own comment for exactly what this does and does
+// not close (the write race is now closed; a genuine double-submission
+// where the loser's HTTP response was already sent before the winner
+// supersedes it is a separate, UI-layer problem no database lock can fix).
+//
+// Residual risk from this still being two round trips (insert, then a
+// separate activate_plan() call), not one transaction: if the activate_plan
+// RPC's response is lost after its transaction already committed
+// server-side (network drop, function timeout) -- as opposed to the RPC
+// genuinely failing/rolling back -- an activateError alone can't tell the
+// difference. A third `/code-review 102` pass flagged that blindly trusting
+// the error would let the catch block's markPlanInactive() below
+// incorrectly deactivate a plan that is actually already correctly active
+// (the old plan was already deactivated inside activate_plan()'s own
+// committed transaction, so the user would end up with zero active plans).
+// Fixed below: on any activateError, the code re-reads the plan's actual
+// is_active state before deciding it really failed -- if activate_plan()
+// did commit, that read wins and this is treated as success.
+//
+// What that re-check does NOT close, and can't: if the process dies between
+// the curriculum_items insert succeeding and the activate_plan() call being
+// attempted at all (no RPC call ever went out, nothing to re-check), a
+// fully-valid plan is left permanently is_active: false with no repair path
+// (no DELETE policy on plans, no background retry job). Same class of
+// problem as the double-submission risk documented above: real, requires a
+// specific crash window, not fixed here because Wave 1 has no concurrent
+// real users yet for it to matter. Closing it for real means making the
+// insert-then-activate sequence one transaction (e.g. moving all four
+// writes inside activate_plan() itself, or a dedicated
+// create_and_activate_plan() RPC) -- filed separately if it turns out to
+// matter.
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { GeneratedPlan } from "./types";
+
+/** Thrown only when persistGeneratedPlan genuinely cannot determine whether
+ * activate_plan() committed -- both the activation call and the follow-up
+ * verification read failed. Deliberately distinct from a normal failure:
+ * the catch block below must NOT run markPlanInactive() on an unverified
+ * guess, since forcing is_active:false could itself be the wrong write if
+ * the plan actually did commit active (see the module header's residual-risk
+ * note). A 4th-pass /code-review 102 finding -- the original re-check logic
+ * dropped the verification read's own error and didn't handle rpc() itself
+ * throwing (vs. returning {error}), both of which could still reach
+ * markPlanInactive() on a plan that was actually active. */
+class PlanActivationAmbiguousError extends Error {
+  constructor(activateCause: unknown, recheckCause: unknown) {
+    super(
+      `Could not confirm whether the plan was actually activated -- activation failed (${
+        activateCause instanceof Error ? activateCause.message : String(activateCause)
+      }) and the verification read also failed (${
+        recheckCause instanceof Error ? recheckCause.message : String(recheckCause)
+      })`,
+    );
+    this.name = "PlanActivationAmbiguousError";
+  }
+}
 
 export interface PersistedCategorySummary {
   id: string;
@@ -44,8 +94,10 @@ export interface PersistedPlanSummary {
   categories: PersistedCategorySummary[];
 }
 
-/** Deactivates any existing active plan (plans_one_active, schema.md §2), then
- * inserts the new plan + its categories + curriculum items. Throws on any
+/** Inserts the new plan (inactive) + its categories + curriculum items, then
+ * calls activate_plan() (plans_one_active, schema.md §2) to atomically
+ * deactivate every other plan and activate this one -- see the gh90 note
+ * above for why that's an RPC and not a raw `.update()`. Throws on any
  * write failure -- callers must catch and either fall back or surface an
  * error; never assume partial success is usable. */
 export async function persistGeneratedPlan(
@@ -53,22 +105,16 @@ export async function persistGeneratedPlan(
   userId: string,
   plan: GeneratedPlan,
 ): Promise<PersistedPlanSummary> {
-  const { error: deactivateError } = await supabase
-    .from("plans")
-    .update({ is_active: false })
-    .eq("user_id", userId)
-    .eq("is_active", true);
-  if (deactivateError) {
-    throw new Error(`Failed to deactivate the previous plan: ${deactivateError.message}`);
-  }
-
+  // Inserted inactive on purpose: nothing else can mistake this row for
+  // "the" active plan until activate_plan() says so, at the very end, once
+  // every other write below has actually succeeded.
   const { data: planRow, error: planError } = await supabase
     .from("plans")
     .insert({
       user_id: userId,
       app_name: plan.app_name,
       goal_line: plan.goal_line,
-      is_active: true,
+      is_active: false,
     })
     .select("id")
     .single();
@@ -154,6 +200,44 @@ export async function persistGeneratedPlan(
       }
     }
 
+    // Every write above succeeded -- now, and only now, make this plan the
+    // active one. See migrations/0005 for what the advisory lock inside
+    // this RPC actually serializes against.
+    try {
+      const { error: activateError } = await supabase.rpc("activate_plan", { p_plan_id: planId });
+      if (activateError) throw activateError;
+    } catch (activateErr) {
+      // A network drop or serverless timeout can lose activate_plan()'s
+      // response after its transaction already committed server-side --
+      // this alone can't distinguish "the RPC genuinely failed" from "it
+      // succeeded but we never heard back." The try/catch (rather than just
+      // checking `{error}`) also covers rpc() throwing outright, e.g. an
+      // aborted fetch, which would otherwise skip this recovery path
+      // entirely. Re-check the plan's real state before trusting it.
+      const { data: recheck, error: recheckError } = await supabase
+        .from("plans")
+        .select("is_active")
+        .eq("id", planId)
+        .maybeSingle();
+
+      if (recheck?.is_active) {
+        // Confirmed: activate_plan() did commit. Only its response (or the
+        // call itself) was lost -- treat this as the success it actually
+        // was.
+      } else if (recheckError) {
+        // Can't confirm either way: activation failed AND the verification
+        // read failed. Surface this as ambiguous rather than "confirmed
+        // inactive" -- see PlanActivationAmbiguousError above.
+        throw new PlanActivationAmbiguousError(activateErr, recheckError);
+      } else {
+        throw new Error(
+          `Failed to activate plan: ${
+            activateErr instanceof Error ? activateErr.message : String(activateErr)
+          }`,
+        );
+      }
+    }
+
     return {
       planId,
       appName: plan.app_name,
@@ -167,18 +251,43 @@ export async function persistGeneratedPlan(
   } catch (err) {
     // Best-effort: don't leave a half-written plan marked active. There's no
     // delete path for plans (schema.md: "no DELETE policy on plans"), by
-    // design, so this update is the only cleanup available.
-    await markPlanInactive(supabase, planId);
+    // design, so this update is the only cleanup available. Exception: a
+    // PlanActivationAmbiguousError means we genuinely couldn't determine
+    // whether activate_plan() committed -- forcing is_active:false here
+    // could itself be the wrong write, so this skips cleanup and logs the
+    // ambiguity loudly instead of guessing.
+    if (err instanceof PlanActivationAmbiguousError) {
+      console.error(
+        `[persist] could not confirm activation state for plan ${planId} -- skipping cleanup rather than guessing:`,
+        err,
+      );
+    } else {
+      await markPlanInactive(supabase, planId);
+    }
     throw err;
   }
 }
 
 /** Best-effort cleanup, not a guarantee -- there's no DELETE path for plans
  * (schema.md: "no DELETE policy on plans"), so this update is the only
- * recovery available. Logged loudly on failure rather than swallowed: if this
- * itself fails (transient DB error, RLS), the plan is left broken AND active,
- * exactly the state this function exists to prevent, so it must be visible
- * somewhere rather than silently discarded alongside the original error. */
+ * recovery available. In the common failure case (categories/curriculum_items
+ * insert failed) this is a no-op: the plan was inserted is_active: false and
+ * never got as far as activate_plan(), so there's nothing to undo -- it's
+ * called unconditionally anyway because that's cheaper and safer than trying
+ * to track "did activation actually happen" in the caller. The case where it
+ * does real work is when activate_plan() itself genuinely errored (rolled
+ * back, never committed) -- the caller already re-checks the plan's real
+ * is_active state before treating an activateError as a failure at all (see
+ * the residual-risk note above), and skips calling this function entirely
+ * (PlanActivationAmbiguousError) when that re-check itself can't confirm
+ * either way, rather than guess. So by the time this actually runs,
+ * is_active really is false already in every remaining case, and this is a
+ * no-op there too -- it exists for the "even that shouldn't be possible"
+ * defensive case, not because it's expected to do real work.
+ * Logged loudly on failure rather than swallowed: if this itself fails
+ * (transient DB error, RLS), the plan may be left broken AND active, so that
+ * must be visible somewhere rather than silently discarded alongside the
+ * original error. */
 export async function markPlanInactive(supabase: SupabaseClient, planId: string): Promise<void> {
   const { error } = await supabase.from("plans").update({ is_active: false }).eq("id", planId);
   if (error) {

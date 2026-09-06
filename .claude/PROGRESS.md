@@ -3642,3 +3642,147 @@ one session.
 **Next / open items:** none blocking. Whoever builds the kanban board, notes
 UI, proof flow, or paywall should wire the corresponding event from
 `web/lib/analytics/record-event.ts` at that point, per `api.md` §2c.
+
+## gh90: activate_plan() advisory-lock RPC + structural bypass close (PR #102)
+
+- `supabase/migrations/0005_activate_plan_rpc.sql`: `activate_plan(p_plan_id)`,
+  `security definer`, serializes concurrent activations per user via
+  `pg_advisory_xact_lock(hashtext(v_uid::text))`, replaces `persist.ts`'s two
+  independent `.update()` calls (proven racy in PR #95, closed unmerged —
+  see that PR's history) with one RPC call.
+- `supabase/migrations/0006_plans_activation_guard.sql`: `/code-review 102`
+  correctly flagged that 0005 alone didn't close the actual access-control
+  gap — `plans_update_own` (0001_seam.sql) still let any authenticated
+  client `.update({is_active: true})` directly, skipping the lock entirely.
+  Fixed with a `before update` trigger (`plans_guard_activation`) that
+  rejects any `UPDATE` flipping `is_active` false→true unless a
+  transaction-local flag (`mtdo.activating_plan`, set via `set_config(...,
+  true)`) is set — and `activate_plan()` is the only place that ever sets
+  it. Verified live against the linked project (not just read by
+  inspection): a raw `UPDATE plans SET is_active = true` now raises
+  `insufficient_privilege`, and `activate_plan()` still succeeds through the
+  RPC path. Direct `.update({is_active: false})` (the documented "retire a
+  goal" pattern) is untouched — the trigger only fires on the false→true
+  transition.
+- Also caught by the same review: `web/lib/supabase/database.types.ts` had
+  been regenerated locally (confirmed to contain `activate_plan`) but never
+  committed after a `git merge origin/main`. Regenerated again (now
+  including 0006, though 0006 doesn't change any RPC signature) and
+  committed.
+- `docs/architecture/schema.md` §6 updated: the `activate_plan()` bullet
+  previously and correctly described this as "a convention, not an
+  access-control boundary" — that caveat is no longer true after 0006 and
+  has been rewritten to describe the actual structural guarantee.
+- Verification: `tsc --noEmit`, `eslint .`, `next build --webpack` all
+  clean; migration applied via `supabase db push --linked` against
+  `loqhtqrekrmgywekihrh`; trigger behavior verified with a live `do $$ ...
+  $$` block against the linked database (inserted a throwaway auth.users +
+  two plans rows, confirmed the raw update path and the RPC path behave as
+  documented, cleaned up the test rows).
+
+### gh90 follow-up: 0006's guard was UPDATE-only, closed the INSERT bypass too
+
+A second `/code-review 102` pass (run after 0006 was pushed) found the trigger
+guard only fired `before update`, and `plans.is_active` defaults to `true`
+with `plans_insert_own` checking nothing but `user_id` — so a raw
+`supabase.from("plans").insert({ user_id, app_name, goal_line })` created an
+already-active plan via `INSERT`, completely bypassing 0006 and making
+schema.md's "structural access-control boundary" claim false for that path.
+
+- `supabase/migrations/0007_plans_activation_guard_insert.sql`: extends
+  `plans_guard_activation` to also fire `before insert`, rejecting any insert
+  with `is_active = true` unless the same transaction-local flag is set.
+  Zero behavior change for real callers — `persist.ts` has only ever inserted
+  plans `is_active: false`. Verified live: raw insert with `is_active`
+  omitted (defaulting true) now raises `insufficient_privilege`; the real
+  `insert(is_active: false)` + `activate_plan()` sequence still works.
+- Also addressed from the same review pass, as documentation rather than a
+  behavior change (matching this PR's own established precedent for the
+  double-submission residual risk in 0005's header): `persist.ts`'s header
+  comment and `markPlanInactive`'s docstring now describe the real residual
+  risk in the two-round-trip insert-then-activate design — if
+  `activate_plan()`'s response is lost after its transaction already
+  committed (network drop/timeout), `markPlanInactive()` can incorrectly
+  deactivate an already-active plan, and separately, a crash between the
+  `curriculum_items` insert and the `activate_plan()` call can leave a valid
+  plan permanently inactive with no repair path. Real, low-probability,
+  requires a crash/network-loss window, not fixed here (would mean folding
+  all four writes into one transaction/RPC) — filed as a known limitation,
+  not silently left for a future session to rediscover.
+- Other findings from that pass (advisory-lock-vs-row-lock design, duplicated
+  function body between 0005/0006/0007) were left as-is: the duplicated-body
+  pattern matches this repo's own established convention for `CREATE OR
+  REPLACE`-based RPC migrations (0004 did the same for `start_session`), and
+  the advisory-lock choice is already deliberate and commented in 0005.
+- Verification: `tsc --noEmit`, `eslint .` clean; 0007 applied via
+  `supabase db push --linked`; insert-bypass and legit-path behavior both
+  verified live against the linked project, not just by inspection.
+
+### gh90 follow-up #2: close the "lost activate_plan() response" data-loss case
+
+A third `/code-review 102` pass surfaced the one item the prior pass had
+deliberately documented rather than fixed: if `activate_plan()`'s response
+is lost after its transaction already committed (network drop, function
+timeout), `persistGeneratedPlan` treated `activateError` as a hard failure
+and called `markPlanInactive()`, which re-deactivated the plan that had
+actually just succeeded -- leaving the user with **zero** active plans (the
+old plan was already deactivated inside `activate_plan()`'s own committed
+transaction).
+
+Unlike the previous pass's other residual-risk item, this one had a cheap,
+targeted fix that didn't require folding all four writes into one
+transaction: on any `activateError`, `persist.ts` now re-reads the plan's
+actual `is_active` state before trusting the error. If `activate_plan()`
+really did commit, the re-check wins and the call is treated as the success
+it actually was; `markPlanInactive()` is only ever reached when the RPC
+genuinely failed (rolled back, never committed), which is the one case where
+deactivating is correct.
+
+**Still open, still documented, still not fixed:** if the process dies
+between the `curriculum_items` insert succeeding and the `activate_plan()`
+call being attempted at all, there's no RPC error to re-check against --
+a fully-valid plan is left permanently `is_active: false` with no repair
+path. Same class as the double-submission risk in 0005's header: real,
+requires a specific crash window, no concurrent real users yet for it to
+matter, filed separately if it turns out to.
+
+Verification: `tsc --noEmit`, `eslint .`, `next build --webpack` all clean.
+
+### gh90 follow-up #3: ambiguous-recovery gap + trigger dedup (4th /code-review pass)
+
+A 4th `/code-review 102` pass (two independent fork agents plus the
+reviewer's own reading, all converging) found the previous pass's
+activate_plan() re-check fix (follow-up #2, above) had its own gap:
+
+- `persist.ts`: the re-check query's own `error` was destructured and
+  silently discarded, and `supabase.rpc()` throwing outright (vs. returning
+  `{error}`, e.g. an aborted fetch) skipped the recovery branch entirely --
+  both paths could still reach `markPlanInactive()` and re-deactivate a plan
+  that had genuinely committed active, recreating the exact bug the re-check
+  was added to close, one layer deeper. Fixed by wrapping the RPC call in a
+  real `try/catch` (so a thrown error is caught too, not just `{error}`),
+  checking the re-check's own error, and introducing
+  `PlanActivationAmbiguousError` for the case where neither the activation
+  call nor the verification read could be trusted -- in that case,
+  `markPlanInactive()` is deliberately *not* called (forcing `is_active:
+  false` on an unverified guess could itself be the wrong write), and the
+  ambiguity is logged loudly instead.
+- `supabase/migrations/0008_plans_guard_activation_simplify.sql`: collapsed
+  0007's duplicated INSERT/UPDATE raise-exception blocks in
+  `plans_guard_activation()` into one exception site, per the review's
+  code-quality finding -- a future edit to only one branch could have
+  silently reintroduced the bypass. No behavior change; re-verified live
+  (insert bypass rejected, raw update bypass rejected, direct deactivate
+  still allowed, insert(false)+activate_plan() still works) with fresh,
+  separate transactions per check this time -- the first live-verification
+  pass on 0006/0007 accidentally shared one transaction across an
+  RPC-activation step and a "raw update" step, which let
+  `mtdo.activating_plan`'s transaction-local scope leak between them and
+  silently passed a check that would fail across real, separate HTTP
+  requests. Caught and corrected before merge, not after.
+
+Verification: `tsc --noEmit`, `eslint .`, `next build --webpack` clean;
+0008 applied via `supabase db push --linked`; all four guard properties
+re-verified live against the linked project using separate `supabase db
+query --linked` invocations (separate transactions) to match real request
+isolation.

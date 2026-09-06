@@ -94,17 +94,27 @@ J's onboarding UI should treat `usedFallback: true` as a real, if less personali
 one-line "we started you with a simple plan — you can customize it" note), not an error state.
 
 **Writes.** `plans`/`plan_categories`/`curriculum_items` are ordinary client-writable tables
-(schema.md §6) — no RPC, insert directly under the user's RLS session via `lib/supabase/server.ts`.
-`persist.ts` deactivates any existing active plan first (`plans_one_active`), then does exactly
-three insert statements (plan → categories batch → curriculum_items batch), each atomic on its own
-table but **not atomic across all three** — there is no security-definer RPC for this because these
-tables don't need one. If categories or curriculum_items fail to insert after the plan row exists,
-`persist.ts` marks that plan `is_active: false` (there's no DELETE path — `schema.md`'s "no DELETE
-policy on plans" — so this is the only cleanup available) rather than leaving a half-written plan
-active. `week_index`/`position` on `curriculum_items` are derived, not model-supplied: every
-`category.days.length` consecutive `curriculum` entries are one week (`week_index = floor(dayListIndex
-/ category.days.length)`), and `position` is a running counter across the whole flattened curriculum
-for that category — this is the concrete mapping schema.md §2 left implicit.
+(schema.md §6) — the three *inserts* need no RPC, and go directly under the user's RLS session via
+`lib/supabase/server.ts`. `persist.ts` inserts the plan `is_active: false`, then does exactly three
+insert statements (plan → categories batch → curriculum_items batch), each atomic on its own table
+but **not atomic across all three**. If categories or curriculum_items fail to insert after the plan
+row exists, `persist.ts` marks that plan `is_active: false` again (there's no DELETE path —
+`schema.md`'s "no DELETE policy on plans" — so this is the only cleanup available) rather than
+leaving a half-written plan active. `week_index`/`position` on `curriculum_items` are derived, not
+model-supplied: every `category.days.length` consecutive `curriculum` entries are one week
+(`week_index = floor(dayListIndex / category.days.length)`), and `position` is a running counter
+across the whole flattened curriculum for that category — this is the concrete mapping schema.md §2
+left implicit.
+
+**Activating the plan is an RPC, unlike the inserts above (gh90).** Once all three inserts succeed,
+`persist.ts` calls `activate_plan(p_plan_id)` (`migrations/0005`) rather than a raw `.update()` —
+two independent PostgREST round trips deciding "which plan is active" is a genuine, unclosable data
+race between concurrent requests for the same user (verified by hand-tracing a reviewed-and-rejected
+fix attempt, PR #95). `activate_plan()` holds `pg_advisory_xact_lock` for its own deactivate+activate
+pair, serializing concurrent calls per user. This closes the *write* race; it does not and cannot
+retroactively un-send an HTTP response a loser's request already returned before a winner's call
+superseded it — that's a client double-submission problem, not a database one (see the migration's
+own comment).
 
 **Model:** `claude-sonnet-5` (split-plan §5: Sonnet for Route Handlers/RPC-shaped implementation
 work against an already-decided shape; Opus is reserved for schema/RLS/session-authority/tutor-
