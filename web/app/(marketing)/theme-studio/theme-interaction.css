@@ -1,0 +1,2 @@
+/* Keep Studio controls above embedded live previews; checkout is portaled to body. */
+.ts-preview-top{position:relative;z-index:5}.ts-preview-top button{position:relative;z-index:6;pointer-events:auto}.ts-payment-backdrop{z-index:9999}
