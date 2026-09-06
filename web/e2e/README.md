@@ -1,20 +1,24 @@
 # E2E tests (Playwright)
 
-Real browser, real dev server (`playwright.config.ts` boots `npm run dev` and
-waits for it) -- not a component test, not a mocked fetch.
+Real browser, real production build (`playwright.config.ts` runs `npm run
+build && npm run start` and waits for it) -- not a component test, not a
+mocked fetch.
 
 ## Scope
 
 `onboarding.spec.ts` drives the Signal Deck onboarding wizard
-(`/architecture-02/onboarding`) through the **client-only** steps: intent ->
-rhythm -> the route is ready to build. It stops short of clicking "Build my
-route".
+(`/architecture-02/onboarding`) through the full happy path: intent -> rhythm
+-> submit -> a persisted plan is ready -> "Enter Today".
 
-That's deliberate, not an oversight: clicking it calls `POST
-/api/onboarding/plan`, which requires an authenticated Supabase session.
-Anonymous sign-in is currently disabled on the connected Supabase project
-(tracked in mtdo-bugs#95 -- `proxy.ts`'s `signInAnonymously()` fails there and
-the 401 propagates to the client). Driving past that point today would make
-this test flaky against real project config rather than against the code
-under test. Once #95 is resolved, extend this spec to submit the form and
-assert on the "Route Ready" step + the persisted plan.
+Submitting calls the real `POST /api/onboarding/plan`, which needs an
+authenticated Supabase session (anonymous sign-in, via `proxy.ts`) and calls
+the real Anthropic API server-side. Both are live requirements of this test,
+not mocked:
+
+- Anonymous sign-in was disabled on the connected Supabase project until it
+  was fixed (mtdo-bugs#95, closed) -- before that, this test could only cover
+  the client-only steps up to the "Build my route" button.
+- If the Anthropic call itself fails or times out, `route.ts`'s own failure
+  contract falls back to a static plan and still returns a usable "done"
+  event -- the test asserts on "a plan became ready", not on which path
+  produced it, so it stays green either way.
