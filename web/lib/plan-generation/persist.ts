@@ -157,6 +157,18 @@ export async function persistGeneratedPlan(
   }
 }
 
+/** Best-effort cleanup, not a guarantee -- there's no DELETE path for plans
+ * (schema.md: "no DELETE policy on plans"), so this update is the only
+ * recovery available. Logged loudly on failure rather than swallowed: if this
+ * itself fails (transient DB error, RLS), the plan is left broken AND active,
+ * exactly the state this function exists to prevent, so it must be visible
+ * somewhere rather than silently discarded alongside the original error. */
 export async function markPlanInactive(supabase: SupabaseClient, planId: string): Promise<void> {
-  await supabase.from("plans").update({ is_active: false }).eq("id", planId);
+  const { error } = await supabase.from("plans").update({ is_active: false }).eq("id", planId);
+  if (error) {
+    console.error(
+      `[persist] failed to deactivate broken plan ${planId} -- it is left is_active: true:`,
+      error,
+    );
+  }
 }

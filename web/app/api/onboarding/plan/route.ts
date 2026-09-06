@@ -102,11 +102,27 @@ export async function POST(request: Request) {
       let usedFallback = false;
 
       try {
-        const messageStream = anthropic.messages.stream({
-          model: MODEL,
-          max_tokens: 8000,
-          messages: [{ role: "user", content: buildPlanPrompt(answers) }],
-        });
+        const messageStream = anthropic.messages.stream(
+          {
+            model: MODEL,
+            // The prompt asks for the rich object form (3-5 focus_points, 2-3
+            // questions, mistakes/tips/mental_models) across up to 6 categories
+            // and up to 14 curriculum slots each -- a compliant response
+            // routinely runs past 8000 tokens. Too low a cap here doesn't error,
+            // it truncates mid-JSON, parseGeneratedPlan throws, and the route
+            // silently falls back to the generic static plan -- the AI
+            // personalization feature would just never fire for real multi-
+            // subject plans. 16000 gives real headroom without approaching
+            // claude-sonnet-5's output ceiling.
+            max_tokens: 16000,
+            messages: [{ role: "user", content: buildPlanPrompt(answers) }],
+          },
+          // Ties generation to the request's own lifecycle: if the client
+          // disconnects (tab closed, navigated away), the Anthropic call is
+          // cancelled instead of running (and billing) for up to maxDuration
+          // with nowhere for its output to go.
+          { signal: request.signal },
+        );
 
         messageStream.on("text", (delta) => {
           fullText += delta;
@@ -115,6 +131,11 @@ export async function POST(request: Request) {
 
         await messageStream.finalMessage();
       } catch (err) {
+        if (request.signal.aborted) {
+          // The client disconnected -- there's no one left to stream a
+          // fallback to, and the ReadableStream is being torn down anyway.
+          return;
+        }
         // Anthropic call itself failed (network, auth, rate limit, timeout).
         // Don't surface this to the client as an error yet -- fall back below.
         console.error("[onboarding/plan] Anthropic call failed:", err);
