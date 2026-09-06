@@ -117,7 +117,16 @@ jobs:
     steps:
       - name: Check all applicable jobs succeeded
         run: |
+          # `changes` is checked here too, not just depended on: it has no
+          # `if:`, so it can only ever be success or a genuine failure, never
+          # "skipped" -- but if it fails (checkout flake, dorny/paths-filter
+          # erroring), every job below it evaluates its `if:` against empty
+          # outputs, reports "skipped" (not "failure"), and this loop would
+          # see three clean skips and pass with zero tests having run. That's
+          # the exact silently-ungated-merge failure this gate exists to
+          # close, reached through the one job that talks to the network.
           for result in \
+            "${{ needs.changes.result }}" \
             "${{ needs.python-tests.result }}" \
             "${{ needs.web-build.result }}" \
             "${{ needs.supabase-tests.result }}"; do
