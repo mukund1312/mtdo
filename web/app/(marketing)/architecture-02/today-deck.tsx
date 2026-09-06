@@ -1,7 +1,6 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import Link from "next/link";
 import { recordEvent } from "@/lib/analytics/record-event";
 import { createClient } from "@/lib/supabase/client";
 import type { Database } from "@/lib/supabase/database.types";
@@ -182,7 +181,7 @@ export function TodayDeck() {
 
       {notice && <p className="a02-today-notice" role="status">{notice}</p>}
       {!loading && !plan && configured && (
-        <section className="a02-today-empty"><span>NO ACTIVE ROUTE</span><h2>Build a route<br />before today begins.</h2><p>Complete route setup once and MTDO can hold your daily work here.</p><Link href="/architecture-02/onboarding">Set up your route ↗</Link></section>
+        <section className="a02-today-empty"><span>NO ACTIVE ROUTE</span><h2>Build a route<br />before today begins.</h2><p>Complete route setup once and MTDO can hold your daily work here.</p><a href="/architecture-02/onboarding">Set up your route ↗</a></section>
       )}
       {loading && <section className="a02-today-loading" aria-live="polite"><i /> Reading today’s blocks…</section>}
       {!loading && plan && (
@@ -204,10 +203,10 @@ export function TodayDeck() {
               }}>
                 <header><span>{lane.number}</span><div><b>{lane.title}</b><small>{lane.hint}</small></div><i>{laneBlocks.length}</i></header>
                 <div className="a02-lane-body">
-                  {laneBlocks.map((block) => <article className={`a02-work-unit a02-today-unit ${block.claimed ? "isClaimed" : ""}`} key={block.id} draggable onDragStart={() => setDraggedId(block.id)} onDragEnd={() => setDraggedId(null)}>
+                  {laneBlocks.map((block) => <article className="a02-work-unit a02-today-unit" key={block.id} draggable onDragStart={() => setDraggedId(block.id)} onDragEnd={() => setDraggedId(null)}>
                     <em>{categoryName(block.category_id)}</em><strong>{block.text}</strong>
                     {block.notes && <small>{block.notes}</small>}
-                    <footer><span>{block.claimed ? "CLAIMED" : block.elapsed_seconds ? `${Math.round(block.elapsed_seconds / 60)} MIN LOGGED` : "NOT STARTED"}</span><select value={isBlockStatus(block.status) ? block.status : "todo"} aria-label={`Move ${block.text}`} onChange={(event) => void changeStatus(block, event.target.value as BlockStatus)}>{lanes.map((option) => <option key={option.status} value={option.status}>{option.title}</option>)}</select></footer><Link href={`/session?blockId=${block.id}`}>Begin focus ↗</Link>
+                    <footer><span>{block.elapsed_seconds ? `${Math.round(block.elapsed_seconds / 60)} MIN LOGGED` : "NOT STARTED"}</span><select value={isBlockStatus(block.status) ? block.status : "todo"} aria-label={`Move ${block.text}`} onChange={(event) => void changeStatus(block, event.target.value as BlockStatus)}>{lanes.map((option) => <option key={option.status} value={option.status}>{option.title}</option>)}</select></footer>
                   </article>)}
                   {laneBlocks.length === 0 && <p className="a02-lane-empty">Drop a block here</p>}
                 </div>

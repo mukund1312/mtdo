@@ -16,13 +16,11 @@ type SessionPhase = "ready" | "starting" | "active" | "exiting";
 type NoticeKind = "success" | "warning";
 
 const DEFAULT_DURATION_S = 50 * 60;
-const DEFAULT_TASK = {
+const TASK = {
   eyebrow: "Today · Week 2",
   title: "Make joins feel obvious",
   detail: "Work through the three queries below without looking at the answer first.",
 };
-
-type SessionTask = typeof DEFAULT_TASK;
 
 function secondsSince(startedAt: string) {
   return Math.max(0, Math.floor((Date.now() - new Date(startedAt).getTime()) / 1000));
@@ -61,8 +59,6 @@ export default function SessionPage() {
   // offer resume-or-discard here, never auto-resume into whatever the server
   // happens to be holding.
   const [pendingConflict, setPendingConflict] = useState<FocusSession | null>(null);
-  const [blockId, setBlockId] = useState<string | null>(null);
-  const [task, setTask] = useState<SessionTask>(DEFAULT_TASK);
   const lastSettleKind = useRef<"complete" | "abandon" | null>(null);
 
   const resume = useCallback((running: FocusSession) => {
@@ -105,41 +101,6 @@ export default function SessionPage() {
     };
   }, [resume]);
 
-  // Today enters this screen with an owned `blockId`. The session remains
-  // usable without one (an unscheduled focus block), but a linked launch
-  // must show the real task and hand that ID to start_session below.
-  useEffect(() => {
-    let cancelled = false;
-
-    async function loadLinkedBlock() {
-      // Keep state work asynchronous rather than causing an effect-time
-      // render cascade; the query is only meaningful in the browser.
-      await Promise.resolve();
-      const requestedBlockId = new URLSearchParams(window.location.search).get("blockId");
-      if (!requestedBlockId) return;
-
-      const supabase = createClient();
-      const { data, error } = await supabase
-        .from("blocks")
-        .select("id, text, notes")
-        .eq("id", requestedBlockId)
-        .maybeSingle();
-      if (cancelled || error || !data) return;
-
-      setBlockId(data.id);
-      setTask({
-        eyebrow: "Today · Focus block",
-        title: data.text,
-        detail: data.notes ?? "Stay with this one piece of work until the timer closes.",
-      });
-    }
-
-    void loadLinkedBlock();
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
   // The screen owns this display-only client tick. The server's started_at is
   // the source of truth; EmberMorph merely receives the resulting number.
   useEffect(() => {
@@ -164,12 +125,9 @@ export default function SessionPage() {
     // presence but doesn't union with null even when the SQL body genuinely
     // accepts it (migrations/0004). Omitting the key hits that same SQL
     // default (NULL) with no runtime difference from passing null explicitly.
-    const { data, error } = await supabase.rpc(
-      "start_session",
-      blockId
-        ? { p_block_id: blockId, p_planned_duration_s: DEFAULT_DURATION_S }
-        : { p_planned_duration_s: DEFAULT_DURATION_S },
-    );
+    const { data, error } = await supabase.rpc("start_session", {
+      p_planned_duration_s: DEFAULT_DURATION_S,
+    });
 
     if (error || !data) {
       // 55006 is a recovery state, not a generic failure -- but it is a real
@@ -195,19 +153,8 @@ export default function SessionPage() {
       return;
     }
 
-    if (blockId) {
-      // This is ordinary client-writable task state. The session RPC has
-      // already succeeded, so a status-write failure must never invalidate a
-      // server-authoritative running session.
-      const { error: blockError } = await supabase
-        .from("blocks")
-        .update({ status: "in_progress", claimed: true })
-        .eq("id", blockId);
-      if (blockError) console.error("[session] unable to mark linked block in progress:", blockError);
-    }
-
     resume(data as FocusSession);
-  }, [blockId, phase, resume]);
+  }, [phase, resume]);
 
   const resumeConflict = useCallback(() => {
     if (!pendingConflict) return;
@@ -301,9 +248,9 @@ export default function SessionPage() {
 
         <div className={styles.readyCard}>
           <div>
-            <p className={styles.cardEyebrow}>{task.eyebrow}</p>
-            <h2>{task.title}</h2>
-            <p>{task.detail}</p>
+            <p className={styles.cardEyebrow}>{TASK.eyebrow}</p>
+            <h2>{TASK.title}</h2>
+            <p>{TASK.detail}</p>
           </div>
           <span className={`${styles.duration} num`}>50:00</span>
         </div>
@@ -355,9 +302,9 @@ export default function SessionPage() {
       <EmberMorph trigger={trigger} onExitComplete={finishExit}>
         <div className={styles.focusLayout}>
           <section className={styles.taskPanel} aria-labelledby="focus-task-title">
-            <p className={styles.cardEyebrow}>{task.eyebrow}</p>
-            <h1 id="focus-task-title">{task.title}</h1>
-            <p>{task.detail}</p>
+            <p className={styles.cardEyebrow}>{TASK.eyebrow}</p>
+            <h1 id="focus-task-title">{TASK.title}</h1>
+            <p>{TASK.detail}</p>
 
             <ol className={styles.steps}>
               <li>
