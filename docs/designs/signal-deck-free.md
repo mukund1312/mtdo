@@ -1,12 +1,11 @@
-# Architecture 02 V1 — onboarding and Today implementation
+# Signal Deck free — onboarding implementation
 
-**Status:** Architecture 02 is the V1 product route. Onboarding, Today, linked focus-session
-entry, and Progress are backed by the shared product data model. See also
-`architecture-02-v1.md` and `wave1-frontend-briefs.md`.
+**Status:** Onboarding and the Today board are backed by the product data model. Calendar,
+review, focus, tutor, and rooms remain prototype surfaces.
 
 ## Goal
 
-Architecture 02 is the selected V1 MTDO direction. Its first production-facing flow is route setup:
+Signal Deck is the selected free MTDO direction. Its first production-facing flow is route setup:
 a new visitor describes a goal and study rhythm, then receives an active plan through the existing
 onboarding plan-generation backend.
 
@@ -14,17 +13,18 @@ onboarding plan-generation backend.
 
 | Route | Role |
 |---|---|
-| `/architecture-02` | V1 workspace: Today and Progress |
+| `/architecture-02` | Signal Deck visual workspace and onboarding entry point |
 | `/architecture-02/onboarding` | Free route-setup flow |
 | `POST /api/onboarding/plan` | Existing server-side plan-generation endpoint |
 
-The V1 navigation includes **Set up route**, which leads to onboarding. No payment or entitlement
-check is part of Wave 1.
+The Deck home includes **Set up your route ↗**, which leads to the onboarding route. No payment
+or entitlement check is part of this free Signal Deck path.
 
 ## Today board (#87)
 
-The **Today** view opens a live three-lane Kanban board. It deliberately uses the `blocks` table
-rather than a second task model or the onboarding plan summary.
+The **Today** item in the Signal Deck dock, and the **Open today** home card, open a live
+three-lane Kanban board. It deliberately uses the `blocks` table rather than a second task
+model or the onboarding plan summary.
 
 | Lane | Stored `blocks.status` value | Behaviour |
 |---|---|---|
@@ -32,13 +32,11 @@ rather than a second task model or the onboarding plan summary.
 | In progress | `in_progress` | Work currently being acted on. |
 | Done | `done` | Finished work; moving in/out records completion/regression analytics. |
 
-The board reads the active plan, its categories, and blocks ordered by `position`; RLS scopes
-every read/write to the browser's anonymous/authenticated session. Users can add a block to an
-active-plan category, move it with drag/drop, or use the card's status selector. All status
-changes update the real row in `blocks`; an error restores the previous client state and reports
-the reason. **Open decision:** the Wave 1 brief requires a server-defined “today”, while the
-current app has no such API/RPC; the temporary browser-date query must be replaced once M/Mukund
-locks that boundary.
+The board reads the active plan, its categories, and only blocks whose `date` equals the
+user's current local date. It orders blocks by `position` and is RLS-scoped by the browser's
+anonymous/authenticated Supabase session. Users can add a block to an active-plan category,
+move it with drag/drop, or use the card's status selector. All status changes update the
+real row in `blocks`; an error restores the previous client state and reports the reason.
 
 Onboarding creates a plan and curriculum, not scheduled daily blocks. Therefore a newly
 onboarded user sees an honest empty Today board until they add their first block. The UI also
@@ -54,7 +52,7 @@ Signal Deck
   → Rhythm: experience level + available weekdays + optional context/name
   → Stream plan generation
   → Persisted plan summary
-  → Enter Today
+  → Enter Signal Deck
 ```
 
 ### Input contract
@@ -87,15 +85,14 @@ best-effort only; failing browser storage never changes onboarding success.
 ## Implementation files
 
 - `web/app/(marketing)/architecture-02/onboarding/page.tsx` — stateful client onboarding flow.
-- `web/app/(marketing)/architecture-02/onboarding/onboarding.css` — responsive Ember Graphite UI.
+- `web/app/(marketing)/architecture-02/onboarding/onboarding.css` — responsive Signal Deck UI.
+- `web/app/(marketing)/architecture-02/route-entry.css` — home-screen route-setup entry styling.
 - `web/app/(marketing)/architecture-02/today-deck.tsx` — live Today board and `blocks` reads/creates/status updates.
 - `web/app/(marketing)/architecture-02/today-deck.css` — responsive Today board styling.
-- `web/app/(marketing)/architecture-02/progress-deck.tsx` — read-only `daily_rollups` heatmap and Record Card preview.
-- `web/app/(marketing)/architecture-02/page.tsx` — Architecture 02 V1 shell and navigation.
+- `web/app/(marketing)/architecture-02/page.tsx` — Signal Deck shell and Today navigation entry.
 
 ## Current boundary
 
-Today links an owned block to `/session?blockId=…`; Session passes that ID to `start_session` and
-marks the block in progress only after the RPC succeeds. Progress is intentionally empty until
-the #93 daily-rollup recompute service is available. Record Card export remains pending the
-product decision on image, link, or PDF.
+Today is the first Signal Deck area reading persisted application data. The remaining Deck
+surfaces still use prototype data. The next free-product task is to connect a block to the real
+focus-session flow and then replace the calendar and review placeholders with derived data.

@@ -2,9 +2,8 @@
 
 ## Scope
 
-Progress is the **Progress** view inside `/architecture-02`, the V1 product route. It is a
-read-only view over the documented `daily_rollups` table and does not create, modify, or
-backfill rollups.
+`/progress` is the Ember Graphite progress surface. It is a read-only view over the
+documented `daily_rollups` table and does not create, modify, or backfill rollups.
 
 ## Data contract
 
@@ -40,9 +39,5 @@ be an image, link, or PDF. That decision is required before building its UX or e
 
 ## Files
 
-- `web/app/(marketing)/architecture-02/progress-deck.tsx` — data load, heatmap calculation,
-  totals, Record Card preview, and empty/error states.
-- `web/app/(marketing)/architecture-02/v1.css` — Architecture 02 V1 layout and responsive
-  Ember Graphite styles.
-- `web/lib/product/rollups.ts` — architecture-independent rollup types and calculations for
-  future theme implementations.
+- `web/app/progress/page.tsx` — data load, heatmap calculation, totals, and empty/error states.
+- `web/app/progress/progress.css` — Ember Graphite layout and responsive styles.
