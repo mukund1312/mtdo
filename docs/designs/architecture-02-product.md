@@ -12,7 +12,7 @@ only the prototype data inside its existing **Work** and **Review** decks.
 - The existing **+ New signal** control is functional: it reads the user's
   active plan and its categories, then inserts a real block for today under
   the existing RLS policy. The user chooses its name, optional context,
-  category, and initial `todo`/`in_progress`/`done` state.
+  category, and initial `backlog`/`todo`/`in_progress`/`done` state.
 - Columns map exactly to the table's valid values: `backlog`, `todo`,
   `in_progress`, and `done`. The UI labels are Backlog, Todo, In progress,
   and Done.
@@ -47,8 +47,8 @@ eliminates the warning without changing rendered product UI.
   no consistency score, progress percentage, fabricated streak, or fallback
   activity is rendered.
 - The Record Card is a 9:16 on-screen milestone preview using the same returned
-  values. Export is deliberately not implemented until the product owner
-  chooses image, share link, PDF, or another contract.
+  values. It exports that rendered card as an image without writing or changing
+  any progress data.
 - Loading, empty, and request-error states remain visible rather than being
   hidden by synthetic heatmap cells.
 
