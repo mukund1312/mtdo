@@ -95,16 +95,14 @@ export async function POST(request: Request) {
     return Response.json({ error: "No authenticated session." }, { status: 401 });
   }
 
+  const anthropic = new Anthropic(); // reads ANTHROPIC_API_KEY from the environment
+
   const stream = new ReadableStream<Uint8Array>({
     async start(controller) {
       let fullText = "";
       let usedFallback = false;
 
       try {
-        // Construct inside the guarded generation path. If a local environment
-        // has not configured ANTHROPIC_API_KEY yet, the SDK can throw here;
-        // that should still produce MTDO's persisted starter route below.
-        const anthropic = new Anthropic(); // reads ANTHROPIC_API_KEY from the environment
         const messageStream = anthropic.messages.stream(
           {
             model: MODEL,
