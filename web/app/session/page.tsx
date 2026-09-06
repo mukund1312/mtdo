@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { EmberMorph, type EmberMorphTrigger } from "@/components/EmberMorph";
 import { createClient } from "@/lib/supabase/client";
+import { recordEvent } from "@/lib/analytics/record-event";
 import styles from "./session.module.css";
 
 type FocusSession = {
@@ -65,6 +66,18 @@ export default function SessionPage() {
     setElapsedS(secondsSince(running.started_at));
     setPhase("active");
     setNotice(null);
+  }, []);
+
+  // screen_opened (schema.md §4): fires on mount, not per render -- note the
+  // empty dependency array is deliberate. This is a fire-and-forget ledger
+  // append (safe here, unlike the Route Handler's serverless teardown risk --
+  // the browser tab stays alive); recordEvent() already swallows its own
+  // errors so this effect body never needs to. In local dev, React 18 Strict
+  // Mode double-invokes mount effects, so two rows land per visit -- that's
+  // a dev-only artifact of Strict Mode, not this effect; production fires
+  // once per real mount.
+  useEffect(() => {
+    void recordEvent(createClient(), "screen_opened", { screen: "session" });
   }, []);
 
   // A tab can close mid-session. Restore that server-authoritative row instead
