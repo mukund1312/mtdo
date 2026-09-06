@@ -78,7 +78,9 @@ screen a returning user actually lands on and lives in.
 - `blocks(id, user_id, plan_id, category_id, date, position, text, status, notes, coaching jsonb,
   claimed, started_at, elapsed_seconds, completed_at)` — ordinary client-writable table under RLS
   (own rows only), no RPC needed for reads or status updates on `status`/`notes`/`claimed`.
-- `status` is `'todo' | 'in_progress' | 'done'` — this is the kanban column key.
+- `status` is `'backlog' | 'todo' | 'in_progress' | 'done'` — this is the kanban column key.
+  `'backlog'` added in `migrations/0011` for a separate Backlog lane (a persisted status, not a
+  visual-only grouping of `todo` — it survives reloads/devices).
 - Query `blocks` filtered to `date = today` and `user_id = auth session user`, ordered by
   `position`. **Answered 2026-09-06 — "today" is the UTC date**, not the browser's local date.
   `daily_rollups.date` is bucketed in UTC for the same reason (no per-user time zone is stored

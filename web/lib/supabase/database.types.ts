@@ -615,6 +615,10 @@ export type Database = {
           isSetofReturn: false
         }
       }
+      recompute_daily_rollups: {
+        Args: { p_from?: string; p_timezone?: string; p_to?: string }
+        Returns: number
+      }
       record_event: {
         Args: { p_kind: string; p_payload?: Json }
         Returns: {
