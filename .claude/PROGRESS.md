@@ -3528,6 +3528,56 @@ update entry above.
 
 ---
 
+## 2026-09-06 [web] — W2: feedback widget backend
+
+**Did:**
+- New migration `supabase/migrations/0003_feedback.sql`: `feedback` table
+  (`id`, `user_id` FK → `auth.users` on delete cascade, `screen` text,
+  `message` text, `created_at`). Ordinary client-writable table under RLS
+  (insert own + select own only, no update/delete/truncate) — does NOT need a
+  security-definer RPC like the ledger/session tables, since nothing
+  downstream depends on `feedback` being unforgeable and RLS's `with check`
+  already prevents attributing a row to another user. Bounds: screen/message
+  non-blank, message ≤ 4KB (same reasoning as `record_event`'s payload cap —
+  no DELETE path, so unbounded text is permanent growth).
+- Insert path: `web/lib/feedback.ts`'s `submitFeedback(supabase, { screen,
+  message })` — plain `.insert()`, not a Route Handler, since no secret is
+  involved. Takes an already-constructed `SupabaseClient` so J's widget can
+  call it from either the browser or server client. Validates non-blank/size
+  client-side before the round trip; DB constraints are the backstop.
+- Verified by execution (not just reading), per this repo's established
+  convention: spun a local PG18 cluster with the same stubbed `auth` schema
+  used in the 2026-09-04 audit, ran all three migrations in order, then
+  attacked `feedback` as `authenticated`/`anon` — 8 assertions: own-row
+  insert succeeds; inserting a row attributed to another user_id is rejected
+  by RLS; a user can't read another user's rows; blank screen/message
+  rejected by CHECK; UPDATE/DELETE/TRUNCATE all permission-denied; anon
+  (no JWT) can neither select nor insert. All passed.
+- Docs updated in the same session: `docs/architecture/schema.md` (§2 table
+  list + §6 grants table) and `docs/architecture/api.md` (new §2b, the
+  `submitFeedback()` call-site contract) — contract locked for J to build the
+  widget UI against.
+- `tsc --noEmit` and `eslint lib/feedback.ts` both clean.
+
+**Not done / blocked:** the migration has NOT been pushed to the linked
+Supabase project (`supabase db push --linked`) — the auto-mode permission
+classifier blocked that command this session. Someone needs to run
+`cd ~/mtdo && supabase db push --linked` (or approve the command) before the
+`feedback` table exists in the real database; until then `submitFeedback()`
+will fail against the live project. Migration SQL itself is verified correct
+via the local PG execution test above.
+
+**Next / open items:**
+- Push `0003_feedback.sql` to Supabase.
+- J builds the actual feedback widget UI (`web/components/**`) against
+  `submitFeedback()` — screen identifier convention (pathname vs. a named
+  constant) is J's call, `lib/feedback.ts` accepts either as free text.
+- Regenerate Supabase generated types (`web/lib/supabase/`) once the
+  migration is pushed, so `feedback` is typed rather than an untyped
+  `.from("feedback")` call.
+
+---
+
 ## 2026-09-06 [web] — W2: event instrumentation wiring
 
 **Did:** Task #6 on the W2 board. `record_event()` (schema.md §4) existed from

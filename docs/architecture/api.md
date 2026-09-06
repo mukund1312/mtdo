@@ -110,6 +110,41 @@ for that category — this is the concrete mapping schema.md §2 left implicit.
 work against an already-decided shape; Opus is reserved for schema/RLS/session-authority/tutor-
 retrieval design, which this task wasn't).
 
+## 2b. Feedback widget — insert path (Wave W2, implemented)
+
+`web/lib/feedback.ts` — `submitFeedback(supabase, { screen, message })`. Inserts one row into
+`feedback` (`schema.md`'s new table, `supabase/migrations/0003_feedback.sql`), capturing the
+current user (`supabase.auth.getUser()`) and the screen/route the widget was opened from.
+
+**Not a Route Handler, not an RPC.** Unlike the tutor chat backend or the session RPCs, this
+insert holds no secret and nothing downstream treats `feedback` as unforgeable — the ordinary
+anon-key client plus RLS's `with check ((select auth.uid()) = user_id)` is the whole access
+control, the same pattern `plans`/`notes`/`companies` already use. `submitFeedback()` takes an
+already-constructed `SupabaseClient` (browser or server) rather than importing one itself, so
+J's widget can call it from a Client Component using `lib/supabase/client.ts`, or from a Server
+Action/Route Handler using `lib/supabase/server.ts` — whichever fits where the widget is mounted.
+
+**Call site contract:**
+
+```ts
+import { submitFeedback, SubmitFeedbackError } from "@/lib/feedback";
+
+try {
+  await submitFeedback(supabase, { screen: pathname, message: text });
+} catch (e) {
+  if (e instanceof SubmitFeedbackError) { /* show inline error, don't crash the widget */ }
+}
+```
+
+- `screen` is free text (not an enum) — pass whatever route/screen identifier the caller already
+  has, e.g. `window.location.pathname` or a neutral screen key. Nothing branches on its value
+  server-side.
+- `message` is trimmed and rejected client-side if blank or over 4 KB before the round trip; the
+  DB enforces the same bounds (`feedback_message_not_blank`, `feedback_message_bounded`) as a
+  backstop, not as the primary UX.
+- No update/delete path exists (by design — see `schema.md`'s `feedback` entry) — a widget that
+  wants "edit my last feedback" is a new feature request, not a bug in this contract.
+
 ## 2c. Event instrumentation wiring status (Wave 2, `web/lib/analytics/record-event.ts`)
 
 `record_event()` (schema.md §4) existed from W0 with no client call sites. This wave wired the
@@ -150,11 +185,6 @@ an unrelated component just to close this list out.
 `session_started`/`session_completed`/`session_abandoned` need no client wiring — they're minted
 server-side inside `start_session()`/`complete_session()`/`abandon_session()` (schema.md §5),
 already called from `web/app/session/page.tsx`.
-
-**Numbering note:** this section is `2c`, not `2b`, because a concurrent session was landing a
-`2b` (feedback widget) in this same working tree at the same time this section was written — see
-PROGRESS.md's 2026-09-06 "event instrumentation wiring" entry. Whichever PR merges second should
-renumber on rebase if the gap looks wrong once both have landed.
 
 ## 3. How the app talks to the database
 

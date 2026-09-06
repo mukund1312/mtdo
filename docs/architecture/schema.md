@@ -130,6 +130,16 @@ companies(id, user_id, name, status check in (…), date_added, notes)     -- _c
   -- 'applied','oa','interview','offer','rejected','ghosted'. One vocabulary across
   -- the terminal CRM and the web CRM, because the Phase 5 bridge shares this data.
 
+-- feedback widget (W2, supabase/migrations/0003_feedback.sql)
+feedback(id uuid pk, user_id, screen text not blank, message text not blank (<= 4KB),
+         created_at)
+  -- Ordinary client-writable table (insert + select own only, no update/delete —
+  -- a submitted feedback item is a point-in-time fact, not editable after the
+  -- fact). Does NOT need a security-definer RPC like the ledger/session
+  -- tables: nothing downstream depends on it being unforgeable, and RLS's
+  -- `with check` already prevents attributing a row to another user.
+  -- Insert path: web/lib/feedback.ts's submitFeedback() (api.md §2b).
+
 -- derived, NEVER hand-written (D13) — materialized from activity_events
 daily_rollups(id uuid pk, user_id, date, room_id null,
               blocks_done, focus_seconds, sessions_completed (each check >= 0),
@@ -322,6 +332,7 @@ erroring; where the grant itself is revoked, it errors with `42501`.
 | `profiles` | select, insert, update | client (own row); trigger on `auth.users` insert |
 | `plans`, `plan_categories` | select, insert, update (**no delete**) | client |
 | `curriculum_items`, `blocks`, `proofs`, `notes`, `companies`, `tutor_conversations` | select, insert, update, delete | client |
+| `feedback` | select, insert (**no update/delete**) | client |
 | `activity_events` | **select only** | `record_event()` / `append_event()` |
 | `focus_sessions` | **select only** | `start_session()` / `complete_session()` / `abandon_session()` |
 | `daily_rollups` | **select only** | future service-role recompute job |
