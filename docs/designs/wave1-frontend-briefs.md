@@ -102,10 +102,37 @@ screen a returning user actually lands on and lives in.
 kanban (todo/in_progress/done columns), a block claimed/in-progress (visually distinct, ties into
 Session).
 
+- **How AI-generated curriculum reaches this board — added 2026-09-07, `api.md` §3b.** The
+  hand-composer is not the only way a block should appear. Call
+  `rpc('ensure_curriculum_menu')` on load: it returns this week's pickable curriculum items
+  (`curriculum_item_id`, `task`, `meta`, plus the category), and
+  `rpc('pick_curriculum_item', { p_item_id })` puts one on today's board as a real block.
+  **Read §3b before designing this surface** — three things are load-bearing and none are
+  guessable from the schema:
+  - **Curriculum is not scheduled onto dates.** There is no "today's curriculum". It is a menu
+    the user pulls from whenever they get to it. Do not build a view that implies items are due
+    on a particular day, and do not derive a week from `plan_start` or filter by
+    `plan_categories.days` — for a curriculum category `days` is a *count* (`days.length` =
+    day-lists per week), not a set of weekdays.
+  - **An empty menu is a normal end state, not an error.** A generated plan holds exactly two
+    weeks of content, so the menu legitimately runs dry. That moment means "time for a check-in",
+    and needs its own state — same class of thing as the Progress heatmap's empty state, not a
+    bug to work around.
+  - **`ensure_curriculum_menu()` writes** (it advances the unlock cursor, at most once per ISO
+    week). It reads like a query and isn't one — don't call it from a render path that might run
+    twice per paint. `pick_curriculum_item()` is idempotent, so a double-clicked pick is safe.
+  - `meta` on a menu row is the Learning Coach payload (focus_points, questions, mistakes, tips,
+    mental_models). Use it for a preview before picking; after picking, the same content is on
+    `blocks.coaching`.
+
 **Boundaries:** block status transitions are direct client `.update()` calls under RLS — no RPC
 exists or is needed for this (unlike sessions/ledger). Do not invent one. The ledger event above
 is *in addition to* that update, not a replacement for it — the `.update()` is the block's state,
-the event is the record that it happened.
+the event is the record that it happened. Creating a block from curriculum is the one exception:
+that goes through `pick_curriculum_item()` (above), because it allocates `position` server-side
+under a lock — the hand-composer's client-side `select max(position) + 1` has a real race against
+`blocks_slot_key`, which is DEFERRABLE and so surfaces the collision at COMMIT rather than at
+INSERT.
 
 ---
 

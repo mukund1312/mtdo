@@ -25,6 +25,7 @@ plan docs (`docs/designs/*.md`). Each entry: the call, and the reason.
 | 2026-09-04 | **Every pinned version and config choice above was verified**, not assumed | `npm view <pkg> version`/`versions` for real current releases, then a full `rm -rf node_modules && npm ci` + `tsc --noEmit` + `eslint .` + `next build` pass before committing — three real, current ecosystem incompatibilities (TS7, FlatCompat, `getFilename`) were caught this way and would otherwise have shipped broken |
 | 2026-09-06 | **`EmberMorph` takes plain `sessionId`/`plannedDurationS`/`elapsedS`/`originRect` values via a `phase`-tagged `trigger` prop, never a `focus_sessions` row or a Supabase client** (`api.md` §4.1) | The marketing showcase has no auth and no real session, so the component can't assume either; a `phase` union plus an `onExitComplete` callback also means neither caller has to separately track "is the reverse animation still playing" |
 | 2026-09-06 | **`daily_rollups` is materialized by a scheduled full recompute (pg_cron), not by a trigger on the ledger** (`0009`/`0010`, api.md §3a) | A trigger would put aggregation on the user's write path, where a failure fails the session or task write for the sake of a derived number; and incremental counters cannot self-heal, so a full recompute has to exist anyway — at which point the trigger is a second, divergeable writer into a table whose whole rule is "derived, NEVER hand-written". `computed_at` ("how stale is this row") is job-shaped and meaningless under a trigger. In-database cron over an Edge Function or a Vercel cron route because the aggregation is one SQL statement over data already in Postgres: no network hop, no service-role key in a second platform's environment, no third deploy target to keep in step with the migration |
+| 2026-09-07 | **Curriculum reaches the board as an unlocking, carry-forward weekly menu the user picks from — it is never scheduled onto a calendar date** (`0012`, api.md §3b) | `prompt.ts` rule 2, `core.py`'s `categories_for_day()` and `types.ts` all already say curriculum is "not locked to a specific calendar day"; `plan_categories.days` is a COUNT for curriculum categories (`days.length` = day-lists per week), not a weekday filter. A `floor((today - plan_start)/7)` bridge would have looked right and quietly rebuilt the day-by-day schedule the product abandoned. Carry-forward rather than the terminal app's use-it-or-lose-it because a generated plan holds exactly two weeks of content, so one missed week would cost half the plan |
 
 ---
 
@@ -172,12 +173,74 @@ RPCs are already wired.
 
 ---
 
+## 2026-09-07 — The curriculum → blocks bridge
+
+`curriculum_items` had been written by onboarding since W1 and read by nothing at all. Today's
+board (`today-deck.tsx`) creates blocks only through a hand-composer, so the AI-generated
+curriculum — the thing the product plan calls the actual wedge ("the wedge is coaching +
+curriculum, not the focus timer") — never reached a user.
+
+**The decision that mattered was refusing the obvious one.** The natural bridge is a scheduler:
+derive a week from `today - plan_start`, then place blocks on dates whose weekday appears in
+`plan_categories.days`. It is wrong on every axis, and the repo already said so in three places
+written at different times — the prompt that generates every plan ("`curriculum` is a WEEKLY MENU,
+not a day-by-day schedule … it is not locked to a specific calendar day"), `core.py`'s
+`categories_for_day()` ("curriculum content is no longer tied to specific calendar days at all"),
+and `types.ts` on `GeneratedCurriculumDay`. For a curriculum category `days` is a **count** —
+`days.length` is how many day-lists make one week of content, which is exactly how `week_index`
+was assigned at import. Reading it as a weekday filter would have compiled, passed review, and
+rebuilt the schedule the product deliberately moved away from.
+
+**What `week_index` actually is:** a sequence position in the curriculum. Which calendar week it
+surfaces in depends on the user's unlock cursor, never on today's date.
+
+**Two places this deliberately diverges from the terminal app.**
+
+*Unpicked items carry forward.* `_ensure_weekly_menu()` drops them when the cursor advances. A
+generated web plan holds exactly two weeks of content (`prompt.ts` rule 2 writes
+`days.length * 2` inner lists), so use-it-or-lose-it means one missed week costs half the plan.
+On a terminal opened daily that is a nudge; on the web it is data loss. The cursor still advances
+at most once per ISO week, and only when the user shows up — weeks away cost nothing, same
+laziness as the terminal app.
+
+*"Picked" is derived, not stored.* It means a block exists with that `curriculum_item_id`. The
+terminal app keeps a `picked` flag inside `_meta.weekly_menu`; a second mutable copy of "is this
+on the board" can disagree with the board, and the failure is invisible. Deleting a block puts the
+item back on the menu, which is what a user would predict anyway.
+
+**Why RPCs for tables that stay client-writable.** Neither `ensure_curriculum_menu()` nor
+`pick_curriculum_item()` fences anything off — `blocks`, `plan_categories` and `curriculum_items`
+keep full client CRUD, and a user rewriting their own unlock cursor is self-service on their own
+plan that nothing downstream derives from. They exist because two operations are genuinely unsafe
+from a client: advancing the cursor (two tabs both see "new ISO week" and each advance it) and
+allocating `blocks.position` by `select max(position) + 1` — `blocks_slot_key` is DEFERRABLE, so
+concurrent inserts don't collide on INSERT, they both succeed and one fails at COMMIT after the
+transaction looked fine. That second one is a live latent bug in `today-deck.tsx`'s composer,
+which allocates position exactly that way; the RPC avoids it, the composer still has it, and it's
+filed as a follow-up rather than fixed here.
+
+**Found while building this, and fixed:** `supabase/tests/run.sh` piped `psql` into `grep` and
+appended `|| true` in its migration loop, so a migration that failed outright was silently skipped
+and the suite still reported success. `0012` failing to apply passed green until an assertion
+happened to touch it. The loop now fails hard and prints the error. Worth noting that this had
+been true since the harness landed — every "all assertions passed" before this only proved the
+assertions ran, not that the migrations applied.
+
+Suite is 106 assertions. The pg_cron caveat from the 2026-09-06 entry still stands.
+
+---
+
 ## Open, not yet decided
 
 - Whether the founder-facing analytics need anything beyond PostHog (deferred until W2 has real
   users — don't build speculatively).
 - Realtime infrastructure choice for room presence (Supabase Realtime is the working assumption
   from the product plan; not re-validated at the engineering level since rooms are still W4a+).
+- **Curriculum exhaustion.** A generated plan holds two weeks of content, so the weekly menu
+  legitimately runs dry after two unlock steps. There is no regeneration or plan-extension flow —
+  the menu simply goes empty, which the terminal app handles with a "time for a check-in" nudge
+  (`cli.py`, `PLAN_END`). What the web does at that moment is a product decision, not a schema
+  one; `api.md` §3b tells the screen not to treat it as a failure in the meantime.
 - **Per-user time zones.** `daily_rollups.date` (and `blocks.date`, and anything else that means
   "a day") is currently a UTC date for every user. Fixing it properly means a `profiles` column,
   a UI to set it, a decision about what happens to already-computed rollups when a user changes
