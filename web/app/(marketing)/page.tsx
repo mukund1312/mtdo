@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Link from "next/link";
 
 const modes = ["Route", "Focus", "Proof"] as const;
 type Mode = (typeof modes)[number];
@@ -63,6 +64,7 @@ export default function MarketingHomePage() {
           {[["Experience", "#experience"], ["Language", "#language"], ["About", "#closing"]].map(([label, href]) => (
             <a key={href} href={href} className="flex min-h-11 items-center rounded-full px-4 text-[13px] text-[var(--muted)] transition-colors hover:text-[var(--text)] focus-visible:ring-2 focus-visible:ring-[var(--accent)]">{label}</a>
           ))}
+          <Link href="/theme-studio" className="flex min-h-11 items-center rounded-full px-4 text-[13px] text-[var(--muted)] transition-colors hover:text-[var(--text)] focus-visible:ring-2 focus-visible:ring-[var(--accent)]">Theme Studio ↗</Link>
         </div>
         <button type="button" onClick={() => setIsPaletteOpen(true)} className="flex min-h-11 items-center rounded-full border border-[var(--border)] px-4 text-[13px] font-medium text-[var(--text)] transition-all duration-200 hover:border-[rgba(34,211,238,.45)] hover:bg-[var(--surface)] focus-visible:ring-2 focus-visible:ring-[var(--accent)]">Explore concept <span className="ml-2 text-[var(--dim)]">↗</span></button>
       </nav>

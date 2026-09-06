@@ -4,6 +4,9 @@ const nextConfig: NextConfig = {
   // PWA manifest lives in app/manifest.ts (Next.js App Router convention);
   // no plugin needed for the manifest itself. Service-worker/installability
   // wiring is a separate W0 task once an icon set exists.
+  // This project keeps contributor instructions in the repository, rather
+  // than having `next dev` generate untracked AGENTS.md / CLAUDE.md files.
+  agentRules: false,
 };
 
 export default nextConfig;
