@@ -87,7 +87,11 @@ curriculum_items(id, category_id, week_index, position, task, meta jsonb)
 
 -- daily work (ports state.json per-date entries)
 blocks(id, user_id, plan_id, category_id, date, position, text,
-       status check in ('todo','in_progress','done'), notes, coaching jsonb,
+       status check in ('backlog','todo','in_progress','done'), notes, coaching jsonb,
+       -- 'backlog' added in migrations/0011 for J's Today board Backlog
+       -- lane -- default stays 'todo'; RLS/FKs/RPCs/daily_rollups logic
+       -- are all unaffected (recompute_daily_rollups() never reads
+       -- blocks.status -- see 0009's "SOURCE CHOICE" comment).
        claimed, started_at, elapsed_seconds check (>= 0), completed_at,
        unique(user_id, date, category_id, position) DEFERRABLE INITIALLY DEFERRED,
        unique(id, user_id),
