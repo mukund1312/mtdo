@@ -230,6 +230,40 @@ Suite is 106 assertions. The pg_cron caveat from the 2026-09-06 entry still stan
 
 ---
 
+## 2026-09-07 — Theme Studio's fate: paused, Architecture 02 is the sole V1 product
+
+Resolved by the founder, closing the open question from PR #104's unscoped merge (the
+five-theme gallery + prototype checkout, see `PARALLEL_AGENTS.md` and the review-authority
+addendum in `mtdo-web-dev-split-plan.md` §4).
+
+**Decision, not a compromise between the options considered — a fuller architectural
+statement:**
+
+- **Architecture 02 (Signal Deck) is the one and only V1 product.** All new frontend work —
+  Onboarding (#86), Today (#87), Progress heatmap + Record Card (#89), and everything after —
+  is built inside it. `/architecture-01/03/07/08` and `/theme-studio` get no further V1
+  implementation time.
+- **Theme Studio is paused, not deleted.** The code stays; it is explicitly not this product's
+  Wave 1 concern. Revisit only as a real, separately-scoped feature later.
+- **Long-term shape, for whoever eventually picks this back up:** one product, one shared
+  backend/data model, with theme/architecture as a presentation-only layer on top — a user's
+  tasks, sessions, progress, and plan must read identically regardless of which of the five
+  visual directions is selected. This is a reason *not* to build per-architecture data models
+  or duplicate backend logic now, even speculatively — the moment this becomes real work, it's
+  a UI theming layer over the existing schema, not a new one.
+- **No payment UI in Wave 1**, restated from `DESIGN.md`'s own hard prohibitions — applies
+  directly to Theme Studio's checkout modal (mtdo-bugs, checkout-honesty fix, in progress
+  separately from this decision).
+- **`/progress` (the pre-Architecture-02 standalone page) is retired** — already removed in the
+  PR #108 revert cycle; nothing further needed here.
+
+**Already resolved, listed here only because the brief that produced this decision assumed
+otherwise and a future reader might too:**
+- Record Card export format: **decided and shipped** (image download, `html-to-image`,
+  DESIGN.md's own 1080×1920 spec) — not an open question.
+- Session screen visual review against `DESIGN.md`: **done** (`a7f4630`, "Session screen review
+  findings — resume-or-discard, DESIGN.md tokens").
+
 ## Open, not yet decided
 
 - Whether the founder-facing analytics need anything beyond PostHog (deferred until W2 has real
