@@ -13,7 +13,8 @@ the test runner's managed production server only; CI retains the production-buil
 
 `onboarding.spec.ts` drives the Signal Deck onboarding wizard
 (`/architecture-02/onboarding`) through the full happy path: intent -> rhythm
--> submit -> a persisted plan is ready -> "Enter Today".
+-> submit -> a persisted plan is ready -> "Enter Today" -> a curriculum item
+is picked into a real block -> that block moves to In progress.
 
 Submitting calls the real `POST /api/onboarding/plan`, which needs an
 authenticated Supabase session (anonymous sign-in, via `proxy.ts`) and calls

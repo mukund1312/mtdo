@@ -19,9 +19,12 @@ export type TodayBlock = {
   text: string;
 };
 
-type RouteCategory = { id: string; label: string };
-type ActiveRoute = { categories: RouteCategory[]; planId: string };
-type Draft = { categoryId: string; notes: string; status: BlockStatus; text: string };
+type CurriculumMenuItem = {
+  category_label: string;
+  curriculum_item_id: string;
+  meta: unknown;
+  task: string;
+};
 
 const LANES: Array<{ id: BlockStatus; label: string; index: string }> = [
   { id: "backlog", label: "Backlog", index: "01" },
@@ -48,16 +51,24 @@ function roughDuration(seconds: number): string | null {
   return seconds > 0 ? `${Math.max(1, Math.round(seconds / 60))} min logged` : null;
 }
 
+function menuPreview(meta: unknown): string | null {
+  if (!meta || typeof meta !== "object" || Array.isArray(meta)) return null;
+  const focusPoints = (meta as { focus_points?: unknown }).focus_points;
+  if (!Array.isArray(focusPoints)) return null;
+  const points = focusPoints.filter((point): point is string => typeof point === "string").slice(0, 2);
+  return points.length > 0 ? points.join(" · ") : null;
+}
+
 export function TodayDeck({ onOpenBlock }: { onOpenBlock: (block: TodayBlock) => void }) {
   const [blocks, setBlocks] = useState<TodayBlock[]>([]);
   const [state, setState] = useState<"loading" | "ready" | "error">("loading");
   const [updatingId, setUpdatingId] = useState<string | null>(null);
   const [writeError, setWriteError] = useState<string | null>(null);
-  const [route, setRoute] = useState<ActiveRoute | null>(null);
+  const [hasActiveRoute, setHasActiveRoute] = useState(false);
+  const [menuItems, setMenuItems] = useState<CurriculumMenuItem[]>([]);
   const [composerOpen, setComposerOpen] = useState(false);
   const [composerError, setComposerError] = useState<string | null>(null);
-  const [creating, setCreating] = useState(false);
-  const [draft, setDraft] = useState<Draft>({ categoryId: "", notes: "", status: "todo", text: "" });
+  const [pickingId, setPickingId] = useState<string | null>(null);
   const [draggedBlockId, setDraggedBlockId] = useState<string | null>(null);
   const [dropTarget, setDropTarget] = useState<BlockStatus | null>(null);
 
@@ -72,26 +83,35 @@ export function TodayDeck({ onOpenBlock }: { onOpenBlock: (block: TodayBlock) =>
 
     const { data: activePlan, error: planError } = await supabase
       .from("plans").select("id").eq("user_id", user.id).eq("is_active", true).maybeSingle();
-    if (planError) console.error("[today] failed to load active route:", planError);
-    if (activePlan) {
-      const { data: categories, error: categoryError } = await supabase
-        .from("plan_categories").select("id, label").eq("plan_id", activePlan.id).order("sort_order");
-      if (categoryError) console.error("[today] failed to load route categories:", categoryError);
-      setRoute({ categories: categories ?? [], planId: activePlan.id });
-    } else {
-      setRoute(null);
+    if (planError) {
+      console.error("[today] failed to load active route:", planError);
+      setState("error");
+      return;
     }
+    setHasActiveRoute(Boolean(activePlan));
 
-    const { data, error } = await supabase
+    // This RPC intentionally writes the active plan's ISO-week unlock cursor.
+    // It is called from this explicit load path (never render) and returns every
+    // unlocked, unpicked curriculum item for the current user.
+    const [{ data, error }, { data: menuData, error: menuError }] = await Promise.all([
+      supabase
       .from("blocks")
       .select("id, text, status, notes, claimed, elapsed_seconds, position")
-      .eq("user_id", user.id).eq("date", utcToday()).order("position");
-    if (error) {
-      console.error("[today] failed to load blocks:", error);
+      .eq("user_id", user.id).eq("date", utcToday()).order("position"),
+      supabase.rpc("ensure_curriculum_menu"),
+    ]);
+    if (error || menuError) {
+      console.error("[today] failed to load today's route:", error ?? menuError);
       setState("error");
       return;
     }
     setBlocks((data ?? []).flatMap((block) => isBlockStatus(block.status) ? [{ ...block, status: block.status }] : []));
+    setMenuItems((menuData ?? []).map((item) => ({
+      category_label: item.category_label,
+      curriculum_item_id: item.curriculum_item_id,
+      meta: item.meta,
+      task: item.task,
+    })));
     setState("ready");
   }, []);
 
@@ -130,70 +150,51 @@ export function TodayDeck({ onOpenBlock }: { onOpenBlock: (block: TodayBlock) =>
 
   const openComposer = () => {
     setComposerError(null);
-    setDraft({ categoryId: route?.categories[0]?.id ?? "", notes: "", status: "todo", text: "" });
     setComposerOpen(true);
   };
 
-  const createBlock = async () => {
-    if (creating) return;
-    if (!route || !draft.categoryId || !draft.text.trim()) {
-      setComposerError(route ? "Give the signal a name and choose its route category." : "Set up a route with a category before adding a signal.");
-      return;
-    }
-    setCreating(true);
+  const pickMenuItem = async (item: CurriculumMenuItem) => {
+    if (pickingId) return;
+    setPickingId(item.curriculum_item_id);
     setComposerError(null);
     const supabase = createClient();
-    const { data: { user } } = await supabase.auth.getUser();
-    if (!user) {
-      setComposerError("Your session is unavailable. Refresh and try again.");
-      setCreating(false);
-      return;
-    }
-    const date = utcToday();
-    const { data: positioned, error: positionError } = await supabase.from("blocks").select("position")
-      .eq("user_id", user.id).eq("category_id", draft.categoryId).eq("date", date).order("position", { ascending: false }).limit(1);
-    if (positionError) {
-      setComposerError("We could not prepare a place for this signal. Try again.");
-      setCreating(false);
-      return;
-    }
-    const { data, error } = await supabase.from("blocks").insert({
-      category_id: draft.categoryId,
-      claimed: draft.status === "in_progress",
-      date,
-      notes: draft.notes.trim() || null,
-      plan_id: route.planId,
-      position: (positioned?.[0]?.position ?? -1) + 1,
-      status: draft.status,
-      text: draft.text.trim(),
-      user_id: user.id,
-    }).select("id, text, status, notes, claimed, elapsed_seconds, position").single();
+    const { data, error } = await supabase.rpc("pick_curriculum_item", { p_item_id: item.curriculum_item_id });
     if (error || !data || !isBlockStatus(data.status)) {
-      console.error("[today] failed to create block:", databaseErrorMessage(error, "No row returned."));
-      setComposerError(databaseErrorMessage(error, "We could not save that signal. Your route is unchanged."));
-      setCreating(false);
+      console.error("[today] failed to pick route item:", databaseErrorMessage(error, "No row returned."));
+      setComposerError(databaseErrorMessage(error, "We could not add that route item. Your board is unchanged."));
+      setPickingId(null);
       return;
     }
-    const createdBlock: TodayBlock = { ...data, status: data.status };
-    setBlocks((current) => [...current, createdBlock].sort((a, b) => a.position - b.position));
+    const createdBlock: TodayBlock = {
+      claimed: data.claimed,
+      elapsed_seconds: data.elapsed_seconds,
+      id: data.id,
+      notes: data.notes,
+      position: data.position,
+      status: data.status,
+      text: data.text,
+    };
+    setBlocks((current) => [...current.filter((block) => block.id !== createdBlock.id), createdBlock]
+      .sort((a, b) => a.position - b.position));
+    setMenuItems((current) => current.filter((menuItem) => menuItem.curriculum_item_id !== item.curriculum_item_id));
     setComposerOpen(false);
-    setCreating(false);
+    setPickingId(null);
   };
 
   return <section className="a02-work" aria-labelledby="today-title">
-    <div className="a02-view-head"><div><span className="a02-eyebrow">TODAY / FLOW MAP</span><h1 id="today-title">Move the<br /><em>right pieces.</em></h1></div><div className="a02-view-controls"><button type="button" onClick={() => void load()}>Refresh</button><button type="button" disabled>Today / UTC</button><button className="a02-add" type="button" onClick={openComposer}>+ New signal</button></div></div>
+    <div className="a02-view-head"><div><span className="a02-eyebrow">TODAY / FLOW MAP</span><h1 id="today-title">Move the<br /><em>right pieces.</em></h1></div><div className="a02-view-controls"><button type="button" onClick={() => void load()}>Refresh</button><button type="button" disabled>Today / UTC</button><button className="a02-add" type="button" onClick={openComposer} disabled={state === "loading"}>+ Add from route</button></div></div>
     {state === "error" ? <section className="a02-product-state" role="alert"><b>Today is unavailable.</b><p>We could not load your blocks. Your route is unchanged.</p><button type="button" onClick={() => void load()}>Try again ↗</button></section> : <div className={`a02-board a02-board--today ${state === "loading" ? "is-loading" : ""}`} aria-busy={state === "loading"}>{LANES.map((lane) => {
       const laneBlocks = blocks.filter((block) => block.status === lane.id);
       return <section key={lane.id} className={`a02-lane a02-today-lane a02-today-lane--${lane.id} ${dropTarget === lane.id ? "is-drop-target" : ""}`} onDragOver={(event) => { event.preventDefault(); setDropTarget(lane.id); }} onDragLeave={() => setDropTarget((current) => current === lane.id ? null : current)} onDrop={(event) => { event.preventDefault(); dropBlock(lane.id); }}><header><span>{lane.index}</span><b>{lane.label}</b><i>{state === "loading" ? "…" : laneBlocks.length}</i></header>{state === "loading" ? <LoadingBlocks /> : laneBlocks.length === 0 ? <p className="a02-lane-empty">Drop a signal here.</p> : laneBlocks.map((block) => <article className={`a02-work-unit a02-live-block ${block.claimed || block.status === "in_progress" ? "is-claimed" : ""}`} key={block.id} aria-busy={updatingId === block.id} draggable={updatingId !== block.id} onDragStart={(event) => { event.dataTransfer.effectAllowed = "move"; event.dataTransfer.setData("text/plain", block.id); setDraggedBlockId(block.id); }} onDragEnd={() => { setDraggedBlockId(null); setDropTarget(null); }}><em>{block.status === "backlog" ? "BACKLOG" : block.status === "in_progress" ? "IN MOTION" : block.status === "done" ? "CLOSED" : "READY"}</em><button type="button" className="a02-work-open" onClick={() => onOpenBlock(block)}><strong>{block.text}</strong></button><small>{roughDuration(block.elapsed_seconds) ?? (block.notes?.trim() || "Personal route")}</small>{block.status === "in_progress" && <span className="a02-unit-pulse" aria-label="In progress" />}<span className="a02-drag-hint" aria-hidden="true">Drag to move</span></article>)}</section>;
     })}</div>}
-    {state === "ready" && blocks.length === 0 && <p className="a02-product-note">No blocks are scheduled for today. Add a signal to begin your route.</p>}
+    {state === "ready" && blocks.length === 0 && <p className="a02-product-note">No blocks are scheduled for today. Add a route item to begin.</p>}
     {writeError && <p className="a02-product-write-error" role="alert">{writeError}</p>}
-    {composerOpen && <BlockComposer categories={route?.categories ?? []} draft={draft} error={composerError} creating={creating} onChange={setDraft} onClose={() => setComposerOpen(false)} onCreate={() => void createBlock()} />}
+    {composerOpen && <CurriculumMenu hasActiveRoute={hasActiveRoute} items={menuItems} error={composerError} pickingId={pickingId} onClose={() => setComposerOpen(false)} onPick={(item) => void pickMenuItem(item)} />}
   </section>;
 }
 
 function LoadingBlocks() { return <><div className="a02-work-unit a02-skeleton" /><div className="a02-work-unit a02-skeleton a02-skeleton--short" /></>; }
 
-function BlockComposer({ categories, draft, error, creating, onChange, onClose, onCreate }: { categories: RouteCategory[]; draft: Draft; error: string | null; creating: boolean; onChange: (next: Draft) => void; onClose: () => void; onCreate: () => void }) {
-  return <section className="a02-record-overlay" role="dialog" aria-modal="true" aria-labelledby="new-signal-title"><form className="a02-composer" onSubmit={(event) => { event.preventDefault(); onCreate(); }}><button className="a02-lens-close" type="button" onClick={onClose}>ESC / close ×</button><span className="a02-eyebrow">TODAY / NEW SIGNAL</span><h2 id="new-signal-title">Add the next<br /><em>right piece.</em></h2>{categories.length > 0 ? <><label>Signal name<input autoFocus value={draft.text} onChange={(event) => onChange({ ...draft, text: event.target.value })} placeholder="What needs your attention?" /></label><label>Route category<select value={draft.categoryId} onChange={(event) => onChange({ ...draft, categoryId: event.target.value })}>{categories.map((category) => <option key={category.id} value={category.id}>{category.label}</option>)}</select></label><label>Place it in<select value={draft.status} onChange={(event) => onChange({ ...draft, status: event.target.value as BlockStatus })}><option value="backlog">Backlog</option><option value="todo">Todo</option><option value="in_progress">In progress</option><option value="done">Done</option></select></label><label>Context <small>optional</small><textarea value={draft.notes} onChange={(event) => onChange({ ...draft, notes: event.target.value })} placeholder="What would make this block useful?" /></label></> : <p className="a02-composer-empty">Create your route first, then return here to add its first signal.</p>}{error && <p className="a02-composer-error" role="alert">{error}</p>}<div className="a02-composer-actions"><button type="button" onClick={onClose}>Cancel</button>{categories.length > 0 && <button className="a02-add" type="submit" disabled={creating}>{creating ? "Saving…" : "Add signal ↗"}</button>}</div></form></section>;
+function CurriculumMenu({ hasActiveRoute, items, error, pickingId, onClose, onPick }: { hasActiveRoute: boolean; items: CurriculumMenuItem[]; error: string | null; pickingId: string | null; onClose: () => void; onPick: (item: CurriculumMenuItem) => void }) {
+  return <section className="a02-record-overlay" role="dialog" aria-modal="true" aria-labelledby="route-menu-title"><section className="a02-composer"><button className="a02-lens-close" type="button" onClick={onClose}>ESC / close ×</button><span className="a02-eyebrow">TODAY / ROUTE MENU</span><h2 id="route-menu-title">Choose the<br /><em>next piece.</em></h2>{items.length > 0 ? <div className="a02-curriculum-menu">{items.map((item) => <button className="a02-curriculum-item" type="button" key={item.curriculum_item_id} onClick={() => onPick(item)} disabled={Boolean(pickingId)}><span>{item.category_label}</span><b>{item.task}</b>{menuPreview(item.meta) && <small>{menuPreview(item.meta)}</small>}<i>{pickingId === item.curriculum_item_id ? "Adding…" : "Add ↗"}</i></button>)}</div> : <p className="a02-composer-empty">{hasActiveRoute ? "Your route menu is clear for now. Time for a check-in before you extend it." : "Set up your route first, then return here for its first useful piece."}</p>}{error && <p className="a02-composer-error" role="alert">{error}</p>}<div className="a02-composer-actions"><button type="button" onClick={onClose}>Cancel</button></div></section></section>;
 }
