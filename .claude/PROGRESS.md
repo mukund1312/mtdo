@@ -29,6 +29,34 @@ Architecture 02 Playwright suite.
 
 ---
 
+## [web] 2026-09-07 (PR pending) — Onboarding contract verification and Today handoff
+
+Verified the Architecture 02 onboarding implementation against
+`docs/designs/wave1-frontend-briefs.md` and the implemented `/api/onboarding/plan` NDJSON
+contract.
+
+- The form submits the exact `OnboardingAnswers` shape and consumes POST-streamed
+  `delta` / `done` / `error` records through `response.body.getReader()` with line buffering.
+  Its Signal Deck loading, hard-error/retry, normal success, and fallback-success states remain
+  intact; the client makes no direct plan-table writes.
+- The route persists and activates the plan before it emits `done`, so a success screen always
+  represents a real account-owned plan, not a client-side approximation.
+- Fixed the incomplete success handoff: **Enter Today** now opens
+  `/architecture-02?deck=work`, selecting the existing live UTC Today board rather than returning
+  to Signal Deck Home. Returning email/password users now land on the same Work deck after login.
+- Extended the real Playwright scenario to assert that its newly persisted plan reaches the Today
+  heading. The browser test uses the anonymous-auth identity that the product upgrades in place
+  on signup, preserving the same plan and all other user data.
+
+Validated: `npm run test` (29 passed), `npm run typecheck`, `npm run lint`, `git diff --check`,
+and Playwright’s real anonymous-user onboarding → persisted plan → Today path (passed).
+
+**External QA remaining:** a human-controlled inbox is still needed to exercise email-confirmation
+and password-reset links end-to-end, because that depends on the shared Supabase Auth redirect
+allow-list and a real mailbox rather than frontend code.
+
+---
+
 ## [web] 2026-09-07 (PR pending) — Architecture 02 account and profile flow
 
 Added the Architecture 02 Signal Deck account surface using the existing Supabase

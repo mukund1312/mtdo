@@ -1,6 +1,6 @@
 # Signal Deck free — onboarding implementation
 
-**Status:** Implemented UI and API integration; the Deck itself is still prototype data.
+**Status:** Implemented UI and API integration. Onboarding hands off to the live Today / Work deck.
 
 ## Goal
 
@@ -28,7 +28,7 @@ Signal Deck
   → Rhythm: experience level + available weekdays + optional context/name
   → Stream plan generation
   → Persisted plan summary
-  → Enter Signal Deck
+  → Enter Today / Work deck
 ```
 
 ### Input contract
@@ -49,7 +49,8 @@ This matches `web/lib/plan-generation/types.ts` and the API contract in
 The client reads the API's NDJSON stream using `response.body.getReader()`.
 
 - `delta` events update the visible route-generation status.
-- `done` stores the returned summary in component state and offers **Enter Signal Deck**.
+- `done` stores the returned summary in component state and offers **Enter Today**. The handoff
+  opens `/architecture-02?deck=work`, the existing live UTC Today board.
 - `error`, malformed responses, unavailable auth, and streams that end without `done` return the
   user to the rhythm step with a readable error.
 - The API itself falls back to a static starter plan when Anthropic generation fails, so the UI
@@ -63,11 +64,13 @@ best-effort only; failing browser storage never changes onboarding success.
 - `web/app/(marketing)/architecture-02/onboarding/page.tsx` — stateful client onboarding flow.
 - `web/app/(marketing)/architecture-02/onboarding/onboarding.css` — responsive Signal Deck UI.
 - `web/app/(marketing)/architecture-02/route-entry.css` — home-screen route-setup entry styling.
-- `web/app/(marketing)/architecture-02/page.tsx` — adds the entry link only.
+- `web/app/(marketing)/architecture-02/page.tsx` — adds the entry link and accepts the internal
+  `deck=work` handoff used after a persisted plan is ready.
 
 ## Current boundary
 
-This completes onboarding UI, but does **not** yet make the main Signal Deck read the newly
-persisted plan. Architecture 02 still uses prototype task/calendar/review data. The next free
-product task is to load the active plan and materialized daily blocks into the Deck home and Work
-views.
+Onboarding owns only plan creation. It does not directly write plan tables from the client; the
+server-side route persists and activates the plan before emitting `done`. The live Work deck then
+loads the user's UTC-day blocks and active route under existing RLS. A newly created plan may
+honestly have no blocks for today; that empty Today state invites the user to add their first
+signal rather than showing fabricated work.

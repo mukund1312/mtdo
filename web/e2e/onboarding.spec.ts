@@ -53,10 +53,11 @@ test("onboarding wizard: intent -> rhythm -> build a route end-to-end", async ({
   // At least one category card from the persisted plan renders.
   await expect(page.locator("article").first()).toBeVisible();
 
-  const enterDeckButton = page.getByRole("button", { name: /enter signal deck/i });
-  await expect(enterDeckButton).toBeEnabled();
-  await enterDeckButton.click();
-  await expect(page).toHaveURL(/\/architecture-02$/);
+  const enterTodayButton = page.getByRole("button", { name: /enter today/i });
+  await expect(enterTodayButton).toBeEnabled();
+  await enterTodayButton.click();
+  await expect(page).toHaveURL(/\/architecture-02\?deck=work$/);
+  await expect(page.getByRole("heading", { name: /move the right pieces/i })).toBeVisible();
 });
 
 test("Review shows an honest empty heatmap and view-only Record Card", async ({ page }) => {
