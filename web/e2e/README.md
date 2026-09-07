@@ -10,6 +10,10 @@ mocked fetch.
 (`/architecture-02/onboarding`) through the full happy path: intent -> rhythm
 -> submit -> a persisted plan is ready -> "Enter Today".
 
+The Review scenario uses a fresh anonymous user with no `daily_rollups` rows
+and asserts the honest empty heatmap plus a view-only Record Card. It does not
+seed activity or fabricate progress data.
+
 Submitting calls the real `POST /api/onboarding/plan`, which needs an
 authenticated Supabase session (anonymous sign-in, via `proxy.ts`) and calls
 the real Anthropic API server-side. Both are live requirements of this test,

@@ -47,8 +47,8 @@ eliminates the warning without changing rendered product UI.
   no consistency score, progress percentage, fabricated streak, or fallback
   activity is rendered.
 - The Record Card is a 9:16 on-screen milestone preview using the same returned
-  values. It exports that rendered card as an image without writing or changing
-  any progress data.
+  values. Export is intentionally not implemented: its format (image, PDF,
+  shareable link, or another format) has not been decided by the product owner.
 - Loading, empty, and request-error states remain visible rather than being
   hidden by synthetic heatmap cells.
 

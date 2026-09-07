@@ -9,6 +9,26 @@ Add each session's PROGRESS.md entry to the same branch as the code it describes
 
 ---
 
+## [web] 2026-09-07 (PR pending) — Architecture 02 Review contract audit
+
+Verified the existing Architecture 02 Review deck against the Wave 1
+`daily_rollups` contract. It reads only the authenticated user's personal 42-day UTC window,
+uses the specified heatmap ramp and real focus/session/block values, and retains its explicit
+loading, request-error, and no-rollup empty states. No synthetic progress data was added.
+
+- Record Card remains a real 9:16, data-derived on-screen view; its active-day count now includes
+  every kind of recorded rollup activity.
+- Removed the pre-existing image-download implementation and its UI. Export is blocked pending a
+  product decision on image, PDF, shareable link, or another format.
+- The Record Card control is unavailable until the rollup read succeeds, so loading/error states
+  cannot render an unearned zero-valued record.
+- Added browser coverage for a fresh user's honest empty heatmap and view-only zero-activity card.
+
+Validated: `npm run test`, `npm run typecheck`, `npm run lint`, `git diff --check`, and the
+Architecture 02 Playwright suite.
+
+---
+
 ## [web] 2026-09-07 (PR pending) — Architecture 02 account and profile flow
 
 Added the Architecture 02 Signal Deck account surface using the existing Supabase

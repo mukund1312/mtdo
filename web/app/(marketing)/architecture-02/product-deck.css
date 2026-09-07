@@ -31,10 +31,6 @@
 .a02-record-card dt { color:var(--dim); font-size:8px; }
 .a02-record-card dd { margin:6px 0 0; font:900 25px/.9 "Archivo Black",sans-serif; letter-spacing:-.08em; }
 .a02-record-card footer { color:var(--dim); }
-.a02-record-export-note { margin:15px 0 0; color:var(--dim); font-size:10px; text-align:center; }
-.a02-record-export-btn { display:block; width:100%; margin:15px 0 0; padding:11px; border:1px solid var(--aqua); border-radius:999px; background:transparent; color:var(--aqua); font:10px "DM Mono",monospace; letter-spacing:.08em; text-transform:uppercase; cursor:pointer; }
-.a02-record-export-btn:hover,.a02-record-export-btn:focus-visible { color:var(--acid); border-color:var(--acid); outline:none; }
-.a02-record-export-btn:disabled { opacity:.5; cursor:progress; }
 .a02-composer { position:relative; width:min(560px,100%); padding:47px 28px 24px; border:1px solid rgba(137,117,255,.78); border-radius:14px; background:#151940; box-shadow:0 28px 90px rgba(0,0,0,.65); }
 .a02-composer h2 { margin:13px 0 26px; font:900 clamp(38px,7vw,58px)/.8 "Archivo Black",sans-serif; letter-spacing:-.1em; text-transform:uppercase; }
 .a02-composer h2 em { color:var(--acid); font-style:normal; }
