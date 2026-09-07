@@ -4,6 +4,11 @@ Real browser, real production build (`playwright.config.ts` runs `npm run
 build && npm run start` and waits for it) -- not a component test, not a
 mocked fetch.
 
+For local browser verification against an already-running server, set
+`PLAYWRIGHT_BASE_URL` (for example,
+`PLAYWRIGHT_BASE_URL=http://localhost:3000 npx playwright test`). This skips
+the test runner's managed production server only; CI retains the production-build path above.
+
 ## Scope
 
 `onboarding.spec.ts` drives the Signal Deck onboarding wizard
