@@ -4141,6 +4141,29 @@ and avoids reporting the handled, routine interruption as a console error.
 Verification: `npm run typecheck`, `npm run lint`, `npm run test` (33/33),
 focused real-radio Chromium playback (1/1), and `git diff --check` all clean.
 
+## 2026-09-07 [web] Signal Deck home headline alignment
+
+Fixed compact-desktop overlap between the unbroken `BUILD MOMENTUM.` home
+headline and the Start Focus node. The home copy column now reserves enough
+minimum width for the headline, the Focus node's internal grid can shrink
+safely, and the headline's fluid scale is constrained independently from the
+larger page headings. Verified visually at a 1024px viewport: the two primary
+home actions now have deliberate, non-overlapping columns.
+
+Verification: `npm run typecheck`, `npm run lint`, and `git diff --check` all
+clean.
+
+## 2026-09-07 [web] Signal Deck Time-field event alignment
+
+Corrected the Architecture 02 Time-field event cards so their time, title, and
+metadata are fully contained within the event surface. The event cards now use
+content-safe heights and line-height. Extended the visible schedule through
+20:00 and repositioned the SQL room sprint at its actual 19:00 location rather
+than incorrectly showing it beside the 15:00 grid.
+
+Verification: visual check at 1024px, `npm run typecheck`, `npm run lint`,
+and `git diff --check` all clean.
+
 ## 2026-09-07 [web] Radio explicit media selection
 
 Radio now calls the native element's `load()` exactly once after assigning the
