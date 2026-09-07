@@ -102,8 +102,12 @@ export async function upgradeWithEmailPassword(
   supabase: SupabaseClient,
   email: string,
   password: string,
+  options?: { emailRedirectTo?: string },
 ): Promise<UpgradeOutcome> {
-  const { data, error } = await supabase.auth.updateUser({ email, password });
+  const { data, error } = await supabase.auth.updateUser(
+    { email, password },
+    options?.emailRedirectTo ? { emailRedirectTo: options.emailRedirectTo } : undefined,
+  );
 
   if (error) {
     return { ok: false, message: classifyUpdateUserError(error), error };

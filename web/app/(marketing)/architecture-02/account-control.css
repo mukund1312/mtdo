@@ -1,0 +1,44 @@
+.a02-account-control { position:relative; z-index:18; }
+.a02-account-trigger { display:flex; align-items:center; gap:7px; min-height:38px; padding:4px 7px 4px 4px; border:1px solid var(--line); border-radius:6px; background:rgba(255,255,255,.04); color:var(--ink); }
+.a02-account-trigger > span,.a02-account-profile-mark { display:grid; place-items:center; width:28px; aspect-ratio:1; border-radius:50%; background:var(--aqua); color:var(--void); font:700 9px "DM Mono",monospace; letter-spacing:.02em; }
+.a02-account-trigger > i { color:var(--dim); font:8px "DM Mono",monospace; font-style:normal; letter-spacing:.07em; }
+.a02-account-trigger.is-guest > span { background:var(--acid); }
+.a02-account-trigger:hover { border-color:var(--aqua); }
+.a02-account-menu { position:absolute; z-index:22; top:calc(100% + 8px); right:0; width:250px; overflow:hidden; border:1px solid rgba(87,231,255,.5); border-radius:9px; background:#111535; box-shadow:0 18px 55px rgba(0,0,0,.55); animation:a02-account-menu-in .2s ease both; }
+.a02-account-menu header { display:flex; gap:9px; align-items:center; padding:14px; border-bottom:1px solid var(--line); }
+.a02-account-menu header .a02-live-pip { flex:none; }
+.a02-account-menu header div { display:flex; min-width:0; flex-direction:column; gap:3px; }
+.a02-account-menu header b { overflow:hidden; font-size:11px; text-overflow:ellipsis; white-space:nowrap; }
+.a02-account-menu header small { overflow:hidden; color:var(--dim); font:8px "DM Mono",monospace; text-overflow:ellipsis; white-space:nowrap; }
+.a02-account-menu button,.a02-account-menu a { display:flex; justify-content:space-between; align-items:center; width:100%; min-height:39px; padding:0 14px; border:0; border-bottom:1px solid rgba(216,221,255,.09); background:none; color:var(--ink); font:10px "DM Mono",monospace; letter-spacing:.03em; text-align:left; text-decoration:none; }
+.a02-account-menu button:hover,.a02-account-menu a:hover { background:rgba(87,231,255,.08); color:var(--aqua); }
+.a02-account-menu i { color:var(--aqua); font-style:normal; }
+.a02-account-menu-logout { color:var(--coral)!important; }
+.a02-account-notice { position:absolute; top:calc(100% + 8px); right:0; width:250px; margin:0; padding:11px; border:1px solid rgba(87,231,255,.42); border-radius:7px; background:#111535; color:#c5c9e9; font-size:10px; line-height:1.5; box-shadow:0 18px 55px rgba(0,0,0,.48); }
+.a02-account-overlay { position:fixed; z-index:35; inset:0; display:grid; place-items:center; padding:25px; background:rgba(3,4,16,.7); backdrop-filter:blur(12px); animation:a02-account-overlay-in .25s ease both; }
+.a02-account-dialog { position:relative; width:min(475px,100%); max-height:calc(100dvh - 50px); overflow:auto; padding:52px 30px 28px; border:1px solid rgba(137,117,255,.78); border-radius:15px; background:radial-gradient(circle at 100% 0,rgba(87,231,255,.11),transparent 29%),#14183d; box-shadow:0 28px 90px rgba(0,0,0,.64); animation:a02-account-dialog-in .3s cubic-bezier(.2,.8,.2,1) both; }
+.a02-account-close { position:absolute; top:16px; right:18px; min-height:30px; border:0; background:none; color:var(--dim); font:9px "DM Mono",monospace!important; }
+.a02-account-dialog h2 { margin:14px 0 22px; font:900 clamp(39px,7vw,62px)/.8 "Archivo Black",sans-serif; letter-spacing:-.1em; text-transform:uppercase; }
+.a02-account-form { display:flex; flex-direction:column; gap:14px; }
+.a02-account-form > p { margin:0 0 4px; color:#c5c9e9; font-size:13px; line-height:1.6; }
+.a02-account-form label { display:flex; flex-direction:column; gap:6px; color:var(--dim); font:9px "DM Mono",monospace; letter-spacing:.07em; }
+.a02-account-form label small { color:var(--dim); font-size:8px; }
+.a02-account-form input { min-height:43px; border:1px solid var(--line); border-radius:5px; padding:0 11px; background:#0e1130; color:var(--ink); font:13px "Space Grotesk",sans-serif; }
+.a02-account-form input:focus-visible,.a02-account-dialog button:focus-visible,.a02-account-menu button:focus-visible,.a02-account-menu a:focus-visible { outline:2px solid var(--aqua); outline-offset:3px; }
+.a02-account-form input:disabled { opacity:.62; cursor:not-allowed; }
+.a02-account-primary,.a02-account-danger { min-height:44px; margin-top:4px; border:1px solid var(--acid); border-radius:5px; background:var(--acid); color:#14172d!important; font-size:11px!important; font-weight:700!important; }
+.a02-account-primary:hover:not(:disabled) { transform:translateY(-1px); box-shadow:0 9px 22px rgba(215,255,82,.16); }
+.a02-account-primary:disabled,.a02-account-danger:disabled { cursor:wait; opacity:.62; }
+.a02-account-switch { align-self:flex-start; min-height:29px; padding:0; border:0; background:none; color:var(--aqua); font:10px "DM Mono",monospace!important; }
+.a02-account-error,.a02-account-status { margin:0; padding:10px 11px; border:1px solid rgba(255,128,113,.5); border-radius:5px; color:var(--coral); background:rgba(255,128,113,.08); font-size:11px; line-height:1.5; }
+.a02-account-status { border-color:rgba(87,231,255,.38); color:var(--aqua); background:rgba(87,231,255,.07); }
+.a02-account-profile-mark { width:54px; font-size:15px; }
+.a02-account-setting { display:flex; justify-content:space-between; gap:20px; align-items:center; min-height:49px; padding:0 1px; border-bottom:1px solid var(--line); color:var(--dim); font-size:11px; }
+.a02-account-setting a { color:var(--aqua); font:9px "DM Mono",monospace; text-decoration:none; }
+.a02-account-setting b { max-width:210px; overflow:hidden; color:var(--ink); font-size:10px; text-overflow:ellipsis; white-space:nowrap; }
+.a02-account-danger { margin-top:11px; border-color:rgba(255,128,113,.55); background:transparent; color:var(--coral)!important; }
+@keyframes a02-account-menu-in { from { opacity:0; transform:translateY(-5px) scale(.98); } to { opacity:1; transform:translateY(0) scale(1); } }
+@keyframes a02-account-overlay-in { from { opacity:0; } to { opacity:1; } }
+@keyframes a02-account-dialog-in { from { opacity:0; transform:translateY(18px) scale(.98); } to { opacity:1; transform:translateY(0) scale(1); } }
+@media (prefers-reduced-motion:reduce) { .a02-account-menu,.a02-account-overlay,.a02-account-dialog { animation:none!important; transition:none!important; } }
+@media(max-width:560px) { .a02-account-trigger { min-width:37px; padding:4px; }.a02-account-trigger > i { display:none; }.a02-account-menu { right:-40px; }.a02-account-overlay { padding:14px; align-items:end; }.a02-account-dialog { max-height:calc(100dvh - 28px); padding:48px 20px 21px; }.a02-account-dialog h2 { font-size:43px; } }
