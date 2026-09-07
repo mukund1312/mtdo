@@ -1,5 +1,7 @@
 import { defineConfig, devices } from "@playwright/test";
 
+const baseURL = process.env.PLAYWRIGHT_BASE_URL ?? "http://localhost:3000";
+
 // Real end-to-end tests -- an actual browser driving the actual dev server,
 // not a component or unit test. See e2e/README.md for scope.
 export default defineConfig({
@@ -13,13 +15,13 @@ export default defineConfig({
   retries: process.env.CI ? 2 : 0,
   reporter: process.env.CI ? "github" : "list",
   use: {
-    baseURL: "http://localhost:3000",
+    baseURL,
     trace: "on-first-retry",
   },
   projects: [
     { name: "chromium", use: { ...devices["Desktop Chrome"] } },
   ],
-  webServer: {
+  webServer: process.env.PLAYWRIGHT_BASE_URL ? undefined : {
     // A production build, not `next dev`: Turbopack dev mode compiles routes
     // lazily on first hit, and that compile can race the test's first
     // interaction on a cold server (observed: a filled field reads back
@@ -27,7 +29,7 @@ export default defineConfig({
     // means this test exercises the same artifact the `web-build` CI job
     // already produces.
     command: "npm run build && npm run start",
-    url: "http://localhost:3000",
+    url: baseURL,
     reuseExistingServer: !process.env.CI,
     timeout: 120_000,
   },

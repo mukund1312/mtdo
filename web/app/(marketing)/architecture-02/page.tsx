@@ -15,6 +15,10 @@ import "./account-control.css";
 
 type Deck = "home" | "work" | "calendar" | "review";
 
+function isDeck(value: string | null): value is Deck {
+  return value === "home" || value === "work" || value === "calendar" || value === "review";
+}
+
 export default function ArchitectureTwoPage() {
   const router = useRouter();
   const [deck, setDeck] = useState<Deck>("home");
@@ -24,6 +28,16 @@ export default function ArchitectureTwoPage() {
   const [playing, setPlaying] = useState(true);
   const [activeBlock, setActiveBlock] = useState<TodayBlock | null>(null);
   const [walkthroughOpen, setWalkthroughOpen] = useState(false);
+
+  // Onboarding finishes on the real Today board. Keep the deck itself stateful
+  // (rather than turning each dock tab into a route), while allowing a direct
+  // handoff from a successfully persisted plan.
+  useEffect(() => {
+    const requestedDeck = new URLSearchParams(window.location.search).get("deck");
+    if (!isDeck(requestedDeck)) return;
+    const timer = window.setTimeout(() => setDeck(requestedDeck), 0);
+    return () => window.clearTimeout(timer);
+  }, []);
 
   useEffect(() => {
     try {

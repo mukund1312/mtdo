@@ -41,7 +41,7 @@ the account UI never generates or persists plans itself.
 ### Returning visitor
 
 ```text
-Log in → auth.signInWithPassword → refresh Signal Deck → existing route/data is visible
+Log in → auth.signInWithPassword → refresh Signal Deck Today / Work → existing route/data is visible
 ```
 
 Logging into a different existing account intentionally restores that account's data. The UI

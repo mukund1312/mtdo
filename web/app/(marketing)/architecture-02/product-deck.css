@@ -41,6 +41,14 @@
 .a02-composer input:focus-visible,.a02-composer select:focus-visible,.a02-composer textarea:focus-visible { outline:2px solid var(--aqua); outline-offset:2px; }
 .a02-composer-empty,.a02-composer-error { color:var(--dim); font-size:12px; line-height:1.5; }
 .a02-composer-error { color:var(--coral); }
+.a02-curriculum-menu { display:grid; gap:8px; max-height:min(46dvh,390px); overflow:auto; padding-right:3px; }
+.a02-curriculum-item { display:grid; grid-template-columns:1fr auto; gap:5px 12px; width:100%; border:1px solid var(--line); border-radius:6px; background:#101332; padding:12px; color:var(--ink); text-align:left; transition:border-color .2s ease,background .2s ease,transform .2s ease; }
+.a02-curriculum-item:hover:not(:disabled),.a02-curriculum-item:focus-visible { border-color:var(--aqua); background:#151940; outline:none; transform:translateY(-1px); }
+.a02-curriculum-item:disabled { cursor:wait; opacity:.62; }
+.a02-curriculum-item span { color:var(--aqua); font:8px "DM Mono",monospace; letter-spacing:.08em; text-transform:uppercase; }
+.a02-curriculum-item b { grid-column:1; font:600 13px/1.35 "Space Grotesk",sans-serif; }
+.a02-curriculum-item small { grid-column:1; color:var(--dim); font:10px/1.4 "Space Grotesk",sans-serif; }
+.a02-curriculum-item i { grid-column:2; grid-row:1 / span 3; align-self:center; color:var(--acid); font:9px "DM Mono",monospace; font-style:normal; letter-spacing:.05em; }
 .a02-composer-actions { display:flex; justify-content:flex-end; gap:9px; margin-top:22px; }
 .a02-composer-actions button { border:1px solid var(--line); border-radius:5px; padding:10px 13px; background:transparent; color:var(--dim); font-size:11px; }
 .a02-composer-actions .a02-add { border-color:var(--acid); background:var(--acid); color:#151729; font-weight:700; }
