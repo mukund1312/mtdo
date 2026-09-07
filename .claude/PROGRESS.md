@@ -3998,3 +3998,170 @@ Verification: `tsc --noEmit`, `eslint .`, `npm run test` (29/29), and
 `next build --webpack` all clean.
 
 No bug found in route.ts itself -- not modified.
+
+## 2026-09-07 [web] Architecture 02 Listen UI preview
+
+Added the Signal Deck-only `Listen` destination for the future unified Music
+and Radio experience. This is deliberately frontend-only: it makes no
+provider/API/OAuth calls, does not request local filesystem access, does not
+create streams or audio elements, and does not change existing V1 flows.
+
+- Music has Apple Music, Spotify, and Local source surfaces with isolated
+  mock adapter data, source switching, connection-state UI, searchable demo
+  libraries, a unified local-preview player, queue, seek, volume, and
+  play/previous/next controls. Connected states are explicitly labelled
+  `CONNECTED / DEMO` so they cannot be mistaken for real linked accounts.
+- Radio is a separate mode with the exact 11 curated station identities from
+  `src/mtdo/radio.py`, plus station selection, simulated tuning/analyser,
+  play/pause, previous/next, volume, favorite, shuffle, repeat, and the
+  terminal-aligned `space`, `n`, `p`, `f` shortcuts. The UI clearly states
+  that no stream is connected.
+- The existing floating transport now opens Listen and reflects only selected
+  local-preview state; it no longer claims a fabricated "Deep work radio"
+  playback session. State lives above the individual Signal Deck decks, so it
+  remains intact while navigating the Architecture 02 shell.
+- Added `docs/designs/architecture-02-listen.md`, unit coverage for provider
+  and terminal-station contracts, and browser coverage for Listen alongside
+  the existing onboarding, Review, and confirmation flows.
+
+Verification: `npm run typecheck`, `npm run lint`, `npm run test` (32/32),
+`PLAYWRIGHT_BASE_URL=http://localhost:3000 npx playwright test --workers=1
+--reporter=list --timeout=60000` (4/4), and `git diff --check` all clean.
+
+## 2026-09-07 [web] Architecture 02 Listen UI/UX polish audit
+
+Performed a frontend-only consistency, accessibility, and responsive pass on
+the Signal Deck Listen surface. No API, provider, OAuth, filesystem, audio,
+Supabase, or other V1 product behavior changed.
+
+- Removed repeated preview/disclaimer copy from source, queue, station, and
+  analyser surfaces. A single compact `PREVIEW MODE / Local interactions
+  only` indicator remains, while connection dialogs and `CONNECTED / DEMO`
+  continue to be truthful at the moments where that clarification matters.
+- Fixed a player hierarchy bug: after browsing another source, a currently
+  selected track still identifies its actual originating source rather than
+  incorrectly inheriting the library currently being viewed.
+- Tightened active, hover, focus, pressed, disabled, and error states; added
+  semantic tab-panel relationships and arrow-key movement between Music and
+  Radio tabs; exposed the current player source to assistive technology; and
+  added Escape-to-close plus initial focus for the connection dialog.
+- Made Listen scroll safely as a long Signal Deck surface, preserved compact
+  controls and touch targets at mobile width, added a sticky mobile source
+  switcher, and disabled nonessential animation under reduced-motion.
+- Extended browser coverage through Apple/Spotify/Local switching, simulated
+  player controls, Radio station/play/pause/next/favorite interactions, and
+  horizontal-overflow checks at mobile and tablet widths. The test environment
+  has an unrelated Feedback widget that can intercept a mobile pointer over
+  the dock; the mobile test verifies the dock through its real keyboard focus
+  path instead.
+
+Verification: `npm run typecheck`, `npm run lint`, `npm run test` (32/32),
+`PLAYWRIGHT_BASE_URL=http://localhost:3000 npx playwright test --workers=1
+--reporter=list --timeout=60000` (6/6), and `git diff --check` all clean.
+
+## 2026-09-07 [web] Architecture 02 Radio browser playback
+
+Radio is now a real browser-native player, while Music remains a deliberately
+separate UI-preview surface. The station catalog carries the exact eleven
+direct public MP3 URLs from `src/mtdo/radio.py` (SomaFM and Nightride FM), not
+newly invented endpoints.
+
+`SignalDeckListenProvider` now owns one persistent `HTMLAudioElement`. It
+pauses and detaches the previous source before assigning a new station URL,
+keeps playback alive while Architecture 02 deck views change, applies the
+shared volume value to the native element, and cleans up only when the full
+provider unmounts. Native media events drive loading/buffering, playing,
+pause, media error, and end behavior. `play()` failures caused by browser
+autoplay policy surface a truthful “ready to play” recovery state instead of
+claiming playback started. Next/previous honor the existing shuffle and
+repeat-one behavior.
+
+Updated browser coverage now clicks Synthwave Nights, asserts the native audio
+element carries Nightride's real stream URL, waits for the actual Play button
+to become Pause, pauses, advances to House Grooves, and verifies the new
+SomaFM source URL. This ran against the public stream in Chromium (not a
+mocked audio response).
+
+Verification: `npm run typecheck`, `npm run lint`, `npm run test` (33/33),
+`PLAYWRIGHT_BASE_URL=http://localhost:3000 npx playwright test --workers=1
+--reporter=list --timeout=60000` (6/6), and `git diff --check` all clean.
+
+## 2026-09-07 [web] Mobile Feedback / Signal Deck dock overlap
+
+Resolved the only remaining mobile interaction issue from the Listen audit.
+The global Feedback trigger and panel now sit above the bottom-navigation safe
+area at widths up to 560px, rather than covering Signal Deck dock controls.
+The mobile Listen browser test now uses a real pointer click on `Listen` (not
+the previous keyboard workaround), confirming the dock is no longer
+intercepted.
+
+Verification: `npm run typecheck`, `npm run lint`, `npm run test` (33/33),
+focused mobile Playwright regression (1/1), and `git diff --check` all clean.
+
+## 2026-09-07 [web] Radio stream start race
+
+Fixed a browser-native Radio source-switch race exposed by Chillsynth. The
+player previously paused, cleared, loaded an empty source, assigned the next
+source, and loaded again in a single user gesture. Some browsers treat that
+intermediate unload as an interruption and reject the following `play()` call.
+The player now uses the safe sequence: pause the outgoing stream, assign the
+next direct Terminal URL, load once, then play. This still guarantees only one
+station is audible while avoiding the spurious `AbortError` path. Real native
+play failures are logged with the browser error and station name for diagnosis;
+autoplay blocks remain a distinct user-recoverable state.
+
+Verification: `npm run typecheck`, `npm run lint`, `npm run test` (33/33),
+and a real Chromium stream test selecting Chillsynth then switching to
+Vaporwave (1/1) all clean.
+
+## 2026-09-07 [web] Radio native-playback interruption hardening
+
+Removed the final explicit `audio.load()` from the live station selection
+path. Assigning a native audio element's `src` already initiates a new resource
+selection; calling `load()` immediately afterwards can reject the same user
+gesture's play promise as interrupted in some browsers. Radio now pauses the
+outgoing stream, sets the exact next Terminal URL, and calls `play()` directly.
+Each attempt has a monotonic identifier, so a late rejection from an older
+station cannot overwrite a newer station's healthy state. Native errors are
+logged with their non-enumerable `name`, `message`, `mediaCode`, station, and
+URL rather than an unhelpful empty DOMException object.
+
+Verification: `npm run typecheck`, `npm run lint`, `npm run test` (33/33),
+and real Chillsynth → Vaporwave Chromium playback (1/1) all clean.
+
+## 2026-09-07 [web] Radio handoff AbortError handling
+
+Native media APIs reject the obsolete play promise with `AbortError` when a
+station switch replaces its source. That is an expected source handoff, not a
+station failure. Radio now keeps the UI in its tuning state for that one
+outcome and waits for the replacement source's native `playing` or `error`
+event to determine the result. This removes the false Signal Unavailable state
+and avoids reporting the handled, routine interruption as a console error.
+
+Verification: `npm run typecheck`, `npm run lint`, `npm run test` (33/33),
+focused real-radio Chromium playback (1/1), and `git diff --check` all clean.
+
+## 2026-09-07 [web] Radio explicit media selection
+
+Radio now calls the native element's `load()` exactly once after assigning the
+next Terminal station URL and before requesting playback. This covers browsers
+which leave an assigned `preload="none"` live stream in an indefinitely
+pending state. The unsafe empty-source unload remains removed, and the guarded
+AbortError retry/tuning timeout remain in place. This is direct browser audio,
+not an app API route or a server streaming proxy.
+
+Verification: `npm run typecheck`, `npm run lint`, `npm run test` (33/33),
+focused real-radio Chromium playback (1/1), and `git diff --check` all clean.
+
+## 2026-09-07 [web] Radio tuning recovery
+
+Some browsers reject the first `play()` request immediately after assigning a
+live stream URL, then leave the media element paused without emitting a media
+error. Radio now retries that current native source exactly once when this
+documented `AbortError` handoff occurs. A 12-second bounded tuning timer also
+turns a genuinely stalled connection into an actionable error rather than an
+infinite tuning state. Native `playing`, `pause`, and `error` events clear the
+timer, so successful playback and ordinary user pause remain unchanged.
+
+Verification: `npm run typecheck`, `npm run lint`, `npm run test` (33/33),
+focused real-radio Chromium playback (1/1), and `git diff --check` all clean.

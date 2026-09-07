@@ -3,6 +3,8 @@
 import { useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { SignalDeckAccountControl } from "./account-control";
+import { ListenDeck } from "./listen-deck";
+import { SignalDeckListenProvider, useSignalDeckListen } from "./listen-state";
 import { ProgressDeck } from "./progress-deck";
 import { SignalDeckConfirmedWelcome } from "./signal-deck-confirmed-welcome";
 import { SignalDeckWalkthrough } from "./signal-deck-walkthrough";
@@ -13,14 +15,20 @@ import "./route-entry.css";
 import "./product-deck.css";
 import "./signal-deck-walkthrough.css";
 import "./account-control.css";
+import "./listen-deck.css";
+import "./listen-deck-polish.css";
 
-type Deck = "home" | "work" | "calendar" | "review";
+type Deck = "home" | "work" | "calendar" | "review" | "listen";
 
 function isDeck(value: string | null): value is Deck {
-  return value === "home" || value === "work" || value === "calendar" || value === "review";
+  return value === "home" || value === "work" || value === "calendar" || value === "review" || value === "listen";
 }
 
 export default function ArchitectureTwoPage() {
+  return <SignalDeckListenProvider><ArchitectureTwoDeck /></SignalDeckListenProvider>;
+}
+
+function ArchitectureTwoDeck() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const authState = searchParams.get("auth");
@@ -28,7 +36,6 @@ export default function ArchitectureTwoPage() {
   const [lensOpen, setLensOpen] = useState(false);
   const [tutorOpen, setTutorOpen] = useState(false);
   const [focusOpen, setFocusOpen] = useState(false);
-  const [playing, setPlaying] = useState(true);
   const [activeBlock, setActiveBlock] = useState<TodayBlock | null>(null);
   const [walkthroughOpen, setWalkthroughOpen] = useState(false);
   const [confirmedWelcomeOpen, setConfirmedWelcomeOpen] = useState(false);
@@ -149,9 +156,10 @@ export default function ArchitectureTwoPage() {
       {deck === "work" && <TodayDeck onOpenBlock={openBlock} />}
       {deck === "calendar" && <CalendarDeck onTask={() => openBlock(null)} />}
       {deck === "review" && <ProgressDeck />}
+      {deck === "listen" && <ListenDeck />}
 
       <button className={`a02-beacon ${tutorOpen ? "is-active" : ""}`} onClick={() => setTutorOpen(true)} aria-label="Open tutor copilot"><span>✦</span><i>CO-PILOT</i></button>
-      <AudioTransport playing={playing} onToggle={() => setPlaying(!playing)} />
+      <AudioTransport onOpenListen={() => setDeck("listen")} />
       <DeckDock active={deck} onChange={setDeck} />
       {lensOpen && <ObjectLens block={activeBlock} onClose={() => setLensOpen(false)} onFocus={beginActiveBlock} onTutor={() => setTutorOpen(true)} />}
       {tutorOpen && <TutorConsole onClose={() => setTutorOpen(false)} />}
@@ -195,12 +203,20 @@ function CalendarDeck({ onTask }: { onTask: () => void }) {
 }
 
 function DeckDock({ active, onChange }: { active: Deck; onChange: (next: Deck) => void }) {
-  const items: [Deck, string, string][] = [["home", "◉", "Deck"], ["work", "▦", "Work"], ["calendar", "⌗", "Time"], ["review", "◌", "Review"]];
+  const items: [Deck, string, string][] = [["home", "◉", "Deck"], ["work", "▦", "Work"], ["calendar", "⌗", "Time"], ["review", "◌", "Review"], ["listen", "♫", "Listen"]];
   return <nav className="a02-dock" aria-label="Signal deck navigation">{items.map(([id, icon, label]) => <button key={id} className={active === id ? "is-active" : ""} onClick={() => onChange(id)}><i>{icon}</i><span>{label}</span></button>)}<button className="a02-dock-more"><i>···</i><span>More</span></button></nav>;
 }
 
-function AudioTransport({ playing, onToggle }: { playing: boolean; onToggle: () => void }) {
-  return <div className="a02-audio"><button onClick={onToggle} aria-label="Toggle audio">{playing ? "Ⅱ" : "▶"}</button><div className={playing ? "a02-wave is-playing" : "a02-wave"}>{Array.from({ length: 18 }, (_, index) => <i key={index} />)}</div><span><b>Deep work radio</b><small>Focus noise / 01</small></span><button className="a02-audio-expand">↗</button></div>;
+function AudioTransport({ onOpenListen }: { onOpenListen: () => void }) {
+  const listen = useSignalDeckListen();
+  const musicTrack = listen.currentTrack;
+  const radioStation = listen.selectedStation;
+  const isRadio = listen.mode === "radio";
+  const active = isRadio ? listen.radioPlayback === "playing" : listen.musicPlaying;
+  const title = isRadio ? radioStation?.id ?? "Radio ready" : musicTrack?.title ?? "Listening studio";
+  const detail = isRadio ? radioStation?.genre ?? "11 stations / UI preview" : musicTrack ? `${musicTrack.artist} / UI preview` : "Music + Radio / UI preview";
+  const toggle = () => isRadio ? listen.toggleRadio() : listen.toggleMusic();
+  return <div className="a02-audio"><button onClick={toggle} aria-label={active ? "Pause listening preview" : "Play listening preview"} disabled={!musicTrack && !radioStation}>{active ? "Ⅱ" : "▶"}</button><div className={active ? "a02-wave is-playing" : "a02-wave"}>{Array.from({ length: 18 }, (_, index) => <i key={index} />)}</div><span><b>{title}</b><small>{detail}</small></span><button className="a02-audio-expand" onClick={onOpenListen} aria-label="Open Listen">↗</button></div>;
 }
 
 function ObjectLens({ block, onClose, onFocus, onTutor }: { block: TodayBlock | null; onClose: () => void; onFocus: () => void; onTutor: () => void }) {
