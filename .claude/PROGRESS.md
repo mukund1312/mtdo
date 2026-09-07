@@ -9,6 +9,27 @@ Add each session's PROGRESS.md entry to the same branch as the code it describes
 
 ---
 
+## [web] 2026-09-07 (PR pending) — Architecture 02 Today consumes persisted curriculum
+
+Completed the documented plan → Today bridge in Signal Deck without changing its visual shell.
+
+- Today still reads only the authenticated user's real UTC-date `blocks` and renders the persisted
+  `backlog` / `todo` / `in_progress` / `done` lanes with their existing drag interaction, task
+  lens, focus handoff, and completion/regression ledger events.
+- Replaced the client-side hand composer (which had a documented position-allocation race) with
+  the existing, authenticated `ensure_curriculum_menu()` and `pick_curriculum_item()` RPCs. The
+  first retrieves active-plan curriculum as an unlocked carry-forward menu; the second creates a
+  real block with server-side locking and is idempotent on repeated selection.
+- Missing plans and exhausted menus are clear normal states; loading, fetch failure, picker write
+  failure, and item-picking states are explicit. No sample blocks or invented schedule are used.
+- Extended the real browser test through onboarding → persisted plan → Today → pick route item →
+  drag real block to In progress.
+
+Validated: `npm run test` (29 passed), `npm run typecheck`, `npm run lint`, `git diff --check`,
+and Playwright’s live browser path against the shared local Architecture 02 server (passed).
+
+---
+
 ## [web] 2026-09-07 (PR pending) — Architecture 02 Review contract audit
 
 Verified the existing Architecture 02 Review deck against the Wave 1

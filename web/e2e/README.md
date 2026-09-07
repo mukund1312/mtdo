@@ -13,7 +13,8 @@ the test runner's managed production server only; CI retains the production-buil
 
 `onboarding.spec.ts` drives the Signal Deck onboarding wizard
 (`/architecture-02/onboarding`) through the full happy path: intent -> rhythm
--> submit -> a persisted plan is ready -> "Enter Today".
+-> submit -> a persisted plan is ready -> "Enter Today" -> a curriculum item
+is picked into a real block -> that block moves to In progress.
 
 The Review scenario uses a fresh anonymous user with no `daily_rollups` rows
 and asserts the honest empty heatmap plus a view-only Record Card. It does not

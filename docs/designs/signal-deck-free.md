@@ -72,5 +72,7 @@ best-effort only; failing browser storage never changes onboarding success.
 Onboarding owns only plan creation. It does not directly write plan tables from the client; the
 server-side route persists and activates the plan before emitting `done`. The live Work deck then
 loads the user's UTC-day blocks and active route under existing RLS. A newly created plan may
-honestly have no blocks for today; that empty Today state invites the user to add their first
-signal rather than showing fabricated work.
+honestly have no blocks for today; that empty Today state invites the user to pull their first
+unlocked route item rather than showing fabricated work. Today retrieves that carry-forward menu
+through the existing `ensure_curriculum_menu()` RPC and creates the selected block only through
+the lock-safe `pick_curriculum_item()` RPC.

@@ -9,10 +9,16 @@ only the prototype data inside its existing **Work** and **Review** decks.
 
 - Source: the authenticated user's `blocks` rows for the UTC date returned by
   `new Date().toISOString().slice(0, 10)`, ordered by `position`.
-- The existing **+ New signal** control is functional: it reads the user's
-  active plan and its categories, then inserts a real block for today under
-  the existing RLS policy. The user chooses its name, optional context,
-  category, and initial `backlog`/`todo`/`in_progress`/`done` state.
+- **+ Add from route** calls the existing `ensure_curriculum_menu()` RPC in the
+  explicit Today load path. Its carry-forward menu contains only the
+  authenticated user's active-plan curriculum items that have been unlocked
+  and not yet picked; curriculum is never treated as a calendar schedule.
+  Selecting an item calls `pick_curriculum_item(p_item_id)`, which creates its
+  real UTC Today block server-side with an advisory-lock-safe position. The UI
+  does not hand-insert a block or allocate positions client-side.
+- A missing active route and an exhausted curriculum menu are normal empty
+  states, not errors. The picker explains whether the user should create a
+  route or return for a check-in; it never fabricates a task.
 - Columns map exactly to the table's valid values: `backlog`, `todo`,
   `in_progress`, and `done`. The UI labels are Backlog, Todo, In progress,
   and Done.
@@ -26,8 +32,8 @@ only the prototype data inside its existing **Work** and **Review** decks.
 - The session screen fetches that owned block, passes its ID to
   `start_session`, and marks it `in_progress` only after the session exists.
   Its visual presentation is otherwise unchanged.
-- Loading, empty, request-error, and in-progress/claimed states are explicit;
-  there are no sample task rows in the Work deck.
+- Loading, empty, request-error, item-picking, and in-progress/claimed states
+  are explicit; there are no sample task rows in the Work deck.
 
 ## Hydration
 

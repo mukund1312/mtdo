@@ -58,6 +58,24 @@ test("onboarding wizard: intent -> rhythm -> build a route end-to-end", async ({
   await enterTodayButton.click();
   await expect(page).toHaveURL(/\/architecture-02\?deck=work$/);
   await expect(page.getByRole("heading", { name: /move the right pieces/i })).toBeVisible();
+
+  // The active plan's curriculum is retrieved through ensure_curriculum_menu.
+  // Pulling an item onto Today uses the lock-safe, idempotent picker RPC -- it
+  // must become a real block, not a client-only card.
+  await page.getByRole("button", { name: /add from route/i }).click();
+  const routeMenu = page.getByRole("dialog", { name: /choose the next piece/i });
+  await expect(routeMenu).toBeVisible();
+  const routeItem = routeMenu.locator(".a02-curriculum-item").first();
+  await expect(routeItem).toBeVisible();
+  const task = (await routeItem.locator("b").textContent())?.trim();
+  expect(task).toBeTruthy();
+  await routeItem.click();
+  await expect(routeMenu).toBeHidden();
+
+  const addedBlock = page.locator(".a02-live-block").filter({ hasText: task! });
+  await expect(addedBlock).toBeVisible();
+  await addedBlock.dragTo(page.locator(".a02-today-lane--in_progress"));
+  await expect(page.locator(".a02-today-lane--in_progress")).toContainText(task!);
 });
 
 test("Review shows an honest empty heatmap and view-only Record Card", async ({ page }) => {
