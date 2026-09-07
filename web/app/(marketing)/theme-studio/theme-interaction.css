@@ -1,2 +1,7 @@
-/* Keep Studio controls above embedded live previews; checkout is portaled to body. */
-.ts-preview-top{position:relative;z-index:5}.ts-preview-top button{position:relative;z-index:6;pointer-events:auto}.ts-payment-backdrop{z-index:9999}
+/* Keep Studio controls above embedded live previews. */
+.ts-preview-top{position:relative;z-index:5}.ts-preview-top button{position:relative;z-index:6;pointer-events:auto}
+
+/* Only Signal Deck (a02) is ready to enter -- the header and workbench
+   "enter" buttons read "Coming soon" and go inert for every other theme. */
+.ts-header>button:disabled,.ts-preview-top button:disabled{opacity:.45;cursor:not-allowed;border-color:var(--line)}
+.ts-header>button:disabled{background:transparent;color:var(--ink)}

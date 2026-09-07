@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { Suspense, useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { SignalDeckAccountControl } from "./account-control";
 import { ListenDeck } from "./listen-deck";
@@ -25,7 +25,19 @@ function isDeck(value: string | null): value is Deck {
 }
 
 export default function ArchitectureTwoPage() {
-  return <SignalDeckListenProvider><ArchitectureTwoDeck /></SignalDeckListenProvider>;
+  // Suspense must stay outermost -- ArchitectureTwoDeck's useSearchParams()
+  // requires it for static prerendering (PR #133's fix; this branch was cut
+  // before that landed, so its own version of this file dropped the
+  // boundary entirely -- merging it as-is would have silently reintroduced
+  // the prerender crash). SignalDeckListenProvider nests inside, same as any
+  // other context provider would.
+  return (
+    <Suspense fallback={null}>
+      <SignalDeckListenProvider>
+        <ArchitectureTwoDeck />
+      </SignalDeckListenProvider>
+    </Suspense>
+  );
 }
 
 function ArchitectureTwoDeck() {
@@ -63,6 +75,16 @@ function ArchitectureTwoDeck() {
     }, 0);
     return () => window.clearTimeout(timer);
   }, [authState, router]);
+
+  // Onboarding finishes on the real Today board. Keep the deck itself stateful
+  // (rather than turning each dock tab into a route), while allowing a direct
+  // handoff from a successfully persisted plan.
+  useEffect(() => {
+    const requestedDeck = new URLSearchParams(window.location.search).get("deck");
+    if (!isDeck(requestedDeck)) return;
+    const timer = window.setTimeout(() => setDeck(requestedDeck), 0);
+    return () => window.clearTimeout(timer);
+  }, []);
 
   useEffect(() => {
     if (authState) return;

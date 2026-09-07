@@ -86,6 +86,52 @@ loading, request-error, and no-rollup empty states. No synthetic progress data w
 
 Validated: `npm run test`, `npm run typecheck`, `npm run lint`, `git diff --check`, and the
 Architecture 02 Playwright suite.
+## [web] 2026-09-07 (PR pending) — Architecture 02 Today consumes persisted curriculum
+
+Completed the documented plan → Today bridge in Signal Deck without changing its visual shell.
+
+- Today still reads only the authenticated user's real UTC-date `blocks` and renders the persisted
+  `backlog` / `todo` / `in_progress` / `done` lanes with their existing drag interaction, task
+  lens, focus handoff, and completion/regression ledger events.
+- Replaced the client-side hand composer (which had a documented position-allocation race) with
+  the existing, authenticated `ensure_curriculum_menu()` and `pick_curriculum_item()` RPCs. The
+  first retrieves active-plan curriculum as an unlocked carry-forward menu; the second creates a
+  real block with server-side locking and is idempotent on repeated selection.
+- Missing plans and exhausted menus are clear normal states; loading, fetch failure, picker write
+  failure, and item-picking states are explicit. No sample blocks or invented schedule are used.
+- Extended the real browser test through onboarding → persisted plan → Today → pick route item →
+  drag real block to In progress.
+
+Validated: `npm run test` (29 passed), `npm run typecheck`, `npm run lint`, `git diff --check`,
+and Playwright’s live browser path against the shared local Architecture 02 server (passed).
+
+---
+
+## [web] 2026-09-07 (PR pending) — Onboarding contract verification and Today handoff
+
+Verified the Architecture 02 onboarding implementation against
+`docs/designs/wave1-frontend-briefs.md` and the implemented `/api/onboarding/plan` NDJSON
+contract.
+
+- The form submits the exact `OnboardingAnswers` shape and consumes POST-streamed
+  `delta` / `done` / `error` records through `response.body.getReader()` with line buffering.
+  Its Signal Deck loading, hard-error/retry, normal success, and fallback-success states remain
+  intact; the client makes no direct plan-table writes.
+- The route persists and activates the plan before it emits `done`, so a success screen always
+  represents a real account-owned plan, not a client-side approximation.
+- Fixed the incomplete success handoff: **Enter Today** now opens
+  `/architecture-02?deck=work`, selecting the existing live UTC Today board rather than returning
+  to Signal Deck Home. Returning email/password users now land on the same Work deck after login.
+- Extended the real Playwright scenario to assert that its newly persisted plan reaches the Today
+  heading. The browser test uses the anonymous-auth identity that the product upgrades in place
+  on signup, preserving the same plan and all other user data.
+
+Validated: `npm run test` (29 passed), `npm run typecheck`, `npm run lint`, `git diff --check`,
+and Playwright’s real anonymous-user onboarding → persisted plan → Today path (passed).
+
+**External QA remaining:** a human-controlled inbox is still needed to exercise email-confirmation
+and password-reset links end-to-end, because that depends on the shared Supabase Auth redirect
+allow-list and a real mailbox rather than frontend code.
 
 ---
 
@@ -4188,3 +4234,102 @@ timer, so successful playback and ordinary user pause remain unchanged.
 
 Verification: `npm run typecheck`, `npm run lint`, `npm run test` (33/33),
 focused real-radio Chromium playback (1/1), and `git diff --check` all clean.
+
+## 2026-09-07 [backend] Auth/RLS/RPC hardening audit (V1 security pass)
+
+Requested via a detailed brief (25 sections) covering Supabase Auth
+redirects, RLS, RPC ownership, and cross-user isolation. Inspected before
+changing anything, per the brief's own instruction. One real bug found and
+fixed; everything else audited came back clean.
+
+**Bug found and fixed: Supabase Auth redirect misconfiguration.**
+Reported symptom: clicking a confirmation email link sent the user to the
+application root instead of continuing into onboarding. Root cause: the
+live project's `site_url` (`http://127.0.0.1:3000`) and `uri_allow_list`
+(`https://127.0.0.1:3000` only) had never been updated past local-dev
+defaults -- `web/components/AccountUpgradeForm.tsx` and
+`architecture-02/account-control.tsx` already correctly pass
+`emailRedirectTo`/`redirectTo` pointing at `/auth/callback?next=...`, but
+Supabase silently falls back to `site_url` when the requested redirect
+doesn't match `uri_allow_list`, which is exactly what was happening on the
+deployed site. `web/app/auth/callback/route.ts` itself was already correct
+(code exchange, `safeNextPath()` already closes the open-redirect risk --
+see its own header comment).
+
+Fixed via the Supabase Management API directly (`PATCH
+/v1/projects/{ref}/config/auth`), not through `supabase/config.toml` +
+`config push` -- the brief explicitly asked not to hardcode a production
+URL into the repo, and `config.toml`'s `site_url`/`additional_redirect_urls`
+correctly stay local-dev-only (`http://127.0.0.1:3000`). This means **this
+setting lives outside the repo and will NOT survive a future
+`supabase config push`** -- that command resets auth config from
+`config.toml`, which only knows about local dev. Anyone who runs
+`supabase config push` again must re-verify (or re-apply) this:
+
+```
+site_url: https://mtdo.vercel.app
+uri_allow_list: https://mtdo.vercel.app/**,https://mtdo-u25h.vercel.app/**,http://localhost:3000/**,http://127.0.0.1:3000/**
+```
+
+Verified via API readback that the PATCH applied. **Not yet verified**: an
+actual real-inbox click-through of a real confirmation email and a real
+password-reset email (brief sections 22/23) -- that needs a real mailbox,
+which is a manual step for whoever has one, not something scriptable here.
+
+**RLS audit (all 15 user-owned tables in `public`): clean, no findings.**
+Pulled every policy directly from `pg_policies` and, for the join-based
+ones (`curriculum_items`, `plan_categories` -- neither has its own
+`user_id` column, ownership is via `category_id -> plan_categories ->
+plan_id -> plans -> user_id`), read the actual `USING`/`WITH CHECK`
+expressions rather than trusting policy names. Every one correctly chains
+to `auth.uid() = <owner column>` with no leaked joins. `blocks`, `profiles`,
+`activity_events`, `daily_rollups`, `focus_sessions`, `feedback`, `notes`,
+`companies`, `proofs`, `tutor_conversations`, `tutor_messages`,
+`tutor_memory_summaries` all scoped correctly, all `to authenticated` only.
+
+**RPC EXECUTE grants: clean, no findings.** Queried
+`has_function_privilege()` directly for every V1-relevant RPC. User-facing
+ones (`start_session`, `complete_session`, `abandon_session`,
+`record_event`, `activate_plan`, `ensure_curriculum_menu`,
+`pick_curriculum_item`, `tutor_context`) grant exactly
+`{authenticated, postgres, service_role}` -- `anon` has none of them.
+Internal-only ones (`handle_new_user`, `recompute_daily_rollups`) grant only
+`{postgres, service_role}` -- `authenticated` correctly excluded from both.
+
+**Mandatory two-user cross-isolation test: run live, passed completely.**
+Not a SQL-harness test -- two real anonymous sessions against the actual
+running app and the live linked project. User A: real onboarding submit ->
+real plan -> `ensure_curriculum_menu()` -> `pick_curriculum_item()` -> real
+block -> `start_session`/`complete_session` -> real `focus_sessions` row ->
+`recompute_daily_rollups()` -> real `daily_rollups` row. User B then
+attempted, against every one of A's rows: SELECT (plans, blocks,
+focus_sessions, daily_rollups), UPDATE (blocks), DELETE (blocks), and
+`pick_curriculum_item()` on A's curriculum item. Every read returned `[]`;
+the UPDATE/DELETE both returned HTTP 204 (PostgREST's "matched zero rows
+under RLS" response, verified by re-reading the block as A afterward --
+still `status: "todo"`, completely untouched); the RPC raised `42501`. A's
+own access to all of it was unaffected afterward. Test data cleaned up.
+
+**Profile updates: safe.** `account-control.tsx`'s `saveProfile()` filters
+`.eq("id", viewer.id)`, but `viewer.id` is derived from the authenticated
+session (`accountFrom(user, ...)`), not client input -- and even if it
+weren't, `profiles_update_own`'s `WITH CHECK (auth.uid() = id)` is the real
+enforcement regardless of what the client sends.
+
+**Not re-derived, cited from earlier this session's already-live-verified
+work:** the onboarding Route Handler already derives the user from
+`getUser()` server-side and returns 401 on no session (17 passing tests,
+`route.test.ts`); the anonymous -> authenticated upgrade path preserves
+`auth.uid()` and therefore all existing data with no migration
+(`upgradeAccount.ts`, PR #99); `activate_plan()`/`pick_curriculum_item()`'s
+in-function ownership checks and advisory-lock concurrency safety (this
+session's own gh90 and curriculum-bridge work, already reviewed and
+live-tested multiple times).
+
+**No migration created.** Nothing found required a schema, RLS, or RPC
+change -- everything audited was already correct. The one real fix
+(redirect config) is external to the repo by design.
+
+**Explicitly not done, per the brief's own scope boundaries:** no
+Architecture 02 UI change, no Record Card export, no Theme Studio
+expansion, no other architecture built, no payment UI.
