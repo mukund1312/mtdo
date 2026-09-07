@@ -32,13 +32,19 @@ const themes: Theme[] = [
   { id: "a08", number: "05", name: "Personal Studio", route: "/architecture-08", category: "Blush editorial", description: "A refined and personal workspace combining soft editorial aesthetics with modern productivity.", philosophy: "A calm, expressive room can make ambitious routines feel more personal.", bestFor: "Personal planning · Creativity · Lifestyle", className: "rose", notes: ["Soft", "Editorial", "Expressive"] },
 ];
 
+// Signal Deck (a02) is the sole V1 product (decisions.md 2026-09-07); it's
+// what a first-time visitor should land on, not whichever theme a stale
+// localStorage value or an array index happened to point to.
+const READY_THEME_ID = "a02";
+
 export default function ThemeStudioPage() {
   const [selectedId, setSelectedId] = useState(() => {
-    if (typeof window === "undefined") return "a07";
+    if (typeof window === "undefined") return READY_THEME_ID;
     const saved = window.localStorage.getItem("mtdo-theme");
-    return saved && themes.some((theme) => theme.id === saved) ? saved : "a07";
+    return saved && themes.some((theme) => theme.id === saved) ? saved : READY_THEME_ID;
   });
-  const selected = themes.find((theme) => theme.id === selectedId) ?? themes[3]!;
+  const selected = themes.find((theme) => theme.id === selectedId) ?? themes.find((theme) => theme.id === READY_THEME_ID)!;
+  const selectedIsReady = selected.id === READY_THEME_ID;
 
   useEffect(() => {
     document.documentElement.dataset.mtdoTheme = selected.id;
@@ -55,27 +61,27 @@ export default function ThemeStudioPage() {
     window.location.assign(theme.route);
   };
 
-  // All five themes are free previews (DESIGN.md: no payment UI in Wave 1,
-  // decisions.md 2026-09-07: Theme Studio is paused, not a monetized
-  // feature). This used to special-case only "a02" (Signal Deck) as free
-  // and route every other theme through a checkout modal that displayed a
-  // real-looking $12.00 charge, payment-method picker, and "secure
-  // checkout" copy while never actually processing a payment -- honest
-  // wording in a design doc nobody visiting the site reads doesn't change
-  // what a real visitor sees on screen. Removed rather than relabeled: no
-  // real monetization decision has been made, so nothing here should look
-  // like one has.
+  // Only Signal Deck (a02) is a real, working V1 product -- the other four
+  // are unfinished visual explorations (decisions.md 2026-09-07: paused,
+  // not Wave 1, revisit in V2). Entering one used to either open a
+  // half-built route or (before that) a checkout modal displaying a
+  // real-looking $12.00 charge that never processed a payment -- both wrong
+  // for the same underlying reason: promising something that isn't there
+  // yet. Guarded here, not just left to whatever /architecture-01/03/07/08
+  // happen to render, since "the button worked" is not the same as "the
+  // product is ready."
   const enterTheme = (theme: Theme) => {
+    if (theme.id !== READY_THEME_ID) return;
     applyTheme(theme);
   };
 
   return <main className={`ts-shell theme-${selected.className}`}>
     <ThemeAtmosphere />
-    <header className="ts-header"><Link href="/" className="ts-logo"><i>m</i><span>mtdo</span></Link><div><span>THEME STUDIO</span><i /> <span>{themes.length} AVAILABLE WORLDS</span></div><button type="button" onClick={() => window.location.assign(selected.route)}>Open selected ↗</button></header>
+    <header className="ts-header"><Link href="/" className="ts-logo"><i>m</i><span>mtdo</span></Link><div><span>THEME STUDIO</span><i /> <span>{themes.length} AVAILABLE WORLDS</span></div><button type="button" onClick={() => enterTheme(selected)} disabled={!selectedIsReady} aria-disabled={!selectedIsReady}>{selectedIsReady ? "Open selected ↗" : "Coming soon"}</button></header>
     <section className="ts-intro"><div><p>YOUR WORK, IN A DIFFERENT LIGHT</p><h1>Choose the room<br />that fits <em>today.</em></h1></div><p>Every direction is a complete MTDO experience. Select one to preview it instantly, then enter its full workspace when it feels right.</p></section>
     <section className="ts-studio">
       <nav className="ts-gallery" aria-label="Theme gallery"><header><span>THEME GALLERY</span><small>SELECT A WORLD</small></header><div className="ts-theme-row">{themes.map((theme) => <button type="button" className={selected.id === theme.id ? "active" : ""} onClick={() => selectTheme(theme.id)} key={theme.id}><i>{theme.number}</i><div><b>{theme.name}</b><small>{theme.category}</small></div><em>{selected.id === theme.id ? "ACTIVE" : ""}</em></button>)}</div></nav>
-      <div className="ts-theme-workbench"><section className="ts-preview-area"><div className="ts-preview-top"><span>LIVE PREVIEW / {selected.number}</span><button type="button" onClick={() => enterTheme(selected)}>Enter full theme <i>↗</i></button></div><Preview theme={selected} /></section><ThemeInformation theme={selected} /></div>
+      <div className="ts-theme-workbench"><section className="ts-preview-area"><div className="ts-preview-top"><span>LIVE PREVIEW / {selected.number}</span><button type="button" onClick={() => enterTheme(selected)} disabled={!selectedIsReady} aria-disabled={!selectedIsReady}>{selectedIsReady ? <>Enter full theme <i>↗</i></> : "Coming soon"}</button></div><Preview theme={selected} /></section><ThemeInformation theme={selected} /></div>
     </section>
     <footer className="ts-footer"><p>Your selection is saved locally on this device.</p><span>SWITCH ANY TIME · NO WORK IS MOVED OR LOST</span></footer>
   </main>;
