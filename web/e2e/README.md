@@ -16,6 +16,10 @@ the test runner's managed production server only; CI retains the production-buil
 -> submit -> a persisted plan is ready -> "Enter Today" -> a curriculum item
 is picked into a real block -> that block moves to In progress.
 
+The Review scenario uses a fresh anonymous user with no `daily_rollups` rows
+and asserts the honest empty heatmap plus a view-only Record Card. It does not
+seed activity or fabricate progress data.
+
 Submitting calls the real `POST /api/onboarding/plan`, which needs an
 authenticated Supabase session (anonymous sign-in, via `proxy.ts`) and calls
 the real Anthropic API server-side. Both are live requirements of this test,

@@ -77,3 +77,19 @@ test("onboarding wizard: intent -> rhythm -> build a route end-to-end", async ({
   await addedBlock.dragTo(page.locator(".a02-today-lane--in_progress"));
   await expect(page.locator(".a02-today-lane--in_progress")).toContainText(task!);
 });
+
+test("Review shows an honest empty heatmap and view-only Record Card", async ({ page }) => {
+  await page.goto("/architecture-02");
+  await page.getByRole("button", { name: /close walkthrough/i }).click();
+  await page.getByRole("button", { name: /review/i }).click();
+
+  await expect(page.getByRole("heading", { name: /make effort legible/i })).toBeVisible();
+  await expect(page.getByLabel("Six-week focus heatmap")).toBeVisible();
+  await expect(page.getByText(/no recorded focus in this window yet/i)).toBeVisible();
+
+  await page.getByRole("button", { name: /view record/i }).click();
+  const record = page.getByRole("dialog", { name: /the work is real/i });
+  await expect(record).toBeVisible();
+  await expect(record.getByText("0m", { exact: true })).toBeVisible();
+  await expect(record.getByRole("button", { name: /download|export/i })).toHaveCount(0);
+});
