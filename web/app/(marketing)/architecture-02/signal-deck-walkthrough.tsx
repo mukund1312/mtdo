@@ -9,8 +9,12 @@ import {
 } from "./walkthrough-data";
 
 type WalkthroughProps = {
+  completionLabel?: string;
+  greeting?: string | null;
   onDeckChange: (deck: SignalDeckName) => void;
   onDismiss: () => void;
+  onFinish?: () => void;
+  skipLabel?: string;
 };
 
 function focusableElements(container: HTMLElement): HTMLElement[] {
@@ -19,7 +23,14 @@ function focusableElements(container: HTMLElement): HTMLElement[] {
   ));
 }
 
-export function SignalDeckWalkthrough({ onDeckChange, onDismiss }: WalkthroughProps) {
+export function SignalDeckWalkthrough({
+  completionLabel = "Explore the deck ↗",
+  greeting,
+  onDeckChange,
+  onDismiss,
+  onFinish,
+  skipLabel = "Skip guide",
+}: WalkthroughProps) {
   const [stepIndex, setStepIndex] = useState(0);
   const dialogRef = useRef<HTMLElement>(null);
   const closeRef = useRef<HTMLButtonElement>(null);
@@ -40,7 +51,8 @@ export function SignalDeckWalkthrough({ onDeckChange, onDismiss }: WalkthroughPr
       // The guide finishes on Review, but “Explore the deck” should leave a
       // new user at Signal Deck's actual home rather than its final tour step.
       onDeckChange("home");
-      onDismiss();
+      if (onFinish) onFinish();
+      else onDismiss();
       return;
     }
     setStepIndex((current) => Math.min(SIGNAL_DECK_WALKTHROUGH.length - 1, current + 1));
@@ -99,6 +111,7 @@ export function SignalDeckWalkthrough({ onDeckChange, onDismiss }: WalkthroughPr
           <WalkthroughPreview key={step.id} step={step} />
           <section className="a02-tour-copy" aria-live="polite">
             <span className="a02-eyebrow">{step.eyebrow}</span>
+            {greeting && stepIndex === 0 && <p className="a02-tour-greeting">Hey {greeting}, let’s get you set up.</p>}
             <h2 id="a02-tour-title">{step.title}</h2>
             <p id="a02-tour-description">{step.description}</p>
             <p className="a02-tour-keyboard" aria-label="Keyboard shortcuts">
@@ -108,14 +121,14 @@ export function SignalDeckWalkthrough({ onDeckChange, onDismiss }: WalkthroughPr
         </div>
 
         <footer className="a02-tour-footer">
-          <button type="button" className="a02-tour-skip" onClick={onDismiss}>Skip guide</button>
+          <button type="button" className="a02-tour-skip" onClick={onDismiss}>{skipLabel}</button>
           <div className="a02-tour-progress" aria-label={`Step ${stepIndex + 1} of ${SIGNAL_DECK_WALKTHROUGH.length}`}>
             <span>{String(stepIndex + 1).padStart(2, "0")} / {String(SIGNAL_DECK_WALKTHROUGH.length).padStart(2, "0")}</span>
             <div aria-hidden="true">{SIGNAL_DECK_WALKTHROUGH.map((item, index) => <i key={item.id} className={index <= stepIndex ? "is-active" : ""} />)}</div>
           </div>
           <div className="a02-tour-actions">
             <button type="button" className="a02-tour-back" onClick={previous} disabled={stepIndex === 0}>← Back</button>
-            <button type="button" className="a02-tour-next" onClick={next}>{isLastStep ? "Explore the deck ↗" : "Next →"}</button>
+            <button type="button" className="a02-tour-next" onClick={next}>{isLastStep ? completionLabel : "Next →"}</button>
           </div>
         </footer>
       </div>

@@ -9,6 +9,66 @@ Add each session's PROGRESS.md entry to the same branch as the code it describes
 
 ---
 
+## [web] 2026-09-07 (PR pending) — Signal Deck intentional logout
+
+Fixed the Account Access panel reopening during a deliberate sign-out. Supabase emits the same
+`SIGNED_OUT` event for a user clicking Log out and for an unexpected expired session; the account
+control now records the explicit intent before calling `auth.signOut()` and closes its modal when
+that expected event arrives. Only an actual unexpected expiry opens Login. Removed the redundant
+client `router.refresh()` after logout, leaving the next Signal Deck navigation to establish its
+fresh anonymous route through the existing proxy.
+
+Validated: `npm run test` (29 passed), `npm run typecheck`, `npm run lint`, `git diff --check`,
+and the three-scenario Architecture 02 Playwright suite.
+
+---
+
+## [web] 2026-09-07 (PR pending) — Signal Deck confirmed-account journey
+
+Extended the existing anonymous-account upgrade and callback flow without adding a second
+authentication, guide, or onboarding model.
+
+- Email/password account upgrades now return through `/auth/callback` to a transient,
+  callback-only Signal Deck confirmation state. The callback exchanges the real Supabase code,
+  syncs the same user profile, and keeps invalid/expired links inside clear account recovery
+  rather than dropping to the marketing root.
+- A confirmed non-anonymous session reads its RLS-owned profile and presents a short personal
+  welcome using the actual optional display name when available. The shared four-step Signal Deck
+  guide is then reused with that name and continues to the existing onboarding questionnaire;
+  returning password logins and refreshes never replay this new-account sequence.
+- Optional sign-up name input writes only to the already-owned `profiles.display_name` row for the
+  same upgraded anonymous user. No callback parameter, mocked session, or duplicate plan write is
+  trusted as identity.
+- Added browser coverage for the real callback's invalid/no-code recovery branch. Successful
+  email confirmation remains an explicit manual QA step because Supabase owns its one-time token
+  and a controlled mailbox is required.
+
+Validated: `npm run test` (29 passed), `npm run typecheck`, `npm run lint`, `git diff --check`,
+and the three-scenario Architecture 02 Playwright suite.
+
+---
+
+## [web] 2026-09-07 (PR pending) — Architecture 02 Today consumes persisted curriculum
+
+Completed the documented plan → Today bridge in Signal Deck without changing its visual shell.
+
+- Today still reads only the authenticated user's real UTC-date `blocks` and renders the persisted
+  `backlog` / `todo` / `in_progress` / `done` lanes with their existing drag interaction, task
+  lens, focus handoff, and completion/regression ledger events.
+- Replaced the client-side hand composer (which had a documented position-allocation race) with
+  the existing, authenticated `ensure_curriculum_menu()` and `pick_curriculum_item()` RPCs. The
+  first retrieves active-plan curriculum as an unlocked carry-forward menu; the second creates a
+  real block with server-side locking and is idempotent on repeated selection.
+- Missing plans and exhausted menus are clear normal states; loading, fetch failure, picker write
+  failure, and item-picking states are explicit. No sample blocks or invented schedule are used.
+- Extended the real browser test through onboarding → persisted plan → Today → pick route item →
+  drag real block to In progress.
+
+Validated: `npm run test` (29 passed), `npm run typecheck`, `npm run lint`, `git diff --check`,
+and Playwright’s live browser path against the shared local Architecture 02 server (passed).
+
+---
+
 ## [web] 2026-09-07 (PR pending) — Architecture 02 Review contract audit
 
 Verified the existing Architecture 02 Review deck against the Wave 1
@@ -44,6 +104,34 @@ Completed the documented plan → Today bridge in Signal Deck without changing i
 
 Validated: `npm run test` (29 passed), `npm run typecheck`, `npm run lint`, `git diff --check`,
 and Playwright’s live browser path against the shared local Architecture 02 server (passed).
+
+---
+
+## [web] 2026-09-07 (PR pending) — Onboarding contract verification and Today handoff
+
+Verified the Architecture 02 onboarding implementation against
+`docs/designs/wave1-frontend-briefs.md` and the implemented `/api/onboarding/plan` NDJSON
+contract.
+
+- The form submits the exact `OnboardingAnswers` shape and consumes POST-streamed
+  `delta` / `done` / `error` records through `response.body.getReader()` with line buffering.
+  Its Signal Deck loading, hard-error/retry, normal success, and fallback-success states remain
+  intact; the client makes no direct plan-table writes.
+- The route persists and activates the plan before it emits `done`, so a success screen always
+  represents a real account-owned plan, not a client-side approximation.
+- Fixed the incomplete success handoff: **Enter Today** now opens
+  `/architecture-02?deck=work`, selecting the existing live UTC Today board rather than returning
+  to Signal Deck Home. Returning email/password users now land on the same Work deck after login.
+- Extended the real Playwright scenario to assert that its newly persisted plan reaches the Today
+  heading. The browser test uses the anonymous-auth identity that the product upgrades in place
+  on signup, preserving the same plan and all other user data.
+
+Validated: `npm run test` (29 passed), `npm run typecheck`, `npm run lint`, `git diff --check`,
+and Playwright’s real anonymous-user onboarding → persisted plan → Today path (passed).
+
+**External QA remaining:** a human-controlled inbox is still needed to exercise email-confirmation
+and password-reset links end-to-end, because that depends on the shared Supabase Auth redirect
+allow-list and a real mailbox rather than frontend code.
 
 ---
 

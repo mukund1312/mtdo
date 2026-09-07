@@ -1,7 +1,7 @@
 "use client";
 
-import { useCallback, useEffect, useState, type FormEvent } from "react";
-import { useRouter } from "next/navigation";
+import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import type { User } from "@supabase/supabase-js";
 
 import { upgradeWithEmailPassword } from "@/lib/auth/upgradeAccount";
@@ -46,11 +46,14 @@ function accountFrom(user: User, displayName: string | null): Viewer {
  */
 export function SignalDeckAccountControl() {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const authState = searchParams.get("auth");
   const [viewer, setViewer] = useState<Viewer | null>(null);
   const [loadingViewer, setLoadingViewer] = useState(true);
   const [menuOpen, setMenuOpen] = useState(false);
   const [view, setView] = useState<AccountView>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const intentionalLogoutRef = useRef(false);
 
   const refreshViewer = useCallback(async () => {
     const supabase = createClient();
@@ -74,15 +77,40 @@ export function SignalDeckAccountControl() {
     const supabase = createClient();
     const { data: listener } = supabase.auth.onAuthStateChange((event) => {
       if (event === "SIGNED_OUT") {
-        setNotice("Your saved session ended. Log in to return to your account.");
-        setView("login");
+        if (intentionalLogoutRef.current) {
+          // An explicit logout is the start of a new guest route, not a
+          // session failure. Keep the account panel closed while proxy.ts
+          // provisions that anonymous identity on the next navigation.
+          intentionalLogoutRef.current = false;
+          setMenuOpen(false);
+          setNotice(null);
+          setView(null);
+        } else {
+          setNotice("Your saved session ended. Log in to return to your account.");
+          setView("login");
+        }
       }
       window.setTimeout(() => void refreshViewer(), 0);
     });
-    const params = new URLSearchParams(window.location.search);
     const authTimer = window.setTimeout(() => {
-      if (params.get("auth") === "reset") setView("reset");
-      if (params.get("auth") === "logged-out") setNotice("You are now using a new guest route. Log in any time to return to your account.");
+      if (authState === "reset") setView("reset");
+      if (authState === "login") {
+        setNotice("Confirming the link did not create a session. Log in to continue.");
+        setView("login");
+      }
+      if (authState === "confirmation-error") {
+        setNotice("That confirmation link is invalid or has expired. Request a fresh link, then try again.");
+        setView("signup");
+      }
+      if (authState === "reset-error") {
+        setNotice("That reset link is invalid or has expired. Request a fresh reset link to continue.");
+        setView("forgot");
+      }
+      if (authState === "callback-error") {
+        setNotice("We could not finish that secure link. Return to your account and try again.");
+        setView("login");
+      }
+      if (authState === "logged-out") setNotice("You are now using a new guest route. Log in any time to return to your account.");
     }, 0);
 
     return () => {
@@ -90,7 +118,7 @@ export function SignalDeckAccountControl() {
       window.clearTimeout(authTimer);
       listener.subscription.unsubscribe();
     };
-  }, [refreshViewer]);
+  }, [authState, refreshViewer]);
 
   const open = (nextView: Exclude<AccountView, null>) => {
     setMenuOpen(false);
@@ -134,7 +162,7 @@ export function SignalDeckAccountControl() {
     </section>}
 
     {notice && !view && <p className="a02-account-notice" role="status">{notice}</p>}
-    {view && <AccountDialog viewer={viewer} view={view} sessionNotice={notice} onClose={close} onOpen={open} onRefresh={() => void refreshViewer()} onUpgrade={finishedUpgrade} />}
+    {view && <AccountDialog viewer={viewer} view={view} sessionNotice={notice} onClose={close} onLogoutCancelled={() => { intentionalLogoutRef.current = false; }} onLogoutStarting={() => { intentionalLogoutRef.current = true; }} onOpen={open} onRefresh={() => void refreshViewer()} onUpgrade={finishedUpgrade} />}
   </div>;
 }
 
@@ -143,6 +171,8 @@ function AccountDialog({
   view,
   sessionNotice,
   onClose,
+  onLogoutCancelled,
+  onLogoutStarting,
   onOpen,
   onRefresh,
   onUpgrade,
@@ -151,6 +181,8 @@ function AccountDialog({
   view: Exclude<AccountView, null>;
   sessionNotice: string | null;
   onClose: () => void;
+  onLogoutCancelled: () => void;
+  onLogoutStarting: () => void;
   onOpen: (view: Exclude<AccountView, null>) => void;
   onRefresh: () => void;
   onUpgrade: () => void;
@@ -179,13 +211,24 @@ function AccountDialog({
     if (submitting) return;
     setSubmitting(true);
     resetMessages();
-    const redirectTo = `${window.location.origin}/auth/callback?next=${encodeURIComponent("/architecture-02/onboarding")}`;
+    const redirectTo = `${window.location.origin}/auth/callback?next=${encodeURIComponent("/architecture-02?auth=confirmed")}`;
     const result = await upgradeWithEmailPassword(createClient(), email.trim(), password, { emailRedirectTo: redirectTo });
-    setSubmitting(false);
     if (!result.ok) {
+      setSubmitting(false);
       setError(result.message);
       return;
     }
+    // The anonymous user id remains unchanged through updateUser(), so this
+    // writes the name to that same RLS-owned profile rather than introducing
+    // a second account/onboarding record. A missing name is intentionally OK.
+    if (viewer && name.trim()) {
+      const { error: nameError } = await createClient()
+        .from("profiles")
+        .update({ display_name: name.trim() })
+        .eq("id", viewer.id);
+      if (nameError) console.error("[account] could not save display name:", nameError);
+    }
+    setSubmitting(false);
     if (result.pendingEmailConfirmation) {
       setStatus(result.message ?? "Check your email to finish saving this route.");
       return;
@@ -260,14 +303,15 @@ function AccountDialog({
     if (submitting) return;
     setSubmitting(true);
     resetMessages();
+    onLogoutStarting();
     const { error: signOutError } = await createClient().auth.signOut();
     if (signOutError) {
+      onLogoutCancelled();
       setSubmitting(false);
       setError(accountError(signOutError, "We could not log you out."));
       return;
     }
     router.replace("/architecture-02?auth=logged-out");
-    router.refresh();
   };
 
   const title = view === "signup" ? "Keep the route." : view === "login" ? "Welcome back." : view === "forgot" ? "Find your way back." : view === "reset" ? "Choose a new key." : view === "profile" ? "Your signal." : view === "logout" ? "Leave the route?" : "Account settings.";
@@ -280,6 +324,8 @@ function AccountDialog({
 
       {view === "signup" && <form onSubmit={upgrade} className="a02-account-form">
         <p>Turn this guest route into an account. Your existing plan, blocks, sessions, and record stay attached.</p>
+        {sessionNotice && <p className="a02-account-status" role="status">{sessionNotice}</p>}
+        <label>Name <small>OPTIONAL</small><input autoFocus autoComplete="name" value={name} onChange={(event) => setName(event.target.value)} maxLength={80} disabled={submitting} placeholder="How should MTDO address you?" /></label>
         <AccountFields email={email} password={password} onEmail={setEmail} onPassword={setPassword} submitting={submitting} passwordHint="At least 6 characters" passwordAutoComplete="new-password" />
         <Status status={status} error={error} />
         <button className="a02-account-primary" type="submit" disabled={submitting}>{submitting ? "Saving route…" : "Create account ↗"}</button>
@@ -298,6 +344,7 @@ function AccountDialog({
 
       {view === "forgot" && <form onSubmit={sendReset} className="a02-account-form">
         <p>Enter the email on your account. We will send a secure link if an account is available.</p>
+        {sessionNotice && <p className="a02-account-status" role="status">{sessionNotice}</p>}
         <label>Email<input autoFocus type="email" autoComplete="email" value={email} onChange={(event) => setEmail(event.target.value)} required disabled={submitting} /></label>
         <Status status={status} error={error} />
         <button className="a02-account-primary" type="submit" disabled={submitting}>{submitting ? "Sending…" : "Send reset link ↗"}</button>

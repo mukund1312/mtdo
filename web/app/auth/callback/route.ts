@@ -21,6 +21,22 @@ function safeNextPath(rawNext: string | null, origin: string): string {
   }
 }
 
+// Email confirmation and password recovery are single-use links. When the
+// exchange fails, keep the person inside Signal Deck with a useful recovery
+// state instead of dropping them at the generic marketing root.
+function callbackFailurePath(next: string, origin: string): string {
+  const destination = new URL(next, origin);
+  if (destination.pathname !== "/architecture-02") {
+    return "/architecture-02?auth=callback-error";
+  }
+  const auth = destination.searchParams.get("auth");
+  destination.searchParams.set(
+    "auth",
+    auth === "reset" ? "reset-error" : auth === "confirmed" ? "confirmation-error" : "callback-error",
+  );
+  return `${destination.pathname}${destination.search}${destination.hash}`;
+}
+
 // Lands here after upgradeWithOAuth()'s linkIdentity() redirect completes
 // (lib/auth/upgradeAccount.ts). Exchanges the auth code for the session --
 // same auth.uid(), now with the OAuth identity attached -- and mirrors the
@@ -42,5 +58,5 @@ export async function GET(request: NextRequest) {
     }
   }
 
-  return NextResponse.redirect(new URL("/?upgrade_error=1", origin));
+  return NextResponse.redirect(new URL(callbackFailurePath(next, origin), origin));
 }

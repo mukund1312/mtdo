@@ -30,13 +30,19 @@ Guest route
   → Create account
   → update current anonymous auth user with email + password
   → immediate upgrade: Architecture 02 onboarding
-  → email confirmation required: callback → Architecture 02 onboarding
+  → email confirmation required: callback → verified welcome → existing Signal Deck guide → Architecture 02 onboarding
 ```
 
 The upgrade helper accepts an `emailRedirectTo` value for this screen. With email confirmation
-enabled, the confirmation link returns through `/auth/callback` and then enters the existing
-`/architecture-02/onboarding` route. This is the same #86 questionnaire and NDJSON plan endpoint;
-the account UI never generates or persists plans itself.
+enabled, the confirmation link returns through `/auth/callback?next=/architecture-02?auth=confirmed`.
+The callback exchanges the real one-time code, preserves the upgraded anonymous account's session,
+and opens a short Signal Deck welcome surface. That surface reads the authenticated `profiles.display_name`
+(or falls back gracefully when no name exists), then opens the existing guide. Completing, closing,
+or skipping that guide continues into the existing `/architecture-02/onboarding` questionnaire and
+its NDJSON plan endpoint; no second plan or onboarding model exists.
+
+The optional sign-up display name is written to the existing RLS-owned profile attached to the same
+anonymous user id. It is never accepted from a callback URL or treated as authentication evidence.
 
 ### Returning visitor
 
@@ -56,6 +62,13 @@ Forgot password → resetPasswordForEmail
   → updateUser({ password }) → Signal Deck
 ```
 
+### Confirmation failure / already-used link
+
+`/auth/callback` classifies a failed confirmation or reset exchange and redirects to the matching
+Signal Deck account-recovery state rather than the marketing root. The UI never displays the
+success welcome until `auth.getUser()` returns a non-anonymous authenticated user. A fresh link
+can be requested from the surfaced account panel.
+
 ### Profile and sign-out
 
 - The compact header avatar opens the contextual account menu.
@@ -74,6 +87,9 @@ Forgot password → resetPasswordForEmail
   password reset request, password reset completion, profile save, settings, logout, inline
   error, and success states are all explicit.
 - A `SIGNED_OUT` auth event opens Login with a session-expired explanation.
+- The verified welcome is callback-only: its transient query marker is removed after it opens, so
+  normal refreshes and returning password logins do not replay it. The regular guide's existing
+  local preference remains the completion state for both guide entry paths.
 - Supabase session persistence remains owned by `@supabase/ssr` and `proxy.ts`.
 - The dialog uses Architecture 02’s existing Signal Deck tokens, visible focus treatment, clear
   labels, native form semantics, and `prefers-reduced-motion` fallbacks.
