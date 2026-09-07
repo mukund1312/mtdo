@@ -264,17 +264,49 @@ otherwise and a future reader might too:**
 - Session screen visual review against `DESIGN.md`: **done** (`a7f4630`, "Session screen review
   findings — resume-or-discard, DESIGN.md tokens").
 
+## 2026-09-07 — Curriculum exhaustion: re-onboard, free, no streak bonus
+
+Resolved by the founder, closing the "Open, not yet decided" item below. A generated plan holds
+two weeks of content, so the menu legitimately runs dry after two unlock steps — this decides
+what happens at that moment.
+
+Three technical findings surfaced while scoping this (from the report that forced this decision
+rather than guessing): (1) `plans` no longer holds the original onboarding answers past
+generation — `experienceLevel`/`notes` are dropped, only `focusAreas`→categories and
+`weeklyDaysAvailable`→`plan_categories.days` survive; (2) an in-place extend RPC would need its
+own advisory lock and a real unique constraint on `curriculum_items` (currently just an index) to
+be idempotent, the same house pattern as `activate_plan()`/`pick_curriculum_item()`; (3) an
+in-place extend has to explicitly advance `menu_unlocked_week_index`/stamp
+`menu_unlocked_iso_week` itself, or a user who just asked for more work gets nothing for up to
+seven days (the cursor only advances on its normal weekly cadence otherwise).
+
+**Decision: re-onboard, not extend in place.** "Adjust my goal" sends the user back through the
+existing onboarding flow to create a new plan. This makes all three findings above moot for
+now — no new RPC, no new migration, no cursor logic to get right before beta. `activate_plan()`
+(already built, already audited) already does the one thing this needs: retiring the old plan and
+activating the new one atomically. Tradeoff accepted knowingly: Progress/Today will read as two
+separate plans rather than one continuous journey across the boundary — acceptable for V1, revisit
+if it turns out to matter once real usage shows whether that continuity is actually missed.
+
+**Extensions stay free**, not a Pro/paid feature — matches the same "V1 ships the free core loop,
+monetization is a W6 concern" position already taken for Theme Studio. The per-ISO-week unlock
+pacing was always a cost/abuse guard, not a pricing lever, and stays exactly that.
+
+**No streak bonus** (e.g. 4 weeks instead of 2 for consistent users) — same amount of curriculum
+for everyone. Simplest, nothing new to get wrong before beta; revisit later if retention data
+suggests it would matter.
+
+**What's actually left to build, given this decision:** a Today empty state for "curriculum
+exhausted" (distinct from the ordinary "no blocks yet today" empty state — `api.md` §3b already
+says not to treat an empty menu as a failure) with an "Adjust my goal" action that routes into the
+existing onboarding flow. No backend work.
+
 ## Open, not yet decided
 
 - Whether the founder-facing analytics need anything beyond PostHog (deferred until W2 has real
   users — don't build speculatively).
 - Realtime infrastructure choice for room presence (Supabase Realtime is the working assumption
   from the product plan; not re-validated at the engineering level since rooms are still W4a+).
-- **Curriculum exhaustion.** A generated plan holds two weeks of content, so the weekly menu
-  legitimately runs dry after two unlock steps. There is no regeneration or plan-extension flow —
-  the menu simply goes empty, which the terminal app handles with a "time for a check-in" nudge
-  (`cli.py`, `PLAN_END`). What the web does at that moment is a product decision, not a schema
-  one; `api.md` §3b tells the screen not to treat it as a failure in the meantime.
 - **Per-user time zones.** `daily_rollups.date` (and `blocks.date`, and anything else that means
   "a day") is currently a UTC date for every user. Fixing it properly means a `profiles` column,
   a UI to set it, a decision about what happens to already-computed rollups when a user changes
