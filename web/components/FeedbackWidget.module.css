@@ -119,3 +119,11 @@
   color: var(--success);
   font-size: 13px;
 }
+
+/* Keep the global feedback control clear of mobile bottom navigation. */
+@media (max-width: 560px) {
+  .trigger,
+  .panel {
+    bottom: calc(var(--space-lg) + 68px);
+  }
+}

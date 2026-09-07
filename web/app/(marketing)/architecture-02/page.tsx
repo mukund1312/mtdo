@@ -3,6 +3,8 @@
 import { Suspense, useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { SignalDeckAccountControl } from "./account-control";
+import { ListenDeck } from "./listen-deck";
+import { SignalDeckListenProvider, useSignalDeckListen } from "./listen-state";
 import { ProgressDeck } from "./progress-deck";
 import { SignalDeckConfirmedWelcome } from "./signal-deck-confirmed-welcome";
 import { SignalDeckWalkthrough } from "./signal-deck-walkthrough";
@@ -13,17 +15,27 @@ import "./route-entry.css";
 import "./product-deck.css";
 import "./signal-deck-walkthrough.css";
 import "./account-control.css";
+import "./listen-deck.css";
+import "./listen-deck-polish.css";
 
-type Deck = "home" | "work" | "calendar" | "review";
+type Deck = "home" | "work" | "calendar" | "review" | "listen";
 
 function isDeck(value: string | null): value is Deck {
-  return value === "home" || value === "work" || value === "calendar" || value === "review";
+  return value === "home" || value === "work" || value === "calendar" || value === "review" || value === "listen";
 }
 
 export default function ArchitectureTwoPage() {
+  // Suspense must stay outermost -- ArchitectureTwoDeck's useSearchParams()
+  // requires it for static prerendering (PR #133's fix; this branch was cut
+  // before that landed, so its own version of this file dropped the
+  // boundary entirely -- merging it as-is would have silently reintroduced
+  // the prerender crash). SignalDeckListenProvider nests inside, same as any
+  // other context provider would.
   return (
     <Suspense fallback={null}>
-      <ArchitectureTwoDeck />
+      <SignalDeckListenProvider>
+        <ArchitectureTwoDeck />
+      </SignalDeckListenProvider>
     </Suspense>
   );
 }
@@ -36,7 +48,6 @@ function ArchitectureTwoDeck() {
   const [lensOpen, setLensOpen] = useState(false);
   const [tutorOpen, setTutorOpen] = useState(false);
   const [focusOpen, setFocusOpen] = useState(false);
-  const [playing, setPlaying] = useState(true);
   const [activeBlock, setActiveBlock] = useState<TodayBlock | null>(null);
   const [walkthroughOpen, setWalkthroughOpen] = useState(false);
   const [confirmedWelcomeOpen, setConfirmedWelcomeOpen] = useState(false);
@@ -167,9 +178,10 @@ function ArchitectureTwoDeck() {
       {deck === "work" && <TodayDeck onOpenBlock={openBlock} />}
       {deck === "calendar" && <CalendarDeck onTask={() => openBlock(null)} />}
       {deck === "review" && <ProgressDeck />}
+      {deck === "listen" && <ListenDeck />}
 
       <button className={`a02-beacon ${tutorOpen ? "is-active" : ""}`} onClick={() => setTutorOpen(true)} aria-label="Open tutor copilot"><span>✦</span><i>CO-PILOT</i></button>
-      <AudioTransport playing={playing} onToggle={() => setPlaying(!playing)} />
+      <AudioTransport onOpenListen={() => setDeck("listen")} />
       <DeckDock active={deck} onChange={setDeck} />
       {lensOpen && <ObjectLens block={activeBlock} onClose={() => setLensOpen(false)} onFocus={beginActiveBlock} onTutor={() => setTutorOpen(true)} />}
       {tutorOpen && <TutorConsole onClose={() => setTutorOpen(false)} />}
@@ -208,17 +220,25 @@ function HomeDeck({ onTask, onFocus, onCalendar, onReview }: { onTask: () => voi
 }
 
 function CalendarDeck({ onTask }: { onTask: () => void }) {
-  const hours = ["08", "09", "10", "11", "12", "13", "14", "15", "16"];
+  const hours = ["08", "09", "10", "11", "12", "13", "14", "15", "16", "17", "18", "19", "20"];
   return <section className="a02-calendar"><div className="a02-view-head"><div><span className="a02-eyebrow">TIME FIELD / TUESDAY 06</span><h1>Give time<br /><em>a shape.</em></h1></div><div className="a02-date-switch"><button>‹</button><b>SEP 06</b><button>›</button></div></div><div className="a02-time-map"><aside>{hours.map((hour) => <span key={hour}>{hour}:00</span>)}</aside><div className="a02-time-lines">{hours.map((hour) => <i key={hour} />)}<button className="a02-calendar-event event-dsa" onClick={onTask}><small>09:30 — 10:15</small><b>Two Sum</b><span>Focus block · DSA</span></button><button className="a02-calendar-event event-review"><small>11:15 — 11:35</small><b>Collision handling</b><span>Review</span></button><button className="a02-calendar-event event-room"><small>19:00 — 20:00</small><b>SQL room sprint</b><span>3 members expected</span></button></div><aside className="a02-unscheduled"><span>UNSCHEDULED / 02</span><button>Valid Anagram <i>+</i></button><button>System design: cache <i>+</i></button></aside></div></section>;
 }
 
 function DeckDock({ active, onChange }: { active: Deck; onChange: (next: Deck) => void }) {
-  const items: [Deck, string, string][] = [["home", "◉", "Deck"], ["work", "▦", "Work"], ["calendar", "⌗", "Time"], ["review", "◌", "Review"]];
+  const items: [Deck, string, string][] = [["home", "◉", "Deck"], ["work", "▦", "Work"], ["calendar", "⌗", "Time"], ["review", "◌", "Review"], ["listen", "♫", "Listen"]];
   return <nav className="a02-dock" aria-label="Signal deck navigation">{items.map(([id, icon, label]) => <button key={id} className={active === id ? "is-active" : ""} onClick={() => onChange(id)}><i>{icon}</i><span>{label}</span></button>)}<button className="a02-dock-more"><i>···</i><span>More</span></button></nav>;
 }
 
-function AudioTransport({ playing, onToggle }: { playing: boolean; onToggle: () => void }) {
-  return <div className="a02-audio"><button onClick={onToggle} aria-label="Toggle audio">{playing ? "Ⅱ" : "▶"}</button><div className={playing ? "a02-wave is-playing" : "a02-wave"}>{Array.from({ length: 18 }, (_, index) => <i key={index} />)}</div><span><b>Deep work radio</b><small>Focus noise / 01</small></span><button className="a02-audio-expand">↗</button></div>;
+function AudioTransport({ onOpenListen }: { onOpenListen: () => void }) {
+  const listen = useSignalDeckListen();
+  const musicTrack = listen.currentTrack;
+  const radioStation = listen.selectedStation;
+  const isRadio = listen.mode === "radio";
+  const active = isRadio ? listen.radioPlayback === "playing" : listen.musicPlaying;
+  const title = isRadio ? radioStation?.id ?? "Radio ready" : musicTrack?.title ?? "Listening studio";
+  const detail = isRadio ? radioStation?.genre ?? "11 stations / UI preview" : musicTrack ? `${musicTrack.artist} / UI preview` : "Music + Radio / UI preview";
+  const toggle = () => isRadio ? listen.toggleRadio() : listen.toggleMusic();
+  return <div className="a02-audio"><button onClick={toggle} aria-label={active ? "Pause listening preview" : "Play listening preview"} disabled={!musicTrack && !radioStation}>{active ? "Ⅱ" : "▶"}</button><div className={active ? "a02-wave is-playing" : "a02-wave"}>{Array.from({ length: 18 }, (_, index) => <i key={index} />)}</div><span><b>{title}</b><small>{detail}</small></span><button className="a02-audio-expand" onClick={onOpenListen} aria-label="Open Listen">↗</button></div>;
 }
 
 function ObjectLens({ block, onClose, onFocus, onTutor }: { block: TodayBlock | null; onClose: () => void; onFocus: () => void; onTutor: () => void }) {

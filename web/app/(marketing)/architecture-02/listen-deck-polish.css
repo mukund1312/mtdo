@@ -1,0 +1,50 @@
+/* Final Signal Deck Listen consistency and accessibility pass. */
+.a02-shell:has(.a02-listen) { overflow-y:auto; }
+
+.a02-listen button:focus-visible,
+.a02-listen input:focus-visible {
+  outline:2px solid var(--aqua);
+  outline-offset:3px;
+}
+
+.a02-listen-tabs button:hover { color:var(--ink); }
+.a02-listen-source[aria-pressed="true"] { box-shadow:inset 2px 0 var(--aqua); }
+.a02-listen-source-rule,
+.a02-listen-sources > p,
+.a02-listen-search kbd,
+.a02-listen-queue header small,
+.a02-radio-stations header > small,
+.a02-radio-now > small { display:none; }
+
+.a02-listen-search:focus-within { border-color:var(--aqua); box-shadow:0 0 0 3px rgba(87,231,255,.1); }
+.a02-listen-connection.is-connected { color:var(--acid); }
+.a02-radio-status.is-error { color:var(--coral); }
+.a02-radio-main-controls button:disabled { cursor:not-allowed; opacity:.32; }
+.a02-radio-stations li button[aria-pressed="true"] { border-left:2px solid var(--acid); padding-left:2px; }
+.a02-listen-modal { animation:a02-listen-modal-in .18s ease both; }
+
+@keyframes a02-listen-modal-in {
+  from { opacity:0; transform:translateY(8px) scale(.985); }
+  to { opacity:1; transform:translateY(0) scale(1); }
+}
+
+@media (max-width:650px) {
+  .a02-listen-sources { position:sticky; z-index:2; top:0; background:rgba(13,16,43,.94); backdrop-filter:blur(14px); }
+  .a02-listen-source { min-height:54px; }
+  .a02-listen-tabs button { min-height:46px; }
+  .a02-listen-provider-panel,.a02-unified-player,.a02-listen-queue,.a02-radio-player,.a02-radio-stations { border-radius:8px; }
+  .a02-radio-main-controls button:not(.a02-player-play) { width:38px; height:38px; }
+  .a02-radio-main-controls .a02-player-play { width:48px; height:48px; }
+  .a02-player-controls button:not(.a02-player-play) { width:34px; height:34px; }
+  .a02-player-controls .a02-player-play { width:44px; height:44px; }
+  .a02-listen-tracks li button { min-height:52px; }
+}
+
+@media (prefers-reduced-motion:reduce) {
+  .a02-listen *, .a02-listen *::before, .a02-listen *::after {
+    animation-duration:.01ms !important;
+    animation-iteration-count:1 !important;
+    scroll-behavior:auto !important;
+    transition-duration:.01ms !important;
+  }
+}
