@@ -9,6 +9,31 @@ Add each session's PROGRESS.md entry to the same branch as the code it describes
 
 ---
 
+## [web] 2026-09-07 (PR pending) — Signal Deck confirmed-account journey
+
+Extended the existing anonymous-account upgrade and callback flow without adding a second
+authentication, guide, or onboarding model.
+
+- Email/password account upgrades now return through `/auth/callback` to a transient,
+  callback-only Signal Deck confirmation state. The callback exchanges the real Supabase code,
+  syncs the same user profile, and keeps invalid/expired links inside clear account recovery
+  rather than dropping to the marketing root.
+- A confirmed non-anonymous session reads its RLS-owned profile and presents a short personal
+  welcome using the actual optional display name when available. The shared four-step Signal Deck
+  guide is then reused with that name and continues to the existing onboarding questionnaire;
+  returning password logins and refreshes never replay this new-account sequence.
+- Optional sign-up name input writes only to the already-owned `profiles.display_name` row for the
+  same upgraded anonymous user. No callback parameter, mocked session, or duplicate plan write is
+  trusted as identity.
+- Added browser coverage for the real callback's invalid/no-code recovery branch. Successful
+  email confirmation remains an explicit manual QA step because Supabase owns its one-time token
+  and a controlled mailbox is required.
+
+Validated: `npm run test` (29 passed), `npm run typecheck`, `npm run lint`, `git diff --check`,
+and the three-scenario Architecture 02 Playwright suite.
+
+---
+
 ## [web] 2026-09-07 (PR pending) — Architecture 02 Today consumes persisted curriculum
 
 Completed the documented plan → Today bridge in Signal Deck without changing its visual shell.

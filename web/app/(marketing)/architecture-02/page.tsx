@@ -1,9 +1,10 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { SignalDeckAccountControl } from "./account-control";
 import { ProgressDeck } from "./progress-deck";
+import { SignalDeckConfirmedWelcome } from "./signal-deck-confirmed-welcome";
 import { SignalDeckWalkthrough } from "./signal-deck-walkthrough";
 import { TodayDeck, type TodayBlock } from "./today-deck";
 import { SIGNAL_DECK_WALKTHROUGH_STORAGE_KEY } from "./walkthrough-data";
@@ -21,6 +22,8 @@ function isDeck(value: string | null): value is Deck {
 
 export default function ArchitectureTwoPage() {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const authState = searchParams.get("auth");
   const [deck, setDeck] = useState<Deck>("home");
   const [lensOpen, setLensOpen] = useState(false);
   const [tutorOpen, setTutorOpen] = useState(false);
@@ -28,18 +31,34 @@ export default function ArchitectureTwoPage() {
   const [playing, setPlaying] = useState(true);
   const [activeBlock, setActiveBlock] = useState<TodayBlock | null>(null);
   const [walkthroughOpen, setWalkthroughOpen] = useState(false);
+  const [confirmedWelcomeOpen, setConfirmedWelcomeOpen] = useState(false);
+  const [confirmedWalkthrough, setConfirmedWalkthrough] = useState(false);
+  const [welcomeName, setWelcomeName] = useState<string | null>(null);
 
   // Onboarding finishes on the real Today board. Keep the deck itself stateful
   // (rather than turning each dock tab into a route), while allowing a direct
   // handoff from a successfully persisted plan.
   useEffect(() => {
-    const requestedDeck = new URLSearchParams(window.location.search).get("deck");
+    const requestedDeck = searchParams.get("deck");
     if (!isDeck(requestedDeck)) return;
     const timer = window.setTimeout(() => setDeck(requestedDeck), 0);
     return () => window.clearTimeout(timer);
-  }, []);
+  }, [searchParams]);
+
+  // The callback is the only route that sets `auth=confirmed`. Remove the
+  // transient URL signal once the welcome state is open, so refreshes and
+  // returning password logins never replay this new-account journey.
+  useEffect(() => {
+    if (authState !== "confirmed") return;
+    const timer = window.setTimeout(() => {
+      setConfirmedWelcomeOpen(true);
+      router.replace("/architecture-02");
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, [authState, router]);
 
   useEffect(() => {
+    if (authState) return;
     try {
       if (!window.localStorage.getItem(SIGNAL_DECK_WALKTHROUGH_STORAGE_KEY)) {
         const timer = window.setTimeout(() => setWalkthroughOpen(true), 0);
@@ -48,7 +67,7 @@ export default function ArchitectureTwoPage() {
     } catch {
       // Storage is only a convenience. A blocked storage API must not stop the deck.
     }
-  }, []);
+  }, [authState]);
 
   useEffect(() => {
     const openWithShortcut = (event: KeyboardEvent) => {
@@ -70,6 +89,29 @@ export default function ArchitectureTwoPage() {
       // A user can still dismiss the guide when browser storage is unavailable.
     }
     setWalkthroughOpen(false);
+  };
+
+  const finishConfirmedJourney = () => {
+    try {
+      window.localStorage.setItem(SIGNAL_DECK_WALKTHROUGH_STORAGE_KEY, "seen");
+    } catch {
+      // Route setup must remain available if storage is blocked.
+    }
+    setWalkthroughOpen(false);
+    setConfirmedWalkthrough(false);
+    router.push("/architecture-02/onboarding");
+  };
+
+  const beginConfirmedGuide = (name: string | null) => {
+    setWelcomeName(name);
+    setConfirmedWelcomeOpen(false);
+    setConfirmedWalkthrough(true);
+    setWalkthroughOpen(true);
+  };
+
+  const recoverConfirmation = () => {
+    setConfirmedWelcomeOpen(false);
+    router.replace("/architecture-02?auth=login");
   };
 
   const openBlock = (block: TodayBlock | null) => {
@@ -113,7 +155,15 @@ export default function ArchitectureTwoPage() {
       <DeckDock active={deck} onChange={setDeck} />
       {lensOpen && <ObjectLens block={activeBlock} onClose={() => setLensOpen(false)} onFocus={beginActiveBlock} onTutor={() => setTutorOpen(true)} />}
       {tutorOpen && <TutorConsole onClose={() => setTutorOpen(false)} />}
-      {walkthroughOpen && <SignalDeckWalkthrough onDeckChange={setDeck} onDismiss={dismissWalkthrough} />}
+      {confirmedWelcomeOpen && <SignalDeckConfirmedWelcome onBeginGuide={beginConfirmedGuide} onRecover={recoverConfirmation} onSkipToOnboarding={finishConfirmedJourney} />}
+      {walkthroughOpen && <SignalDeckWalkthrough
+        completionLabel={confirmedWalkthrough ? "Set up my route ↗" : undefined}
+        greeting={confirmedWalkthrough ? welcomeName ?? "there" : null}
+        onDeckChange={setDeck}
+        onDismiss={confirmedWalkthrough ? finishConfirmedJourney : dismissWalkthrough}
+        onFinish={confirmedWalkthrough ? finishConfirmedJourney : undefined}
+        skipLabel={confirmedWalkthrough ? "Skip to route setup" : undefined}
+      />}
     </main>
   );
 }

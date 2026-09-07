@@ -17,7 +17,7 @@ Goal route setup → Today / Work → Focus timer → Review / Record Card
 | 01 · Give the work a route | Signal Deck home | A user provides a goal, focus areas, and available days through the existing route setup; `/api/onboarding/plan` persists the resulting route. |
 | 02 · Keep today in motion | Work deck | Real UTC-day blocks live in Backlog, Todo, In progress, and Done. Moving a signal changes its real state and the completion ledger records the transition. |
 | 03 · Make room for one thing | Signal Deck / Session entry | Opening a signal and launching focus sends its owned block id to the existing session flow. |
-| 04 · Let the record stay honest | Review deck | The six-week review is derived from settled `daily_rollups`; Record Card exports the displayed record as an image. |
+| 04 · Let the record stay honest | Review deck | The six-week review is derived from settled `daily_rollups`; Record Card shows the same real record in a focused view. |
 
 The previews are illustrative interface diagrams only. They contain no synthetic user
 tasks, scores, session totals, or activity history.
@@ -32,7 +32,9 @@ tasks, scores, session totals, or activity history.
   available for every button; the dialog traps Tab focus while open.
 - Each step brings the matching existing deck underneath the overlay into view. **Explore the
   deck** finishes on Signal Deck home; the walkthrough never changes product data, calls the
-  onboarding API, or writes to Supabase.
+  onboarding API, or writes to Supabase. When opened from a verified new-account welcome, the
+  same component is personalized from the authenticated profile and finishes at the existing
+  route-setup questionnaire instead; normal Guide replays retain their usual home destination.
 
 ## Visual and accessibility constraints
 

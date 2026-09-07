@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState, type FormEvent } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import type { User } from "@supabase/supabase-js";
 
 import { upgradeWithEmailPassword } from "@/lib/auth/upgradeAccount";
@@ -46,6 +46,8 @@ function accountFrom(user: User, displayName: string | null): Viewer {
  */
 export function SignalDeckAccountControl() {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const authState = searchParams.get("auth");
   const [viewer, setViewer] = useState<Viewer | null>(null);
   const [loadingViewer, setLoadingViewer] = useState(true);
   const [menuOpen, setMenuOpen] = useState(false);
@@ -79,10 +81,25 @@ export function SignalDeckAccountControl() {
       }
       window.setTimeout(() => void refreshViewer(), 0);
     });
-    const params = new URLSearchParams(window.location.search);
     const authTimer = window.setTimeout(() => {
-      if (params.get("auth") === "reset") setView("reset");
-      if (params.get("auth") === "logged-out") setNotice("You are now using a new guest route. Log in any time to return to your account.");
+      if (authState === "reset") setView("reset");
+      if (authState === "login") {
+        setNotice("Confirming the link did not create a session. Log in to continue.");
+        setView("login");
+      }
+      if (authState === "confirmation-error") {
+        setNotice("That confirmation link is invalid or has expired. Request a fresh link, then try again.");
+        setView("signup");
+      }
+      if (authState === "reset-error") {
+        setNotice("That reset link is invalid or has expired. Request a fresh reset link to continue.");
+        setView("forgot");
+      }
+      if (authState === "callback-error") {
+        setNotice("We could not finish that secure link. Return to your account and try again.");
+        setView("login");
+      }
+      if (authState === "logged-out") setNotice("You are now using a new guest route. Log in any time to return to your account.");
     }, 0);
 
     return () => {
@@ -90,7 +107,7 @@ export function SignalDeckAccountControl() {
       window.clearTimeout(authTimer);
       listener.subscription.unsubscribe();
     };
-  }, [refreshViewer]);
+  }, [authState, refreshViewer]);
 
   const open = (nextView: Exclude<AccountView, null>) => {
     setMenuOpen(false);
@@ -179,13 +196,24 @@ function AccountDialog({
     if (submitting) return;
     setSubmitting(true);
     resetMessages();
-    const redirectTo = `${window.location.origin}/auth/callback?next=${encodeURIComponent("/architecture-02/onboarding")}`;
+    const redirectTo = `${window.location.origin}/auth/callback?next=${encodeURIComponent("/architecture-02?auth=confirmed")}`;
     const result = await upgradeWithEmailPassword(createClient(), email.trim(), password, { emailRedirectTo: redirectTo });
-    setSubmitting(false);
     if (!result.ok) {
+      setSubmitting(false);
       setError(result.message);
       return;
     }
+    // The anonymous user id remains unchanged through updateUser(), so this
+    // writes the name to that same RLS-owned profile rather than introducing
+    // a second account/onboarding record. A missing name is intentionally OK.
+    if (viewer && name.trim()) {
+      const { error: nameError } = await createClient()
+        .from("profiles")
+        .update({ display_name: name.trim() })
+        .eq("id", viewer.id);
+      if (nameError) console.error("[account] could not save display name:", nameError);
+    }
+    setSubmitting(false);
     if (result.pendingEmailConfirmation) {
       setStatus(result.message ?? "Check your email to finish saving this route.");
       return;
@@ -280,6 +308,8 @@ function AccountDialog({
 
       {view === "signup" && <form onSubmit={upgrade} className="a02-account-form">
         <p>Turn this guest route into an account. Your existing plan, blocks, sessions, and record stay attached.</p>
+        {sessionNotice && <p className="a02-account-status" role="status">{sessionNotice}</p>}
+        <label>Name <small>OPTIONAL</small><input autoFocus autoComplete="name" value={name} onChange={(event) => setName(event.target.value)} maxLength={80} disabled={submitting} placeholder="How should MTDO address you?" /></label>
         <AccountFields email={email} password={password} onEmail={setEmail} onPassword={setPassword} submitting={submitting} passwordHint="At least 6 characters" passwordAutoComplete="new-password" />
         <Status status={status} error={error} />
         <button className="a02-account-primary" type="submit" disabled={submitting}>{submitting ? "Saving route…" : "Create account ↗"}</button>
@@ -298,6 +328,7 @@ function AccountDialog({
 
       {view === "forgot" && <form onSubmit={sendReset} className="a02-account-form">
         <p>Enter the email on your account. We will send a secure link if an account is available.</p>
+        {sessionNotice && <p className="a02-account-status" role="status">{sessionNotice}</p>}
         <label>Email<input autoFocus type="email" autoComplete="email" value={email} onChange={(event) => setEmail(event.target.value)} required disabled={submitting} /></label>
         <Status status={status} error={error} />
         <button className="a02-account-primary" type="submit" disabled={submitting}>{submitting ? "Sending…" : "Send reset link ↗"}</button>

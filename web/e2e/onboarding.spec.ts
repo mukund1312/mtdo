@@ -93,3 +93,16 @@ test("Review shows an honest empty heatmap and view-only Record Card", async ({ 
   await expect(record.getByText("0m", { exact: true })).toBeVisible();
   await expect(record.getByRole("button", { name: /download|export/i })).toHaveCount(0);
 });
+
+// There is deliberately no synthetic confirmation token in browser tests:
+// Supabase owns those single-use tokens. This exercises the real callback's
+// no-code/invalid-link branch and verifies it never claims the guest session
+// has been confirmed.
+test("an invalid confirmation callback stays in Signal Deck with account recovery", async ({ page }) => {
+  await page.goto("/auth/callback?next=%2Farchitecture-02%3Fauth%3Dconfirmed");
+
+  await expect(page).toHaveURL(/\/architecture-02\?auth=confirmation-error$/);
+  await expect(page.getByText(/confirmation link is invalid or has expired/i)).toBeVisible();
+  await expect(page.getByRole("heading", { name: /keep the route/i })).toBeVisible();
+  await expect(page.getByText(/you’re in/i)).toHaveCount(0);
+});
