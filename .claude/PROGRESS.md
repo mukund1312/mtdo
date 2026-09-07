@@ -4333,3 +4333,50 @@ change -- everything audited was already correct. The one real fix
 **Explicitly not done, per the brief's own scope boundaries:** no
 Architecture 02 UI change, no Record Card export, no Theme Studio
 expansion, no other architecture built, no payment UI.
+
+## 2026-09-07 [backend] Per-user time zones (task #10, full version)
+
+Founder chose the full version over the safe-half option: rewrite
+recompute_daily_rollups() for genuine per-user bucketing despite the real
+risk of regressing an already-twice-hardened function right before beta.
+
+- migrations/0013: profiles.timezone (nullable, NO default -- load-bearing:
+  a NOT NULL DEFAULT 'UTC' version was tried first and broke test 14's
+  explicit p_timezone override, since every user would have had a stored
+  value and coalesce() would never fall through -- caught by the existing
+  suite, fixed by making NULL a real "unset" state). recompute_daily_rollups()
+  now buckets each row by coalesce(profiles.timezone, p_timezone); scan
+  window padded by the full UTC-offset range so per-user bucketing is never
+  fed a clipped window, while staying sargable.
+- migrations/0014: pick_curriculum_item() had the same hard-coded-UTC bug
+  for a new block's date -- found while building this, not before. Would
+  have silently reintroduced "Today and Progress disagree", just moved to
+  Today. Fixed with the same coalesce pattern.
+- supabase/tests/07_per_user_timezone.sql: 8 new assertions proving the
+  actual new claim (three users, three different zones incl. one NULL,
+  bucketed correctly in the SAME recompute call) -- not just "old tests
+  still pass". Full suite: 115/115.
+- web/lib product-data.ts: utcToday()/utcDateRange() gained an optional
+  timezone parameter (default 'UTC', unchanged behavior at every existing
+  call site). Deliberately not renamed, and today-deck.tsx/progress-deck.tsx
+  deliberately not touched -- J's actively-being-edited files (a real merge
+  conflict happened in this exact area earlier the same day, PR #139).
+  4 new vitest cases, including one specifically proving the range-listing
+  logic doesn't reformat a UTC-anchored instant in a different zone (a real
+  bug caught and fixed in this same work, before it shipped -- would have
+  silently shifted the date range by one day for negative-offset zones).
+
+Docs updated: schema.md (profiles.timezone), api.md §3a/§3b (both had
+stale "no per-user zone exists yet" language, now describes the actual
+behavior; also fixed a second stale claim found along the way -- §3b still
+described the today-deck.tsx composer race as unfixed, though mtdo-bugs#96
+closed it earlier this session), decisions.md (moved from "open" to a full
+resolved-decision entry).
+
+Verification: supabase/tests/run.sh (115/115), tsc/eslint/vitest (37/37)/
+next build --webpack all clean, both migrations applied live via
+`supabase db push`.
+
+**Still open, the actual remaining work:** a settings UI to let a user set
+profiles.timezone, and wiring today-deck.tsx/progress-deck.tsx to read it.
+Written up as a brief for J rather than built here.

@@ -64,9 +64,16 @@ these are read-only to clients and are written exclusively through the functions
 
 ```sql
 -- identity
-profiles(id uuid pk → auth.users, display_name, is_anonymous, created_at)
+profiles(id uuid pk → auth.users, display_name, is_anonymous, timezone, created_at)
   -- is_anonymous is INFORMATIONAL ONLY; never an auth signal (the JWT claim is).
   -- Created automatically by an `after insert on auth.users` trigger.
+  -- timezone (0013): IANA name, NULLABLE with NO default -- NULL means "no
+  -- preference set" and is a real, distinct state from "chose UTC", which
+  -- is what lets recompute_daily_rollups()/pick_curriculum_item()'s
+  -- coalesce(timezone, fallback) actually fall through when appropriate.
+  -- Validated by a trigger (profiles_validate_timezone), not a CHECK
+  -- constraint -- Postgres rejects subqueries in CHECK, and validating a
+  -- real IANA name needs pg_timezone_names.
 
 -- the plan (ports goals.json)
 plans(id, user_id, app_name, goal_line, is_active, created_at,
