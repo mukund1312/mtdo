@@ -9,6 +9,37 @@ Add each session's PROGRESS.md entry to the same branch as the code it describes
 
 ---
 
+## [web] 2026-09-07 (PR pending) — Architecture 02 account and profile flow
+
+Added the Architecture 02 Signal Deck account surface using the existing Supabase
+anonymous-auth-first model rather than creating a parallel authentication API or data model.
+
+- Guest **Create account** upgrades the current anonymous user with the existing
+  `upgradeWithEmailPassword()` helper, preserving the same auth user ID and therefore existing
+  plans, blocks, sessions, rollups, records, and preferences. It continues directly to the
+  existing `/architecture-02/onboarding` flow; confirmation links return there through the
+  existing safe auth callback.
+- Returning **Log in** uses `signInWithPassword()` to restore an existing account. Forgot-password
+  mail uses the existing callback to enter a reset-password state; password updates use Supabase
+  `updateUser()`.
+- The compact header profile control includes guest/account states, Profile, Settings, Theme
+  Studio (the existing device-level preference surface), and logout. Profile editing updates only
+  the already-RLS-scoped `profiles.display_name`; image upload is explicitly not presented as a
+  feature because no profile-image storage backend exists.
+- Session refresh remains owned by `proxy.ts`; a signed-out event prompts Login with a clear
+  session-expired message. All form loading, inline error, confirmation, save, and logout states
+  are explicit and follow Signal Deck styling with reduced-motion fallbacks.
+
+Documented in `docs/designs/architecture-02-account.md`.
+
+Validated: `npm run test` (29 passed), `npm run typecheck`, `npm run lint`, and `git diff --check`.
+
+**Next / open items:** browser-check signup confirmation and password-reset redirects against the
+production Supabase Auth redirect allow-list before merge; no frontend code can configure that
+dashboard setting.
+
+---
+
 ## [web] 2026-09-07 (PR pending) — Architecture 02 Signal Deck first-run walkthrough
 
 Added a short, product-native walkthrough to the existing `/architecture-02` Signal Deck. It

@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
+import { SignalDeckAccountControl } from "./account-control";
 import { ProgressDeck } from "./progress-deck";
 import { SignalDeckWalkthrough } from "./signal-deck-walkthrough";
 import { TodayDeck, type TodayBlock } from "./today-deck";
@@ -10,6 +11,7 @@ import "./signal-deck.css";
 import "./route-entry.css";
 import "./product-deck.css";
 import "./signal-deck-walkthrough.css";
+import "./account-control.css";
 
 type Deck = "home" | "work" | "calendar" | "review";
 
@@ -81,6 +83,7 @@ export default function ArchitectureTwoPage() {
         <button className="a02-wordmark" onClick={() => setDeck("home")} aria-label="Open signal deck">mtdo<span>◒</span></button>
         <div className="a02-live-readout"><span className="a02-live-pip" /> TUESDAY / 06 SEP / 09:24 <i>{"///"}</i> PERSONAL ROUTE</div>
         <div className="a02-top-actions">
+          <SignalDeckAccountControl />
           <button className="a02-guide-trigger" onClick={() => setWalkthroughOpen(true)} aria-keyshortcuts="?">? Guide</button>
           <button className="a02-command" onClick={() => setTutorOpen(true)}>⌘ &nbsp; Ask anything <kbd>space</kbd></button>
         </div>
