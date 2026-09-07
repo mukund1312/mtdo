@@ -9,6 +9,20 @@ Add each session's PROGRESS.md entry to the same branch as the code it describes
 
 ---
 
+## [web] 2026-09-07 (PR pending) — Signal Deck intentional logout
+
+Fixed the Account Access panel reopening during a deliberate sign-out. Supabase emits the same
+`SIGNED_OUT` event for a user clicking Log out and for an unexpected expired session; the account
+control now records the explicit intent before calling `auth.signOut()` and closes its modal when
+that expected event arrives. Only an actual unexpected expiry opens Login. Removed the redundant
+client `router.refresh()` after logout, leaving the next Signal Deck navigation to establish its
+fresh anonymous route through the existing proxy.
+
+Validated: `npm run test` (29 passed), `npm run typecheck`, `npm run lint`, `git diff --check`,
+and the three-scenario Architecture 02 Playwright suite.
+
+---
+
 ## [web] 2026-09-07 (PR pending) — Signal Deck confirmed-account journey
 
 Extended the existing anonymous-account upgrade and callback flow without adding a second

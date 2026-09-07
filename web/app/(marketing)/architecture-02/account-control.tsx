@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import type { User } from "@supabase/supabase-js";
 
@@ -53,6 +53,7 @@ export function SignalDeckAccountControl() {
   const [menuOpen, setMenuOpen] = useState(false);
   const [view, setView] = useState<AccountView>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const intentionalLogoutRef = useRef(false);
 
   const refreshViewer = useCallback(async () => {
     const supabase = createClient();
@@ -76,8 +77,18 @@ export function SignalDeckAccountControl() {
     const supabase = createClient();
     const { data: listener } = supabase.auth.onAuthStateChange((event) => {
       if (event === "SIGNED_OUT") {
-        setNotice("Your saved session ended. Log in to return to your account.");
-        setView("login");
+        if (intentionalLogoutRef.current) {
+          // An explicit logout is the start of a new guest route, not a
+          // session failure. Keep the account panel closed while proxy.ts
+          // provisions that anonymous identity on the next navigation.
+          intentionalLogoutRef.current = false;
+          setMenuOpen(false);
+          setNotice(null);
+          setView(null);
+        } else {
+          setNotice("Your saved session ended. Log in to return to your account.");
+          setView("login");
+        }
       }
       window.setTimeout(() => void refreshViewer(), 0);
     });
@@ -151,7 +162,7 @@ export function SignalDeckAccountControl() {
     </section>}
 
     {notice && !view && <p className="a02-account-notice" role="status">{notice}</p>}
-    {view && <AccountDialog viewer={viewer} view={view} sessionNotice={notice} onClose={close} onOpen={open} onRefresh={() => void refreshViewer()} onUpgrade={finishedUpgrade} />}
+    {view && <AccountDialog viewer={viewer} view={view} sessionNotice={notice} onClose={close} onLogoutCancelled={() => { intentionalLogoutRef.current = false; }} onLogoutStarting={() => { intentionalLogoutRef.current = true; }} onOpen={open} onRefresh={() => void refreshViewer()} onUpgrade={finishedUpgrade} />}
   </div>;
 }
 
@@ -160,6 +171,8 @@ function AccountDialog({
   view,
   sessionNotice,
   onClose,
+  onLogoutCancelled,
+  onLogoutStarting,
   onOpen,
   onRefresh,
   onUpgrade,
@@ -168,6 +181,8 @@ function AccountDialog({
   view: Exclude<AccountView, null>;
   sessionNotice: string | null;
   onClose: () => void;
+  onLogoutCancelled: () => void;
+  onLogoutStarting: () => void;
   onOpen: (view: Exclude<AccountView, null>) => void;
   onRefresh: () => void;
   onUpgrade: () => void;
@@ -288,14 +303,15 @@ function AccountDialog({
     if (submitting) return;
     setSubmitting(true);
     resetMessages();
+    onLogoutStarting();
     const { error: signOutError } = await createClient().auth.signOut();
     if (signOutError) {
+      onLogoutCancelled();
       setSubmitting(false);
       setError(accountError(signOutError, "We could not log you out."));
       return;
     }
     router.replace("/architecture-02?auth=logged-out");
-    router.refresh();
   };
 
   const title = view === "signup" ? "Keep the route." : view === "login" ? "Welcome back." : view === "forgot" ? "Find your way back." : view === "reset" ? "Choose a new key." : view === "profile" ? "Your signal." : view === "logout" ? "Leave the route?" : "Account settings.";
