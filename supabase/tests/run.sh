@@ -70,7 +70,8 @@ fail=0
   -f "$ROOT/supabase/tests/03_idempotence_and_windows.sql" \
   -f "$ROOT/supabase/tests/04_privileges_and_plans.sql" \
   -f "$ROOT/supabase/tests/05_blocks_backlog_status.sql" \
-  -f "$ROOT/supabase/tests/06_curriculum_menu_bridge.sql" 2>&1 \
+  -f "$ROOT/supabase/tests/06_curriculum_menu_bridge.sql" \
+  -f "$ROOT/supabase/tests/07_per_user_timezone.sql" 2>&1 \
   | sed 's/^psql:[^ ]* //; s/^NOTICE:  //' | grep -E "^(PASS|FAIL|ERROR|---)" || fail=1
 
 echo

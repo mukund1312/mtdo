@@ -301,15 +301,54 @@ exhausted" (distinct from the ordinary "no blocks yet today" empty state — `ap
 says not to treat an empty menu as a failure) with an "Adjust my goal" action that routes into the
 existing onboarding flow. No backend work.
 
+## 2026-09-07 — Per-user time zones: full version built, not deferred
+
+Resolved by the founder: given the choice between (1) a safe, additive-only half (store the
+preference, build nothing that reads it yet) and (2) the full version (also rewrite
+`recompute_daily_rollups()` for genuine per-user bucketing, despite the real risk of regressing an
+already-twice-hardened, 106-assertion function right before a beta launch), the founder chose the
+full version.
+
+**What shipped** (migrations/0013, 0014):
+- `profiles.timezone` — **nullable, no default**. This is the load-bearing design choice, not an
+  oversight: NULL means "never set a preference", a real, distinct state from "chose UTC". A
+  `NOT NULL DEFAULT 'UTC'` was tried first and caused a real regression (test 14 in
+  `03_idempotence_and_windows.sql`, which explicitly passes an override `p_timezone` to prove
+  cross-zone bucketing works) — every user would have had a stored `'UTC'` value, so
+  `coalesce(profiles.timezone, p_timezone)` would never fall through to the parameter, silently
+  breaking any explicit-override caller. Caught by the existing test suite, not by inspection.
+- `recompute_daily_rollups()` now buckets each row by `coalesce(profiles.timezone, p_timezone)` —
+  a genuinely mixed-timezone user base is bucketed correctly in one recompute call, not one shared
+  zone for everyone. The scan window is padded by the full possible UTC-offset range
+  (-12:00..+14:00) so the per-user bucketing is never fed a clipped window, while keeping the
+  window comparison itself sargable (still a literal-bound comparison, not a function call on the
+  indexed column).
+- `pick_curriculum_item()` (migrations/0012) also needed the same fix, found while building this,
+  not before: it hard-coded UTC for a new block's `date`, which would have silently reintroduced
+  the exact "Today and Progress disagree" bug this whole decision exists to close, just moved from
+  Progress to Today. Fixed the same way (`coalesce(profiles.timezone, 'UTC')`).
+- 8 new SQL assertions added (`07_per_user_timezone.sql`) proving the actual new claim directly —
+  three users with three different stored zones (including one deliberately left NULL), aggregated
+  in the *same* recompute call, each bucketed by their own zone — not just "the old tests still
+  pass". Full suite: 115/115.
+- Frontend: `product-data.ts`'s `utcToday()`/`utcDateRange()` now accept an optional `timezone`
+  parameter (default `'UTC'`, matching every existing call site's current behavior exactly until
+  wired). Deliberately not renamed and the call sites (`today-deck.tsx`, `progress-deck.tsx`) were
+  deliberately not touched — those are J's actively-being-edited files (a real merge conflict with
+  her Listen-feature branch happened in this exact area the same day), and wiring them needs a
+  profile read plus a settings UI to actually let a user set a preference, neither of which exists
+  yet. Handed off as a brief rather than risking another collision in files she was shipping to in
+  parallel.
+
+**Still open, tracked as the actual remaining work, not silently dropped:** the settings UI to set
+`profiles.timezone`, and wiring `today-deck.tsx`/`progress-deck.tsx` to read it and pass it
+through. `ensure_curriculum_menu()`'s ISO-week unlock cursor also still advances in UTC regardless
+of a user's zone — left alone deliberately (0014's own comment): a coarse, weekly-granularity
+nicety, not the sharp daily-date mismatch the rest of this work closes.
+
 ## Open, not yet decided
 
 - Whether the founder-facing analytics need anything beyond PostHog (deferred until W2 has real
   users — don't build speculatively).
 - Realtime infrastructure choice for room presence (Supabase Realtime is the working assumption
   from the product plan; not re-validated at the engineering level since rooms are still W4a+).
-- **Per-user time zones.** `daily_rollups.date` (and `blocks.date`, and anything else that means
-  "a day") is currently a UTC date for every user. Fixing it properly means a `profiles` column,
-  a UI to set it, a decision about what happens to already-computed rollups when a user changes
-  it, and agreement with `blocks.date` so Today and Progress cannot disagree about what "today"
-  is. Deliberately not pre-empted — it is a product decision with a schema consequence, and UTC
-  is coherent until there are users far enough from it to notice.

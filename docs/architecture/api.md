@@ -323,6 +323,15 @@ public.recompute_daily_rollups(
 Service role only — `EXECUTE` is revoked from `public`, `anon` and `authenticated`. Clients read
 `daily_rollups` under RLS and never call this.
 
+**Per-user time zones (migrations/0013).** `p_timezone` is a fallback, not the zone every row is
+bucketed by. Each row's actual local date uses `coalesce(profiles.timezone, p_timezone)` — a user
+with a stored preference is bucketed by *their own* zone regardless of what `p_timezone` the
+caller (cron, currently `'UTC'`) passes; only a user who never set one falls back to it. The scan
+window (`v_lo`/`v_hi`) is padded by the full possible UTC-offset range (-12:00..+14:00) so no
+user's real local-date range is ever clipped by the window before the per-user bucketing runs —
+this keeps the window comparison sargable (still a plain literal-bound comparison, not a function
+call on the indexed column) while supporting a genuinely mixed-timezone user base in one call.
+
 **Where the numbers come from.**
 
 | Column | Source | Rule |
@@ -376,15 +385,18 @@ select public.recompute_daily_rollups('2026-01-01', current_date, 'UTC');
 Runs serialize against each other on an advisory lock, so a backfill and a cron tick cannot
 interleave; the backfill waits rather than being skipped.
 
-**The time zone is a property of the whole table, not of a call.** `daily_rollups.date` means
-"the local date in the zone the job ran with", and there is no per-user zone stored anywhere yet
-(`profiles` has no such column). UTC is the pinned default, consistent with the "use the date the
-server considers today" convention already given to the Today screen. **Do not run the job in a
-second zone against a window that has already been computed in another** — it does not migrate
-the existing rows, it writes new ones under new dates and leaves the originals behind, so one
-event ends up counted on two days. Changing the zone is a `delete from daily_rollups` plus a full
-backfill. When `profiles` eventually gains a time zone, the upgrade is to join it and pass the
-per-user value; the parameter exists so that is a small change rather than a rewrite.
+**The time zone is per-user now, not a property of the whole table (migrations/0013).**
+`daily_rollups.date` means "the local date in *that user's* zone" — `profiles.timezone` when a
+user has one set, `p_timezone` (the cron default is `'UTC'`) for a user who has never set one.
+This replaces the earlier single-shared-zone design; the historical note that used to live here
+("there is no per-user zone stored anywhere yet... the upgrade is to join it") is now the current
+behavior, not a future one. **Backfilling a specific window still runs it once per relevant
+zone-owning user's actual data, not per zone** — the function already does that internally per
+row; a caller only needs to pick a `p_from`/`p_to` wide enough to cover the backfill, same as
+before. Changing a *specific user's* zone after rows already exist under their old one still
+needs a manual correction (delete that user's affected rows, re-run the window) — the function
+does not migrate historical rows when a user changes `profiles.timezone`, it only affects rows
+written from that point forward.
 
 ## 3b. Curriculum → blocks: the weekly menu (migrations/0012)
 
@@ -446,17 +458,22 @@ Both are `authenticated`-callable; both derive the user from `auth.uid()` and ta
 - It copies `task` → `blocks.text` and `meta` → `blocks.coaching` (empty `meta` becomes `null`).
   The copy is what lets the block survive the curriculum item being edited or deleted;
   `blocks.curriculum_item_id` is `on delete set null`.
-- **Blocks land on today (UTC)**, consistent with §3a and the Today brief. There is no target-date
-  parameter.
+- **Blocks land on today, in the caller's own zone (migrations/0014)** —
+  `coalesce(profiles.timezone, 'UTC')`, same fallback pattern as `recompute_daily_rollups()`
+  (§3a). There is no target-date parameter; this is what keeps a freshly-picked block's date
+  agreeing with what the Today screen is querying for, once Today itself reads a user's real
+  zone too (`web/lib/product-data.ts`'s `utcToday(timezone)` — not yet wired to a profile read at
+  the call site as of this writing, tracked separately from the backend work).
 - The item's `meta` is the Learning Coach payload (`focus_points`, `questions`, `mistakes`,
   `tips`, `mental_models`, …) — read it from the menu row for a preview, or from
   `blocks.coaching` once picked.
 
-**One latent bug this does not fix.** `today-deck.tsx`'s hand-composer allocates `position` with
-a client-side `select max(position)` then `insert`. `blocks_slot_key` is DEFERRABLE, so two
-concurrent composes into one category don't collide on INSERT — they both succeed and one fails at
-COMMIT, after the transaction looked fine. `pick_curriculum_item()` avoids this by allocating
-under the same lock; the composer still has it. Worth a follow-up, out of scope here.
+**The hand-composer race this section used to flag (mtdo-bugs#96) is closed, not just worked
+around.** `today-deck.tsx`'s client-side `select max(position)` then `insert` composer — the
+concurrency risk `blocks_slot_key`'s DEFERRABLE constraint couldn't catch at INSERT time — no
+longer exists: block creation goes exclusively through `pick_curriculum_item()`, which allocates
+`position` under `pg_advisory_xact_lock`. Confirmed by inspection of the current file, not
+assumed from the original finding.
 
 ## 4. The EmberMorph component contract
 
