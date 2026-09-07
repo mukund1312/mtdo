@@ -66,6 +66,7 @@ export default function SessionPage() {
   // happens to be holding.
   const [pendingConflict, setPendingConflict] = useState<FocusSession | null>(null);
   const [linkedBlock, setLinkedBlock] = useState<LinkedBlock | null>(null);
+  const [isLinkedBlockLoading, setIsLinkedBlockLoading] = useState(true);
   const lastSettleKind = useRef<"complete" | "abandon" | null>(null);
   const task = linkedBlock
     ? {
@@ -120,12 +121,19 @@ export default function SessionPage() {
   // browser, then passed to start_session as the server-authoritative link.
   useEffect(() => {
     const linkedBlockId = new URLSearchParams(window.location.search).get("blockId");
-    if (!linkedBlockId) return;
+    let cancelled = false;
+    if (!linkedBlockId) {
+      const clearLoading = window.setTimeout(() => {
+        if (!cancelled) setIsLinkedBlockLoading(false);
+      }, 0);
+      return () => {
+        cancelled = true;
+        window.clearTimeout(clearLoading);
+      };
+    }
     // Keep a non-null local for the async closure below; TypeScript does not
     // retain the URLSearchParams narrowing across that closure boundary.
     const requestedBlockId: string = linkedBlockId;
-    let cancelled = false;
-
     async function loadLinkedBlock() {
       const supabase = createClient();
       const {
@@ -138,7 +146,9 @@ export default function SessionPage() {
         .eq("id", requestedBlockId)
         .eq("user_id", user.id)
         .maybeSingle();
-      if (!cancelled && !error && data) setLinkedBlock(data);
+      if (cancelled) return;
+      if (!error && data) setLinkedBlock(data);
+      setIsLinkedBlockLoading(false);
     }
 
     void loadLinkedBlock();
@@ -161,6 +171,7 @@ export default function SessionPage() {
     if (phase !== "ready") return;
     // Do not create an unlinked generic session while a task passed from
     // Architecture 02 is still being resolved under RLS.
+    if (isLinkedBlockLoading) return;
     if (new URLSearchParams(window.location.search).get("blockId") && !linkedBlock) {
       setNoticeKind("warning");
       setNotice("Loading the selected task. Try Begin focus again in a moment.");
@@ -217,7 +228,7 @@ export default function SessionPage() {
         .eq("id", linkedBlock.id);
       if (blockError) console.error("[session] could not mark linked block in progress:", blockError);
     }
-  }, [linkedBlock, phase, resume]);
+  }, [isLinkedBlockLoading, linkedBlock, phase, resume]);
 
   const resumeConflict = useCallback(() => {
     if (!pendingConflict) return;
@@ -349,10 +360,14 @@ export default function SessionPage() {
             className={styles.startButton}
             type="button"
             onClick={() => void startSession()}
-            disabled={phase === "starting"}
+            disabled={phase === "starting" || isLinkedBlockLoading}
           >
-            <span aria-hidden="true">{phase === "starting" ? "…" : "→"}</span>
-            {phase === "starting" ? "Starting session" : "Begin focus"}
+            <span aria-hidden="true">{phase === "starting" || isLinkedBlockLoading ? "…" : "→"}</span>
+            {phase === "starting"
+              ? "Starting session"
+              : isLinkedBlockLoading
+                ? "Loading task"
+                : "Begin focus"}
           </button>
         )}
         {notice && (
