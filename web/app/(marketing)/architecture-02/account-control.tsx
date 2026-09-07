@@ -204,7 +204,9 @@ function AccountDialog({
       setError(accountError(signInError, "We could not log you in."));
       return;
     }
-    router.replace("/architecture-02");
+    // A returning account should resume the live Today board, where its
+    // persisted route and UTC-day blocks already live.
+    router.replace("/architecture-02?deck=work");
     router.refresh();
   };
 
