@@ -1,10 +1,11 @@
 import { test, expect } from "@playwright/test";
 
 // Real end-to-end happy path: landing page -> onboarding entry -> intent step
-// -> rhythm step -> route ready to build. See README.md for why this stops
-// short of submitting (gh95: onboarding's plan-generation step is blocked on
-// a Supabase config gap, not on this UI).
-test("onboarding wizard: intent -> rhythm -> ready to build a route", async ({ page }) => {
+// -> rhythm step -> submit -> a persisted plan is ready. gh95 (anonymous
+// sign-ins disabled on the connected Supabase project, blocking the
+// POST /api/onboarding/plan call this test now drives) is fixed -- see
+// README.md for history.
+test("onboarding wizard: intent -> rhythm -> build a route end-to-end", async ({ page }) => {
   await page.goto("/architecture-02");
   // First visit shows the Signal Deck walkthrough tour as a modal overlay --
   // dismiss it before interacting with the page underneath.
@@ -37,4 +38,23 @@ test("onboarding wizard: intent -> rhythm -> ready to build a route", async ({ p
   const buildButton = page.getByRole("button", { name: /build my route/i });
   await expect(buildButton).toBeVisible();
   await expect(buildButton).toBeEnabled();
+
+  // Step 3: submit and wait for a persisted plan. This calls the real
+  // Anthropic API and Supabase (route.ts's own failure contract falls back
+  // to a static plan if either misbehaves, so "ready" is the right thing to
+  // assert on here, not "used the AI-generated plan specifically").
+  await buildButton.click();
+  await expect(page.getByText(/route engine active/i)).toBeVisible();
+
+  const readyHeading = page.getByRole("heading", { name: /route is ready/i });
+  await expect(readyHeading).toBeVisible({ timeout: 60_000 });
+  await expect(page.getByText("Prepare for software engineering interviews by December")).toBeVisible();
+
+  // At least one category card from the persisted plan renders.
+  await expect(page.locator("article").first()).toBeVisible();
+
+  const enterDeckButton = page.getByRole("button", { name: /enter signal deck/i });
+  await expect(enterDeckButton).toBeEnabled();
+  await enterDeckButton.click();
+  await expect(page).toHaveURL(/\/architecture-02$/);
 });

@@ -1,10 +1,13 @@
 import { defineConfig, devices } from "@playwright/test";
 
 // Real end-to-end tests -- an actual browser driving the actual dev server,
-// not a component or unit test. See e2e/README.md for what's in/out of
-// scope while onboarding's plan-generation step is blocked (gh95).
+// not a component or unit test. See e2e/README.md for scope.
 export default defineConfig({
   testDir: "./e2e",
+  // The onboarding spec submits the wizard, which calls the real Anthropic
+  // API server-side (route.ts's maxDuration is 60s) -- give the client-side
+  // wait real headroom above the 30s default instead of racing that call.
+  timeout: 90_000,
   fullyParallel: true,
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 2 : 0,

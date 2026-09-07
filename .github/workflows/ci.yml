@@ -65,6 +65,15 @@ jobs:
     defaults:
       run:
         working-directory: web
+    # NEXT_PUBLIC_* vars get inlined into the client bundle at build time --
+    # without them here, `npm run build` silently bakes in `undefined` for
+    # the Supabase URL/anon key rather than failing loudly. Safe to store as
+    # repo secrets even though they're not sensitive (they ship to the
+    # browser by design, per dev-split-plan.md §8) -- simplest consistent
+    # place to keep them.
+    env:
+      NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+      NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.NEXT_PUBLIC_SUPABASE_ANON_KEY }}
     steps:
       - uses: actions/checkout@v4
 
@@ -96,6 +105,15 @@ jobs:
     defaults:
       run:
         working-directory: web
+    # playwright.config.ts's webServer runs `next build && next start` --
+    # without these, the built app has no way to reach Supabase at all, and
+    # every test times out waiting on UI that depends on a session ever
+    # existing. Found live: PR #128's E2E run failed in CI (60s timeout on
+    # "route is ready") despite passing twice locally, because this job had
+    # zero env vars set.
+    env:
+      NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+      NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.NEXT_PUBLIC_SUPABASE_ANON_KEY }}
     steps:
       - uses: actions/checkout@v4
 
