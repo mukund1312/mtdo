@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { Suspense, useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { SignalDeckAccountControl } from "./account-control";
 import { ProgressDeck } from "./progress-deck";
@@ -21,6 +21,14 @@ function isDeck(value: string | null): value is Deck {
 }
 
 export default function ArchitectureTwoPage() {
+  return (
+    <Suspense fallback={null}>
+      <ArchitectureTwoDeck />
+    </Suspense>
+  );
+}
+
+function ArchitectureTwoDeck() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const authState = searchParams.get("auth");
