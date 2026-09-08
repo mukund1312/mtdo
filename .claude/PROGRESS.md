@@ -9,7 +9,7 @@ Add each session's PROGRESS.md entry to the same branch as the code it describes
 
 ---
 
-## [backend+web] 2026-09-08 (PR pending) — Operating-engine plan, Phase 1 complete
+## [backend+web] 2026-09-08 (PR #141, merged) — Operating-engine plan, Phase 1 complete
 
 Full plan: `~/.claude/plans/role-you-are-keen-avalanche.md`. Janhwi unavailable for ~2 days, so
 both backend and frontend for Phase 1 were done in one Claude Code session (Sonnet, per the
@@ -57,9 +57,49 @@ traces to a row.
 Verification: `supabase/tests/run.sh` (115/115, migration 0015 applies clean), `tsc`/`eslint`/
 `vitest` (54/54)/`next build` all clean.
 
-**Not part of Phase 1, left open:** Phase 2 (AI provider abstraction) -- built partially in the
-same session as separate, not-yet-committed work (`web/lib/ai/**`, migration 0015, the
-`route.ts` refactor). Its own PROGRESS.md entry lands with that PR once Phase 2 wraps up.
+**Not part of Phase 1, left open:** Phase 2 (AI provider abstraction) -- see the entry below,
+built in the same session but as separate, still-uncommitted work.
+
+## [backend+web] 2026-09-08 (PR pending) — AI provider abstraction, complete (Phase 2)
+
+Janhwi still unavailable, so both backend and frontend done in one Claude Code session, Sonnet
+throughout (no schema/RLS/session-authority design in this phase either). All 5 checklist items
+done:
+
+- `web/lib/ai/provider.ts` + `providers/{anthropic,ollama}.ts` + `service.ts`: the `AIProvider`
+  interface (`generateText`/`streamText`/`healthCheck`/`listModels`), a real Anthropic provider
+  (the exact call shape `route.ts` used inline before, moved not changed -- confirmed by the
+  route's own mock-based tests still passing unchanged through the extra indirection), and a
+  real Ollama provider (`/api/chat` with `stream`/`format:"json"`, `/api/version`, `/api/tags`,
+  no SDK dependency). `service.ts` resolves `AI_PROVIDER` env, falls through to Anthropic on an
+  Ollama health-check failure or a mid-stream failure -- the existing "never block the core loop"
+  failure contract extended, not changed.
+- `app/api/onboarding/plan/route.ts` refactored to call `generateGoalPlan()` instead of the
+  Anthropic SDK inline. All 17 of its existing tests (the real regression gate) pass unchanged.
+- `supabase/migrations/0015_ai_provider_settings.sql`: `ai_provider_settings` (per-user override,
+  ordinary client-writable) and `ai_generations` (append-only audit trail, service-role insert +
+  select-own, same posture as `activity_events`). Pushed live via `supabase db push`; types
+  regenerated. `supabase/tests/08_ai_provider_settings.sql`: 9 new assertions, the same live
+  two-user cross-isolation test every other table in this suite gets -- alice/bob cannot read or
+  write each other's settings row, cannot see each other's generation rows, cannot insert into
+  `ai_generations` at all (service-role only), cannot delete their own audit row either.
+- `GET /api/ai/status` (`web/app/api/ai/status/route.ts`): reports `resolveProvider()`'s live
+  decision -- provider id, `healthCheck()`, `listModels()` -- auth-gated, no body. 4 tests.
+- `web/app/(marketing)/architecture-02/settings/page.tsx`: Settings -> AI, a real status panel
+  consuming the route above (provider / reachable / models). Deliberately read-only for now --
+  `ai_provider_settings` exists but `resolveProvider()` doesn't consult it yet, so a write control
+  here would be exactly the kind of fake surface Phase 1 just spent its whole scope removing.
+  Wired the previously-dead "More" dock button (`onClick`-less since the original audit) to
+  navigate here -- the rest of Settings (Plan & Data, Integrations, Preferences, Record, Account,
+  Help) is Phase 8's job, not built here.
+- Docs closed the loop: `schema.md` (both new tables + the RLS-capability table), `api.md` §2f
+  (new section: the seam, selection/fallback logic, the status route's contract, what's
+  deliberately not built yet). This is what makes the phase actually contract-locked, not just
+  code-complete.
+
+Verification: `supabase/tests/run.sh` (124/124), `tsc`/`eslint`/`vitest` (58/58)/`next build` all
+clean, `playwright test` against a real production build (10/10, including 2 new tests: the More
+button -> Settings -> real status flow, folded into the existing signal-deck e2e coverage).
 
 ---
 

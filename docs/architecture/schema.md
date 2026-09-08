@@ -176,6 +176,29 @@ daily_rollups(id uuid pk, user_id, date, room_id null,
   -- Derivation rules, day-attribution and backfill: api.md §3a. `date` is a
   -- LOCAL date in the zone the job runs with (UTC today); it is a property of
   -- the whole table, not of one run.
+
+-- AI provider abstraction (migration 0015, operating-engine plan Phase 2) —
+-- selection itself is server-env-driven (AI_PROVIDER/OLLAMA_ENDPOINT, see
+-- web/lib/ai/service.ts); this table is only consulted for a user who has
+-- explicitly opted into a per-user override, not the primary selection path
+ai_provider_settings(user_id pk, provider check in ('anthropic','ollama') default 'anthropic',
+                      endpoint null, planning_model null, coaching_model null, updated_at)
+  -- Ordinary client-writable settings row, same posture as profiles —
+  -- select/insert/update own via RLS, no service-role involvement.
+
+-- append-only audit trail of every AI provider call made on a user's
+-- behalf, across every domain method (goal plan today, weekly review/tutor
+-- reply once Phases 7-8 add those) — same posture as activity_events
+ai_generations(id uuid pk, user_id, kind, provider, model, valid,
+               error_code null, input_tokens null, output_tokens null (each check >= 0),
+               created_at)
+  -- Clients get SELECT (own rows) only. INSERT is service_role only —
+  -- web/lib/ai/service.ts's callers write it, never a client. No UPDATE/
+  -- DELETE for any role but a service-role migration path, same ledger-
+  -- immutability rule as activity_events. `kind` is open text, not a CHECK-
+  -- constrained enum: new AI-backed features add new kinds without a
+  -- migration just to log them. Backs the future Tutor free-tier cap
+  -- (Phase 8) and provider/cost visibility in Settings -> AI.
 ```
 
 **The composite foreign keys are the point, not decoration.** `user_id` on a row proves only
@@ -363,9 +386,11 @@ erroring; where the grant itself is revoked, it errors with `42501`.
 | `plans`, `plan_categories` | select, insert, update (**no delete**) | client |
 | `curriculum_items`, `blocks`, `proofs`, `notes`, `companies`, `tutor_conversations` | select, insert, update, delete | client; `blocks` also by `pick_curriculum_item()` (0012) |
 | `feedback` | select, insert (**no update/delete**) | client |
+| `ai_provider_settings` | select, insert, update (**no delete**) | client (own row) |
 | `activity_events` | **select only** | `record_event()` / `append_event()` |
 | `focus_sessions` | **select only** | `start_session()` / `complete_session()` / `abandon_session()` |
 | `daily_rollups` | **select only** | `recompute_daily_rollups()` (0009), scheduled by pg_cron (0010) |
+| `ai_generations` | **select only** | `web/lib/ai/service.ts`'s callers, service-role (0015) |
 | `tutor_memory_summaries` | **select only** | future service-role summarization job |
 | `tutor_messages` | **nothing** | future service-role chat backend; read via `tutor_context()` |
 

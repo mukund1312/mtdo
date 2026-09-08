@@ -25,8 +25,8 @@
 // (lib/plan-generation/fallback.ts) and still returns a usable "done" event
 // with usedFallback: true -- onboarding must never dead-end a new user.
 
-import Anthropic from "@anthropic-ai/sdk";
 import { createClient } from "@/lib/supabase/server";
+import { generateGoalPlan } from "@/lib/ai/service";
 import { buildPlanPrompt } from "@/lib/plan-generation/prompt";
 import { parseGeneratedPlan } from "@/lib/plan-generation/parse";
 import { buildFallbackPlan } from "@/lib/plan-generation/fallback";
@@ -37,8 +37,6 @@ import { recordEvent } from "@/lib/analytics/record-event";
 // This route calls an external streaming API and writes to Postgres -- give
 // it real headroom rather than the platform default.
 export const maxDuration = 60;
-
-const MODEL = "claude-sonnet-5"; // split-plan §5: Sonnet for Route Handlers/RPC-shaped work, Opus reserved for schema/RLS/session-authority design.
 
 function isValidAnswers(body: unknown): body is OnboardingAnswers {
   if (typeof body !== "object" || body === null) return false;
@@ -95,51 +93,42 @@ export async function POST(request: Request) {
     return Response.json({ error: "No authenticated session." }, { status: 401 });
   }
 
-  const anthropic = new Anthropic(); // reads ANTHROPIC_API_KEY from the environment
-
   const stream = new ReadableStream<Uint8Array>({
     async start(controller) {
       let fullText = "";
       let usedFallback = false;
 
       try {
-        const messageStream = anthropic.messages.stream(
-          {
-            model: MODEL,
-            // The prompt asks for the rich object form (3-5 focus_points, 2-3
-            // questions, mistakes/tips/mental_models) across up to 6 categories
-            // and up to 14 curriculum slots each -- a compliant response
-            // routinely runs past 8000 tokens. Too low a cap here doesn't error,
-            // it truncates mid-JSON, parseGeneratedPlan throws, and the route
-            // silently falls back to the generic static plan -- the AI
-            // personalization feature would just never fire for real multi-
-            // subject plans. 16000 gives real headroom without approaching
-            // claude-sonnet-5's output ceiling.
-            max_tokens: 16000,
-            messages: [{ role: "user", content: buildPlanPrompt(answers) }],
-          },
-          // Ties generation to the request's own lifecycle: if the client
-          // disconnects (tab closed, navigated away), the Anthropic call is
-          // cancelled instead of running (and billing) for up to maxDuration
-          // with nowhere for its output to go.
-          { signal: request.signal },
-        );
-
-        messageStream.on("text", (delta) => {
-          fullText += delta;
-          controller.enqueue(ndjson({ type: "delta", text: delta }));
+        // The prompt asks for the rich object form (3-5 focus_points, 2-3
+        // questions, mistakes/tips/mental_models) across up to 6 categories
+        // and up to 14 curriculum slots each -- a compliant response
+        // routinely runs past 8000 tokens. Too low a cap here doesn't error,
+        // it truncates mid-JSON, parseGeneratedPlan throws, and the route
+        // silently falls back to the generic static plan -- the AI
+        // personalization feature would just never fire for real multi-
+        // subject plans. 16000 (lib/ai/service.ts's generateGoalPlan) gives
+        // real headroom without approaching claude-sonnet-5's output ceiling.
+        //
+        // signal: request.signal ties generation to the request's own
+        // lifecycle -- if the client disconnects (tab closed, navigated
+        // away), the provider call is cancelled instead of running (and
+        // billing) for up to maxDuration with nowhere for its output to go.
+        fullText = await generateGoalPlan({
+          onDelta: (delta) => controller.enqueue(ndjson({ type: "delta", text: delta })),
+          prompt: buildPlanPrompt(answers),
+          signal: request.signal,
         });
-
-        await messageStream.finalMessage();
       } catch (err) {
         if (request.signal.aborted) {
           // The client disconnected -- there's no one left to stream a
           // fallback to, and the ReadableStream is being torn down anyway.
           return;
         }
-        // Anthropic call itself failed (network, auth, rate limit, timeout).
-        // Don't surface this to the client as an error yet -- fall back below.
-        console.error("[onboarding/plan] Anthropic call failed:", err);
+        // The configured provider (and its Anthropic fallback, per
+        // lib/ai/service.ts) both failed (network, auth, rate limit,
+        // timeout). Don't surface this to the client as an error yet --
+        // fall back below.
+        console.error("[onboarding/plan] AI provider call failed:", err);
         fullText = "";
       }
 
