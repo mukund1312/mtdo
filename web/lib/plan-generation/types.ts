@@ -7,6 +7,13 @@
 // app already uses, ported to TS rather than re-derived. See parse.ts for the rules
 // this shape encodes (rule_1/rule_5/rule_9/9b/9c from goals_template.json).
 
+/** Mirrors web/app/(marketing)/architecture-02/planning-mode.ts's PlanningMode
+ * (kept as an independent, structurally-identical definition rather than a
+ * cross-import -- lib/plan-generation is a shared backend-facing module and
+ * should not depend on an app-route-scoped file; the two-value union costs
+ * nothing to keep in sync by hand). See migrations/0017. */
+export type PlanningMode = "dynamic_weekly" | "overall";
+
 export interface OnboardingAnswers {
   /** One sentence describing what the user is working toward. Required, non-blank. */
   goalLine: string;
@@ -23,6 +30,10 @@ export interface OnboardingAnswers {
   weeklyDaysAvailable: number[];
   /** Optional freeform context: prior experience, constraints, target company/role, etc. */
   notes?: string;
+  /** Defaults to 'dynamic_weekly' (the plans.planning_mode column default,
+   * migrations/0017) when omitted -- an older client that predates this
+   * field still produces a correctly-defaulted plan. */
+  planningMode?: PlanningMode;
 }
 
 export interface GeneratedTask {

@@ -56,7 +56,19 @@
 // matter.
 
 import type { SupabaseClient } from "@supabase/supabase-js";
-import type { GeneratedPlan, OnboardingAnswers } from "./types";
+import type { GeneratedPlan, OnboardingAnswers, PlanningMode } from "./types";
+
+export interface PersistPlanOptions {
+  /** Omitted for Manual Setup and Import -- neither has an OnboardingAnswers,
+   * and plans.onboarding_answers stays a genuine NULL rather than a
+   * defaulted-away empty object (migrations/0016's own column comment).
+   * Only the AI-generation route (route.ts) has answers to pass. */
+  onboardingAnswers?: OnboardingAnswers;
+  /** Omitted lets the plans.planning_mode column's own DEFAULT
+   * ('dynamic_weekly', migrations/0017) apply -- there is no meaningful
+   * "unset" state to preserve here the way onboardingAnswers has one. */
+  planningMode?: PlanningMode;
+}
 
 /** Thrown only when persistGeneratedPlan genuinely cannot determine whether
  * activate_plan() committed -- both the activation call and the follow-up
@@ -104,11 +116,7 @@ export async function persistGeneratedPlan(
   supabase: SupabaseClient,
   userId: string,
   plan: GeneratedPlan,
-  // Omitted (not even passed) for Manual Setup and Import -- neither has an
-  // OnboardingAnswers, and plans.onboarding_answers stays a genuine NULL
-  // rather than a defaulted-away empty object (migrations/0016's own column
-  // comment). Only the AI-generation route (route.ts) has answers to pass.
-  onboardingAnswers?: OnboardingAnswers,
+  options: PersistPlanOptions = {},
 ): Promise<PersistedPlanSummary> {
   // Inserted inactive on purpose: nothing else can mistake this row for
   // "the" active plan until activate_plan() says so, at the very end, once
@@ -120,7 +128,11 @@ export async function persistGeneratedPlan(
       app_name: plan.app_name,
       goal_line: plan.goal_line,
       is_active: false,
-      onboarding_answers: onboardingAnswers ?? null,
+      onboarding_answers: options.onboardingAnswers ?? null,
+      // Omitted entirely (not an explicit default value) when unset, so the
+      // column's own DEFAULT applies -- same reasoning as coaching_framework
+      // a few lines below in the categories insert.
+      ...(options.planningMode ? { planning_mode: options.planningMode } : {}),
     })
     .select("id")
     .single();

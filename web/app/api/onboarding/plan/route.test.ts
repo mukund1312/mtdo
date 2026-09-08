@@ -170,6 +170,19 @@ describe("POST /api/onboarding/plan -- request validation", () => {
     expect(response.status).toBe(400);
   });
 
+  it("400s on an invalid planningMode", async () => {
+    const response = await POST(
+      makeRequest({ ...validAnswers(), planningMode: "weekly_ish" }),
+    );
+    expect(response.status).toBe(400);
+  });
+
+  it("accepts a request with no planningMode at all (defaults server-side)", async () => {
+    mockStreamCtor.mockReturnValue(fakeMessageStream({ deltas: [generatedPlanJson()] }));
+    const response = await POST(makeRequest(validAnswers()));
+    expect(response.status).toBe(200);
+  });
+
   it("does not touch auth or Anthropic when validation fails", async () => {
     await POST(makeRequest({}));
     expect(mockGetUser).not.toHaveBeenCalled();
@@ -224,6 +237,25 @@ describe("POST /api/onboarding/plan -- happy path", () => {
       "plan_generated",
       { usedFallback: false, categoryCount: 1 },
     );
+  });
+
+  it("passes the chosen planningMode through to persistGeneratedPlan", async () => {
+    mockStreamCtor.mockReturnValue(fakeMessageStream({ deltas: [generatedPlanJson()] }));
+
+    await readNdjson(await POST(makeRequest(validAnswers({ planningMode: "overall" }))));
+
+    expect(mockPersist).toHaveBeenCalledTimes(1);
+    const [, , , options] = mockPersist.mock.calls[0]!;
+    expect(options).toMatchObject({ planningMode: "overall" });
+  });
+
+  it("omits planningMode from the persist options when the request didn't send one", async () => {
+    mockStreamCtor.mockReturnValue(fakeMessageStream({ deltas: [generatedPlanJson()] }));
+
+    await readNdjson(await POST(makeRequest(validAnswers())));
+
+    const [, , , options] = mockPersist.mock.calls[0]!;
+    expect(options.planningMode).toBeUndefined();
   });
 
   it("passes the Anthropic call's own AbortSignal through from the request", async () => {
