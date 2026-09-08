@@ -244,6 +244,53 @@ Not done: source-map upload to Sentry on build (needs `SENTRY_AUTH_TOKEN` + org/
 not yet provisioned) and a `withSentryConfig` wrap of `next.config.ts`. Neither blocks error
 capture working today; both are a later, low-urgency polish pass.
 
+## 2f. AI provider abstraction (Phase 2, operating-engine plan)
+
+`web/lib/ai/` is the one seam any UI component or Route Handler is allowed to import AI
+generation from — nothing outside `service.ts` imports a concrete provider directly.
+
+```
+provider.ts            AIProvider interface: generateText / streamText / healthCheck / listModels
+providers/anthropic.ts wraps @anthropic-ai/sdk — the exact call shape §2a's route used inline
+                        before this existed, moved not changed
+providers/ollama.ts     /api/chat (stream + format:"json"), /api/version, /api/tags — no SDK dep
+service.ts              resolveProvider() + generateGoalPlan(); the only exported surface
+```
+
+**Selection is server-env-driven**, not per-request: `AI_PROVIDER` (`"anthropic"` default |
+`"ollama"`), `OLLAMA_ENDPOINT`, `OLLAMA_MODEL`. If `AI_PROVIDER=ollama` and its `healthCheck()`
+fails, `resolveProvider()` falls back to Anthropic; if the resolved provider fails mid-stream,
+`generateGoalPlan()` falls back to Anthropic once more before giving up — extending, not
+changing, the existing "never block the core loop" failure contract (§2a's static-plan fallback
+is still the last resort after that).
+
+`migrations/0015`: `ai_provider_settings` (schema.md — per-user override row for self-hosters,
+**not yet consulted by `resolveProvider()`**; write-only from the client today, a real effect on
+selection is a follow-up, not built here) and `ai_generations` (schema.md — append-only audit
+trail, service-role insert only). Neither table's presence changes selection behavior yet.
+
+**`GET /api/ai/status`** — `web/app/api/ai/status/route.ts`. Authenticated (401 without a
+session, same as §2a). Read-only, no body. Reports what `resolveProvider()` resolves to *right
+now*, not a stored preference:
+
+```json
+{ "provider": "anthropic", "reachable": true, "models": ["claude-sonnet-5"] }
+```
+
+Backs the Settings → AI panel (`web/app/(marketing)/architecture-02/settings/page.tsx`), which is
+currently a status display only — provider switching is still an env var, not a per-user control,
+for the same reason `ai_provider_settings` isn't consulted yet (above).
+
+**§2a's onboarding route** now calls `generateGoalPlan()` instead of the Anthropic SDK directly —
+its documented contract (request/response shape, failure contract) is unchanged; only what's
+inside the Route Handler moved. Its 17 tests (`route.test.ts`) are the regression gate for that
+refactor and were required to pass unchanged, not rewritten to match the new internals.
+
+**Not built yet:** `schemas.ts` (deferred — no domain method beyond `generateGoalPlan` exists to
+need one), and the other `service.ts` domain methods the operating-engine plan's Phase 2 section
+lists (`generateWeeklyPlanRecommendation`, `reviewWeek`, etc.) — those arrive with the phases that
+actually call them (7, 8), not speculatively here.
+
 ## 3. How the app talks to the database
 
 Most tables are read and written directly with the anon-key client under RLS. **Five are not**

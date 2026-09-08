@@ -173,7 +173,7 @@ function ArchitectureTwoDeck() {
 
       <button className={`a02-beacon ${tutorOpen ? "is-active" : ""}`} onClick={() => setTutorOpen(true)} aria-label="Open tutor copilot"><span>✦</span><i>CO-PILOT</i></button>
       <AudioTransport onOpenListen={() => setDeck("listen")} />
-      <DeckDock active={deck} onChange={setDeck} />
+      <DeckDock active={deck} onChange={setDeck} onMore={() => router.push("/architecture-02/settings")} />
       {lensOpen && <ObjectLens block={activeBlock} onClose={() => setLensOpen(false)} onFocus={beginActiveBlock} onTutor={() => setTutorOpen(true)} />}
       {tutorOpen && <TutorConsole onClose={() => setTutorOpen(false)} />}
       {confirmedWelcomeOpen && <SignalDeckConfirmedWelcome onBeginGuide={beginConfirmedGuide} onRecover={recoverConfirmation} onSkipToOnboarding={finishConfirmedJourney} />}
@@ -460,9 +460,9 @@ function CalendarDeck() {
   );
 }
 
-function DeckDock({ active, onChange }: { active: Deck; onChange: (next: Deck) => void }) {
+function DeckDock({ active, onChange, onMore }: { active: Deck; onChange: (next: Deck) => void; onMore: () => void }) {
   const items: [Deck, string, string][] = [["home", "◉", "Deck"], ["work", "▦", "Work"], ["calendar", "⌗", "Time"], ["review", "◌", "Review"], ["listen", "♫", "Listen"]];
-  return <nav className="a02-dock" aria-label="Signal deck navigation">{items.map(([id, icon, label]) => <button key={id} className={active === id ? "is-active" : ""} onClick={() => onChange(id)}><i>{icon}</i><span>{label}</span></button>)}<button className="a02-dock-more"><i>···</i><span>More</span></button></nav>;
+  return <nav className="a02-dock" aria-label="Signal deck navigation">{items.map(([id, icon, label]) => <button key={id} className={active === id ? "is-active" : ""} onClick={() => onChange(id)}><i>{icon}</i><span>{label}</span></button>)}<button className="a02-dock-more" onClick={onMore}><i>···</i><span>More</span></button></nav>;
 }
 
 function AudioTransport({ onOpenListen }: { onOpenListen: () => void }) {

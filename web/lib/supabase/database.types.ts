@@ -69,6 +69,72 @@ export type Database = {
         }
         Relationships: []
       }
+      ai_generations: {
+        Row: {
+          created_at: string
+          error_code: string | null
+          id: string
+          input_tokens: number | null
+          kind: string
+          model: string
+          output_tokens: number | null
+          provider: string
+          user_id: string
+          valid: boolean
+        }
+        Insert: {
+          created_at?: string
+          error_code?: string | null
+          id?: string
+          input_tokens?: number | null
+          kind: string
+          model: string
+          output_tokens?: number | null
+          provider: string
+          user_id: string
+          valid: boolean
+        }
+        Update: {
+          created_at?: string
+          error_code?: string | null
+          id?: string
+          input_tokens?: number | null
+          kind?: string
+          model?: string
+          output_tokens?: number | null
+          provider?: string
+          user_id?: string
+          valid?: boolean
+        }
+        Relationships: []
+      }
+      ai_provider_settings: {
+        Row: {
+          coaching_model: string | null
+          endpoint: string | null
+          planning_model: string | null
+          provider: string
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          coaching_model?: string | null
+          endpoint?: string | null
+          planning_model?: string | null
+          provider?: string
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          coaching_model?: string | null
+          endpoint?: string | null
+          planning_model?: string | null
+          provider?: string
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
       blocks: {
         Row: {
           category_id: string

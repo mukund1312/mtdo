@@ -1,0 +1,85 @@
+/* .a02-shell (signal-deck.css) already supplies the palette, background
+   and font-family -- this just adds the page's own layout on top, the same
+   way onboarding/page.tsx combines "a02-shell a02-onboarding-shell". */
+.a02-settings {
+  overflow-y: auto;
+  padding: clamp(42px, 7vh, 88px) clamp(22px, 7vw, 118px) 80px;
+}
+
+.a02-settings-back {
+  align-self: end;
+  color: var(--dim);
+  font: 10px "DM Mono", monospace;
+  letter-spacing: 0.07em;
+  text-decoration: none;
+}
+
+.a02-settings-back:hover {
+  color: var(--ink);
+}
+
+.a02-settings-card {
+  margin-top: 40px;
+}
+
+.a02-settings-status {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 14px;
+}
+
+.a02-settings-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--line);
+  font-size: 12px;
+}
+
+.a02-settings-row span {
+  color: var(--dim);
+}
+
+.a02-settings-row strong {
+  font-weight: 500;
+  text-align: right;
+}
+
+.a02-settings-row strong.is-ok i,
+.a02-settings-row strong.is-down i {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  margin-right: 6px;
+  border-radius: 50%;
+}
+
+.a02-settings-row strong.is-ok {
+  color: var(--aqua);
+}
+
+.a02-settings-row strong.is-ok i {
+  background: var(--aqua);
+}
+
+.a02-settings-row strong.is-down {
+  color: var(--coral);
+}
+
+.a02-settings-row strong.is-down i {
+  background: var(--coral);
+}
+
+.a02-settings-note {
+  margin-top: 18px;
+  color: var(--dim);
+  font-size: 11px;
+  line-height: 1.6;
+}
+
+.a02-settings-note code {
+  color: var(--ink);
+  font-family: "DM Mono", monospace;
+}
