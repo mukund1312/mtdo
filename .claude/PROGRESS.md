@@ -9,6 +9,60 @@ Add each session's PROGRESS.md entry to the same branch as the code it describes
 
 ---
 
+## [backend+web] 2026-09-08 (PR pending) — Operating-engine plan, Phase 1 complete
+
+Full plan: `~/.claude/plans/role-you-are-keen-avalanche.md`. Janhwi unavailable for ~2 days, so
+both backend and frontend for Phase 1 were done in one Claude Code session (Sonnet, per the
+plan's own token-discipline rule -- no schema/RLS/session-authority work in this phase, so Opus
+never came up). All 7 tasks done, `Done when` bar met: every number on Home and Session now
+traces to a row.
+
+- `web/lib/coaching/build-coaching-content.ts`: ports `coaching.py`'s `build_coaching_content()`
+  and its static content library verbatim (three-tier merge: task's own `blocks.coaching` ->
+  field's `plan_categories.coaching_framework` -> built-in `TOPIC_FRAMEWORKS`/`GENERIC_*`). Note
+  the two jsonb shapes use different key names by design (task-level `focus_points`/`questions`
+  vs field-level `focus_on`/`ask_yourself`) -- ported as two distinct types, not unified, so this
+  still matches real users' existing goals.json files. 11 unit tests.
+- `web/app/(marketing)/architecture-02/streak.ts`: read-time streak derivation over
+  `daily_rollups` (no new column -- the ledger stays the one source of truth). Approximates
+  `core.py`'s `compute_day_streaks()` (which needs 100%-of-day-completed data this table doesn't
+  store); the honest available proxy is "did anything happen this day" (`blocks_done > 0`),
+  documented as a real approximation, not a silent behavior change. 6 unit tests.
+- `web/app/(marketing)/architecture-02/profile-timezone.ts`: shared `fetchProfileTimezone()`
+  helper (coalesce-to-UTC, matching migrations 0013/0014's server-side fallback), wired into
+  `today-deck.tsx`, `progress-deck.tsx`, and the new Home deck fetch -- the explicitly open item
+  left by 2026-09-07's per-user-timezone entry.
+- `web/app/(marketing)/architecture-02/page.tsx`: `HomeDeck` rewritten from static JSX to a real
+  fetch (active plan, today's blocks, running `focus_sessions`, `daily_rollups`, streaks) --
+  4 signal cards and the hero button now show real numbers, not "Two Sum"/"3h 20m"/"4-day
+  signal". `CalendarDeck` (Time deck) replaced with an honest empty state until Phase 6. Header's
+  hardcoded "TUESDAY / 06 SEP / 09:24" replaced with a real ticking `LiveReadout`. Removed the
+  fake `FocusChamber` overlay (a second, un-persisted timer implementation reachable from Home's
+  focus button that never called `start_session` -- everything now routes to the real `/session`
+  screen). `ObjectLens`'s null-block fallback ("Two Sum"/"DSA") replaced with an honest "no task
+  selected" state. De-duplicated the `?deck` URL effect (two copies, one dead since mount).
+- `web/app/session/page.tsx`: coach rail now renders `buildCoachingContent()`'s real merge
+  instead of a hardcoded SQL-specific paragraph; deleted the `TASK` constant and the
+  handler-less "Ask for a nudge" button. `linkedBlock` query extended to embed
+  `plan_categories(coaching_framework, topic_type)` via `blocks_category_fk`.
+- `web/app/(marketing)/page.tsx`: added a real "Open the app" link to `/architecture-02` in the
+  marketing nav (previously only reachable via Theme Studio).
+- Deleted dead `components/AccountUpgradeForm.tsx` + its module.css (confirmed zero other
+  references; `lib/auth/upgradeAccount.ts` itself is still used elsewhere and was left alone).
+- `public/icon-192.png`/`icon-512.png`: generated placeholder PWA icons (dark `--bg`, the same
+  ring-and-dot mark as the marketing header's `<Mark />`) so the manifest stops 404ing --
+  `manifest.ts`'s comment updated to say so; a fuller brand treatment is still a separate,
+  later design step.
+
+Verification: `supabase/tests/run.sh` (115/115, migration 0015 applies clean), `tsc`/`eslint`/
+`vitest` (54/54)/`next build` all clean.
+
+**Not part of Phase 1, left open:** Phase 2 (AI provider abstraction) -- built partially in the
+same session as separate, not-yet-committed work (`web/lib/ai/**`, migration 0015, the
+`route.ts` refactor). Its own PROGRESS.md entry lands with that PR once Phase 2 wraps up.
+
+---
+
 ## [web] 2026-09-07 (PR pending) — Signal Deck intentional logout
 
 Fixed the Account Access panel reopening during a deliberate sign-out. Supabase emits the same

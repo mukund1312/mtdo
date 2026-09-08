@@ -1,9 +1,10 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { EmberMorph, type EmberMorphTrigger } from "@/components/EmberMorph";
 import { createClient } from "@/lib/supabase/client";
 import { recordEvent } from "@/lib/analytics/record-event";
+import { buildCoachingContent, type CategoryMeta, type CoachingFields } from "@/lib/coaching/build-coaching-content";
 import styles from "./session.module.css";
 
 type FocusSession = {
@@ -13,8 +14,13 @@ type FocusSession = {
 };
 
 type LinkedBlock = {
+  coaching: CoachingFields | null;
   id: string;
   notes: string | null;
+  // A to-one embed via blocks_category_fk (the only FK from blocks to
+  // plan_categories) -- PostgREST returns a single object, not an array,
+  // for the many-to-one direction this query walks.
+  plan_categories: CategoryMeta | null;
   text: string;
 };
 
@@ -22,10 +28,13 @@ type SessionPhase = "ready" | "starting" | "active" | "exiting";
 type NoticeKind = "success" | "warning";
 
 const DEFAULT_DURATION_S = 50 * 60;
-const TASK = {
-  eyebrow: "Today · Week 2",
-  title: "Make joins feel obvious",
-  detail: "Work through the three queries below without looking at the answer first.",
+// Shown when a session was started without a linked block (Home's generic
+// "Start focus" -- see architecture-02/page.tsx) -- honest, not a stand-in
+// task, since there genuinely isn't one to describe here.
+const UNLINKED_TASK = {
+  eyebrow: "Focus session",
+  title: "Open focus",
+  detail: "This session isn't linked to a specific task. Stay with one clear question for the full block.",
 };
 
 function secondsSince(startedAt: string) {
@@ -74,7 +83,15 @@ export default function SessionPage() {
         title: linkedBlock.text,
         detail: linkedBlock.notes?.trim() || "Stay with this one task until you have a clear next step.",
       }
-    : TASK;
+    : UNLINKED_TASK;
+  // buildCoachingContent's own three-tier merge already falls all the way
+  // to the fully generic library when both arguments are null/undefined --
+  // an unlinked session still gets real (if generic) coaching, not an empty
+  // rail.
+  const coaching = useMemo(
+    () => buildCoachingContent(linkedBlock?.coaching ?? null, linkedBlock?.plan_categories ?? null),
+    [linkedBlock],
+  );
 
   const resume = useCallback((running: FocusSession) => {
     setSession(running);
@@ -142,12 +159,12 @@ export default function SessionPage() {
       if (!user) return;
       const { data, error } = await supabase
         .from("blocks")
-        .select("id, text, notes")
+        .select("id, text, notes, coaching, plan_categories(coaching_framework, topic_type)")
         .eq("id", requestedBlockId)
         .eq("user_id", user.id)
         .maybeSingle();
       if (cancelled) return;
-      if (!error && data) setLinkedBlock(data);
+      if (!error && data) setLinkedBlock(data as unknown as LinkedBlock);
       setIsLinkedBlockLoading(false);
     }
 
@@ -428,17 +445,25 @@ export default function SessionPage() {
                 <h2 id="coach-title">Stay with the question.</h2>
               </div>
             </div>
-            <p className={styles.coachCopy}>
-              If a join feels slippery, say which table is allowed to lose rows. The answer usually
-              appears before the syntax does.
-            </p>
+            <p className={styles.coachCopy}>{coaching.focus_on.join(" ")}</p>
             <div className={styles.coachPrompt}>
-              <span>Try next</span>
-              <p>What changes if an order has no matching customer?</p>
+              <span>Ask yourself</span>
+              <p>{coaching.ask_yourself[0]}</p>
             </div>
-            <button className={styles.askButton} type="button">
-              Ask for a nudge <span aria-hidden="true">↗</span>
-            </button>
+            <div className={styles.coachPrompt}>
+              <span>Watch for</span>
+              <p>{coaching.mistakes.join(" · ")}</p>
+            </div>
+            <div className={styles.coachPrompt}>
+              <span>Pro tip</span>
+              <p>{coaching.pro_tip}</p>
+            </div>
+            {coaching.related_topics.length > 0 && (
+              <div className={styles.coachPrompt}>
+                <span>Related topics</span>
+                <p>{coaching.related_topics.join(" · ")}</p>
+              </div>
+            )}
           </aside>
         </div>
       </EmberMorph>

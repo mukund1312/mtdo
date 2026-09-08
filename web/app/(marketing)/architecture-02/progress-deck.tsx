@@ -4,7 +4,8 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { createClient } from "@/lib/supabase/client";
 
-import { type DailyRollup, formatDuration, formatShortDate, heatLevel, utcDateRange } from "./product-data";
+import { fetchProfileTimezone } from "./profile-timezone";
+import { type DailyRollup, formatDuration, formatShortDate, heatLevel, utcDateRange, utcToday } from "./product-data";
 
 const WINDOW_DAYS = 42;
 
@@ -12,7 +13,10 @@ export function ProgressDeck() {
   const [rollups, setRollups] = useState<DailyRollup[]>([]);
   const [state, setState] = useState<"loading" | "ready" | "error">("loading");
   const [recordOpen, setRecordOpen] = useState(false);
-  const dates = useMemo(() => utcDateRange(WINDOW_DAYS), []);
+  // Recomputed on every load() -- see the comment there on why the window
+  // can't be memoized off an empty-dependency utcToday() call the way it
+  // was before this was wired to a per-user zone.
+  const [dates, setDates] = useState(() => utcDateRange(WINDOW_DAYS));
 
   const load = useCallback(async () => {
     setState("loading");
@@ -26,13 +30,21 @@ export function ProgressDeck() {
       return;
     }
 
+    // Same reasoning as today-deck.tsx: this screen's "today" (the end of
+    // the 42-day window) has to agree with the zone recompute_daily_rollups()
+    // actually bucketed each row into (migrations/0013), or the window could
+    // clip off a day that has a real row sitting just outside it.
+    const userTimezone = await fetchProfileTimezone(supabase, user.id);
+    const windowDates = utcDateRange(WINDOW_DAYS, utcToday(userTimezone));
+    setDates(windowDates);
+
     const { data, error } = await supabase
       .from("daily_rollups")
       .select("blocks_done, computed_at, date, focus_seconds, sessions_completed")
       .eq("user_id", user.id)
       .is("room_id", null)
-      .gte("date", dates[0]!)
-      .lte("date", dates.at(-1)!)
+      .gte("date", windowDates[0]!)
+      .lte("date", windowDates.at(-1)!)
       .order("date", { ascending: true });
 
     if (error) {
@@ -42,7 +54,7 @@ export function ProgressDeck() {
     }
     setRollups(data ?? []);
     setState("ready");
-  }, [dates]);
+  }, []);
 
   useEffect(() => {
     const timer = window.setTimeout(() => void load(), 0);

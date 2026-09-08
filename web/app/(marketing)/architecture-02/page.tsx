@@ -1,14 +1,18 @@
 "use client";
 
-import { Suspense, useEffect, useState } from "react";
+import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
+import { createClient } from "@/lib/supabase/client";
 import { SignalDeckAccountControl } from "./account-control";
 import { ListenDeck } from "./listen-deck";
 import { SignalDeckListenProvider, useSignalDeckListen } from "./listen-state";
+import { fetchProfileTimezone } from "./profile-timezone";
+import { formatDuration, utcDateRange, utcToday } from "./product-data";
 import { ProgressDeck } from "./progress-deck";
 import { SignalDeckConfirmedWelcome } from "./signal-deck-confirmed-welcome";
 import { SignalDeckWalkthrough } from "./signal-deck-walkthrough";
-import { TodayDeck, type TodayBlock } from "./today-deck";
+import { computeStreaks } from "./streak";
+import { isBlockStatus, TodayDeck, type BlockStatus, type TodayBlock } from "./today-deck";
 import { SIGNAL_DECK_WALKTHROUGH_STORAGE_KEY } from "./walkthrough-data";
 import "./signal-deck.css";
 import "./route-entry.css";
@@ -47,7 +51,6 @@ function ArchitectureTwoDeck() {
   const [deck, setDeck] = useState<Deck>("home");
   const [lensOpen, setLensOpen] = useState(false);
   const [tutorOpen, setTutorOpen] = useState(false);
-  const [focusOpen, setFocusOpen] = useState(false);
   const [activeBlock, setActiveBlock] = useState<TodayBlock | null>(null);
   const [walkthroughOpen, setWalkthroughOpen] = useState(false);
   const [confirmedWelcomeOpen, setConfirmedWelcomeOpen] = useState(false);
@@ -75,16 +78,6 @@ function ArchitectureTwoDeck() {
     }, 0);
     return () => window.clearTimeout(timer);
   }, [authState, router]);
-
-  // Onboarding finishes on the real Today board. Keep the deck itself stateful
-  // (rather than turning each dock tab into a route), while allowing a direct
-  // handoff from a successfully persisted plan.
-  useEffect(() => {
-    const requestedDeck = new URLSearchParams(window.location.search).get("deck");
-    if (!isDeck(requestedDeck)) return;
-    const timer = window.setTimeout(() => setDeck(requestedDeck), 0);
-    return () => window.clearTimeout(timer);
-  }, []);
 
   useEffect(() => {
     if (authState) return;
@@ -149,16 +142,14 @@ function ArchitectureTwoDeck() {
   };
 
   const beginActiveBlock = () => {
+    // No fake local timer to fall back to (see the removed FocusChamber) --
+    // /session is the one real focus screen, linked-block or not.
     if (activeBlock) {
       router.push(`/session?blockId=${encodeURIComponent(activeBlock.id)}`);
       return;
     }
-    setFocusOpen(true);
+    router.push("/session");
   };
-
-  if (focusOpen) {
-    return <FocusChamber onExit={() => setFocusOpen(false)} />;
-  }
 
   return (
     <main className="a02-shell">
@@ -166,7 +157,7 @@ function ArchitectureTwoDeck() {
       <div className="a02-prototype-tag">MTDO / ARCHITECTURE 02 — SIGNAL DECK</div>
       <header className="a02-topline">
         <button className="a02-wordmark" onClick={() => setDeck("home")} aria-label="Open signal deck">mtdo<span>◒</span></button>
-        <div className="a02-live-readout"><span className="a02-live-pip" /> TUESDAY / 06 SEP / 09:24 <i>{"///"}</i> PERSONAL ROUTE</div>
+        <LiveReadout />
         <div className="a02-top-actions">
           <SignalDeckAccountControl />
           <button className="a02-guide-trigger" onClick={() => setWalkthroughOpen(true)} aria-keyshortcuts="?">? Guide</button>
@@ -174,9 +165,9 @@ function ArchitectureTwoDeck() {
         </div>
       </header>
 
-      {deck === "home" && <HomeDeck onTask={() => openBlock(null)} onFocus={() => setFocusOpen(true)} onCalendar={() => setDeck("calendar")} onReview={() => setDeck("review")} />}
+      {deck === "home" && <HomeDeck onTask={openBlock} onCalendar={() => setDeck("calendar")} onReview={() => setDeck("review")} onWork={() => setDeck("work")} />}
       {deck === "work" && <TodayDeck onOpenBlock={openBlock} />}
-      {deck === "calendar" && <CalendarDeck onTask={() => openBlock(null)} />}
+      {deck === "calendar" && <CalendarDeck />}
       {deck === "review" && <ProgressDeck />}
       {deck === "listen" && <ListenDeck />}
 
@@ -198,30 +189,275 @@ function ArchitectureTwoDeck() {
   );
 }
 
-function HomeDeck({ onTask, onFocus, onCalendar, onReview }: { onTask: () => void; onFocus: () => void; onCalendar: () => void; onReview: () => void }) {
-  return <section className="a02-home" aria-label="Signal deck home">
-    <section className="a02-home-intro">
-      <span className="a02-eyebrow">TODAY’S SIGNAL</span>
-      <h1>Build<br /><em>momentum.</em></h1>
-      <p>One clean session moves the route forward. The rest is noise.</p>
-      <a className="a02-route-setup" href="/architecture-02/onboarding">Set up your route <i>↗</i></a>
-    </section>
-    <button className="a02-focus-node" onClick={onFocus}>
-      <span className="a02-node-orbit a02-o1" /><span className="a02-node-orbit a02-o2" /><span className="a02-node-core">▶</span>
-      <div><small>ACTIVE VECTOR</small><strong>Two Sum</strong><em>45:00 / ready to launch</em></div><b>START<br />FOCUS ↗</b>
-    </button>
-    <section className="a02-signal-stack">
-      <button className="a02-signal-card a02-card-route" onClick={onTask}><span>01 / TASK SIGNAL</span><b>Two Sum</b><p>Find the lookup you wish you had.</p><i>OPEN LENS ↗</i></button>
-      <button className="a02-signal-card a02-card-room"><span>02 / ROOM PULSE</span><div className="a02-people"><i>AK</i><i>JM</i><i>+1</i></div><b>3 learners live</b><p>SQL route resumes at 19:00</p></button>
-      <button className="a02-signal-card a02-card-time" onClick={onCalendar}><span>03 / TIME FIELD</span><strong>3<span>h</span> 20<span>m</span></strong><p>Open space left today</p><i>VIEW AGENDA ↗</i></button>
-      <button className="a02-signal-card a02-card-proof" onClick={onReview}><span>04 / PROOF LOOP</span><div className="a02-proof-bars"><i /><i /><i /><i /><i /><i /><i /></div><b>4-day signal</b><p>Your rhythm strengthens before 10 AM.</p></button>
-    </section>
-  </section>;
+type HomeBlock = { id: string; position: number; status: BlockStatus; text: string };
+type RunningSession = { id: string; plannedDurationS: number; startedAt: string };
+type HomeState = "loading" | "ready" | "error";
+
+function nextHomeBlock(blocks: HomeBlock[]): HomeBlock | null {
+  return (
+    blocks.find((block) => block.status === "in_progress") ??
+    blocks.find((block) => block.status === "todo") ??
+    blocks.find((block) => block.status === "backlog") ??
+    null
+  );
 }
 
-function CalendarDeck({ onTask }: { onTask: () => void }) {
-  const hours = ["08", "09", "10", "11", "12", "13", "14", "15", "16", "17", "18", "19", "20"];
-  return <section className="a02-calendar"><div className="a02-view-head"><div><span className="a02-eyebrow">TIME FIELD / TUESDAY 06</span><h1>Give time<br /><em>a shape.</em></h1></div><div className="a02-date-switch"><button>‹</button><b>SEP 06</b><button>›</button></div></div><div className="a02-time-map"><aside>{hours.map((hour) => <span key={hour}>{hour}:00</span>)}</aside><div className="a02-time-lines">{hours.map((hour) => <i key={hour} />)}<button className="a02-calendar-event event-dsa" onClick={onTask}><small>09:30 — 10:15</small><b>Two Sum</b><span>Focus block · DSA</span></button><button className="a02-calendar-event event-review"><small>11:15 — 11:35</small><b>Collision handling</b><span>Review</span></button><button className="a02-calendar-event event-room"><small>19:00 — 20:00</small><b>SQL room sprint</b><span>3 members expected</span></button></div><aside className="a02-unscheduled"><span>UNSCHEDULED / 02</span><button>Valid Anagram <i>+</i></button><button>System design: cache <i>+</i></button></aside></div></section>;
+function secondsSince(startedAt: string): number {
+  return Math.max(0, Math.floor((Date.now() - new Date(startedAt).getTime()) / 1000));
+}
+
+function formatClock(totalSeconds: number): string {
+  const minutes = Math.floor(totalSeconds / 60);
+  const hours = Math.floor(minutes / 60);
+  return `${String(hours).padStart(2, "0")}:${String(minutes % 60).padStart(2, "0")}`;
+}
+
+// Streak window: matches ProgressDeck's own 6-week heatmap so "longest" means
+// the same thing on both screens, not two different definitions of "window."
+const HOME_STREAK_WINDOW_DAYS = 42;
+const HOME_SESSION_MINUTES = 50; // matches session/page.tsx's DEFAULT_DURATION_S
+
+function HomeDeck({
+  onCalendar,
+  onReview,
+  onTask,
+  onWork,
+}: {
+  onCalendar: () => void;
+  onReview: () => void;
+  onTask: (block: TodayBlock | null) => void;
+  onWork: () => void;
+}) {
+  const router = useRouter();
+  const [state, setState] = useState<HomeState>("loading");
+  const [goalLine, setGoalLine] = useState<string | null>(null);
+  const [blocksToday, setBlocksToday] = useState<HomeBlock[]>([]);
+  const [running, setRunning] = useState<RunningSession | null>(null);
+  const [todayFocusSeconds, setTodayFocusSeconds] = useState(0);
+  const [streaks, setStreaks] = useState({ current: 0, longest: 0 });
+  const [last7FocusSeconds, setLast7FocusSeconds] = useState<number[]>([]);
+  // Value itself is unused -- setTick just forces a re-render every second
+  // so heroDetail's secondsSince(running.startedAt) recomputes live.
+  const [, setTick] = useState(0);
+
+  const load = useCallback(async () => {
+    setState("loading");
+    const supabase = createClient();
+    const {
+      data: { user },
+      error: userError,
+    } = await supabase.auth.getUser();
+    if (userError || !user) {
+      setState("error");
+      return;
+    }
+
+    const timezone = await fetchProfileTimezone(supabase, user.id);
+    const today = utcToday(timezone);
+    const windowDates = utcDateRange(HOME_STREAK_WINDOW_DAYS, today);
+
+    const [
+      { data: activePlan, error: planError },
+      { data: blocksData, error: blocksError },
+      { data: runningData, error: runningError },
+      { data: rollupsData, error: rollupsError },
+    ] = await Promise.all([
+      supabase.from("plans").select("goal_line").eq("user_id", user.id).eq("is_active", true).maybeSingle(),
+      supabase.from("blocks").select("id, status, position, text").eq("user_id", user.id).eq("date", today).order("position"),
+      supabase.from("focus_sessions").select("id, planned_duration_s, started_at").eq("state", "running").maybeSingle(),
+      supabase
+        .from("daily_rollups")
+        .select("blocks_done, date, focus_seconds")
+        .eq("user_id", user.id)
+        .is("room_id", null)
+        .gte("date", windowDates[0]!)
+        .lte("date", windowDates.at(-1)!),
+    ]);
+
+    if (planError || blocksError || runningError || rollupsError) {
+      console.error("[home] failed to load signal deck:", planError ?? blocksError ?? runningError ?? rollupsError);
+      setState("error");
+      return;
+    }
+
+    setGoalLine(activePlan?.goal_line ?? null);
+    setBlocksToday((blocksData ?? []).flatMap((block) => (isBlockStatus(block.status) ? [{ ...block, status: block.status }] : [])));
+    setRunning(
+      runningData
+        ? { id: runningData.id, plannedDurationS: runningData.planned_duration_s, startedAt: runningData.started_at }
+        : null,
+    );
+    const rollups = rollupsData ?? [];
+    const rollupByDate = new Map(rollups.map((rollup) => [rollup.date, rollup]));
+    setTodayFocusSeconds(rollupByDate.get(today)?.focus_seconds ?? 0);
+    setStreaks(computeStreaks(rollups, today, HOME_STREAK_WINDOW_DAYS));
+    setLast7FocusSeconds(windowDates.slice(-7).map((date) => rollupByDate.get(date)?.focus_seconds ?? 0));
+    setState("ready");
+  }, []);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => void load(), 0);
+    return () => window.clearTimeout(timer);
+  }, [load]);
+
+  useEffect(() => {
+    if (!running) return;
+    const interval = window.setInterval(() => setTick((value) => value + 1), 1000);
+    return () => window.clearInterval(interval);
+  }, [running]);
+
+  const next = useMemo(() => nextHomeBlock(blocksToday), [blocksToday]);
+  const doneCount = useMemo(() => blocksToday.filter((block) => block.status === "done").length, [blocksToday]);
+  const remaining = blocksToday.length - doneCount;
+
+  const beginFocus = () => {
+    if (running) {
+      router.push("/session");
+      return;
+    }
+    router.push(next ? `/session?blockId=${encodeURIComponent(next.id)}` : "/session");
+  };
+
+  const openNextInLens = () => {
+    if (!next) {
+      onTask(null);
+      return;
+    }
+    onTask({ claimed: false, elapsed_seconds: 0, id: next.id, notes: null, position: next.position, status: next.status, text: next.text });
+  };
+
+  const loading = state === "loading";
+  const heroLabel = running ? "IN MOTION" : next ? "ACTIVE VECTOR" : "NO TASK QUEUED";
+  const heroTitle = running ? "Resume session" : next ? next.text : "Nothing queued";
+  const heroDetail = running
+    ? `${formatClock(secondsSince(running.startedAt))} elapsed`
+    : next
+      ? `${HOME_SESSION_MINUTES}:00 / ready to launch`
+      : "Add a task from Today to begin.";
+
+  return (
+    <section className="a02-home" aria-label="Signal deck home">
+      <section className="a02-home-intro">
+        <span className="a02-eyebrow">TODAY’S SIGNAL</span>
+        <h1>
+          Build
+          <br />
+          <em>momentum.</em>
+        </h1>
+        <p>{loading ? "Reading your route." : goalLine ?? "No active route yet -- set one up to get real signal here."}</p>
+        <a className="a02-route-setup" href="/architecture-02/onboarding">
+          Set up your route <i>↗</i>
+        </a>
+      </section>
+      <button className="a02-focus-node" onClick={beginFocus} disabled={loading}>
+        <span className="a02-node-orbit a02-o1" />
+        <span className="a02-node-orbit a02-o2" />
+        <span className="a02-node-core">▶</span>
+        <div>
+          <small>{heroLabel}</small>
+          <strong>{loading ? "…" : heroTitle}</strong>
+          <em>{loading ? "" : heroDetail}</em>
+        </div>
+        <b>
+          {running ? "RESUME" : "START"}
+          <br />
+          FOCUS ↗
+        </b>
+      </button>
+      <section className="a02-signal-stack">
+        <button className="a02-signal-card a02-card-route" onClick={openNextInLens} disabled={loading}>
+          <span>01 / TASK SIGNAL</span>
+          <b>{loading ? "…" : next ? next.text : "All clear"}</b>
+          <p>{loading ? "" : next ? "Open its details." : "No queued task for today."}</p>
+          <i>OPEN LENS ↗</i>
+        </button>
+        <button className="a02-signal-card a02-card-room" onClick={onWork} disabled={loading}>
+          <span>02 / TODAY’S LOAD</span>
+          <strong>
+            {loading ? "…" : doneCount}
+            <span>/{loading ? "…" : blocksToday.length}</span>
+          </strong>
+          <p>{loading ? "Reading today's board." : blocksToday.length === 0 ? "Nothing scheduled today." : "Blocks completed today."}</p>
+        </button>
+        <button className="a02-signal-card a02-card-time" onClick={onCalendar} disabled={loading}>
+          <span>03 / TIME FIELD</span>
+          <strong>{loading ? "…" : remaining}</strong>
+          <p>{loading ? "" : remaining === 1 ? "block left today" : "blocks left today"}</p>
+          <i>VIEW AGENDA ↗</i>
+        </button>
+        <button className="a02-signal-card a02-card-proof" onClick={onReview} disabled={loading}>
+          <span>04 / PROOF LOOP</span>
+          <div className="a02-proof-bars">
+            {(loading ? Array<number>(7).fill(0) : last7FocusSeconds).map((seconds, index) => (
+              <i
+                key={index}
+                style={{ height: loading ? "8%" : `${seconds === 0 ? 4 : Math.max(15, Math.round((seconds / Math.max(...last7FocusSeconds, 1)) * 100))}%` }}
+              />
+            ))}
+          </div>
+          <b>{loading ? "…" : `${streaks.current}-day streak`}</b>
+          <p>{loading ? "" : `${formatDuration(todayFocusSeconds)} focused today · longest ${streaks.longest} days`}</p>
+        </button>
+      </section>
+      {state === "error" && (
+        <p className="a02-product-note" role="alert">
+          Home is unavailable. We could not load your signal deck. <button type="button" onClick={() => void load()}>Try again ↗</button>
+        </p>
+      )}
+    </section>
+  );
+}
+
+function LiveReadout() {
+  const [now, setNow] = useState<Date | null>(null);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => setNow(new Date()), 0);
+    const interval = window.setInterval(() => setNow(new Date()), 30_000);
+    return () => {
+      window.clearTimeout(timer);
+      window.clearInterval(interval);
+    };
+  }, []);
+
+  if (!now) {
+    return (
+      <div className="a02-live-readout">
+        <span className="a02-live-pip" /> <i>{"///"}</i> PERSONAL ROUTE
+      </div>
+    );
+  }
+
+  const day = new Intl.DateTimeFormat("en", { weekday: "long" }).format(now).toUpperCase();
+  const date = new Intl.DateTimeFormat("en", { day: "2-digit", month: "short" }).format(now).toUpperCase();
+  const time = new Intl.DateTimeFormat("en", { hour: "2-digit", hour12: false, minute: "2-digit" }).format(now);
+
+  return (
+    <div className="a02-live-readout">
+      <span className="a02-live-pip" /> {day} / {date} / {time} <i>{"///"}</i> PERSONAL ROUTE
+    </div>
+  );
+}
+
+function CalendarDeck() {
+  return (
+    <section className="a02-calendar">
+      <div className="a02-view-head">
+        <div>
+          <span className="a02-eyebrow">TIME FIELD</span>
+          <h1>
+            Give time
+            <br />
+            <em>a shape.</em>
+          </h1>
+        </div>
+      </div>
+      <section className="a02-product-state">
+        <b>Scheduling isn&apos;t built yet.</b>
+        <p>A real calendar -- day/week/month views, drag-to-reschedule, Google Calendar sync -- lands in a later phase. Nothing here is faked in the meantime.</p>
+      </section>
+    </section>
+  );
 }
 
 function DeckDock({ active, onChange }: { active: Deck; onChange: (next: Deck) => void }) {
@@ -242,17 +478,11 @@ function AudioTransport({ onOpenListen }: { onOpenListen: () => void }) {
 }
 
 function ObjectLens({ block, onClose, onFocus, onTutor }: { block: TodayBlock | null; onClose: () => void; onFocus: () => void; onTutor: () => void }) {
-  const title = block?.text ?? "Two Sum";
-  const detail = block?.notes?.trim() || "Find the simplest lookup that turns a pair search into one pass.";
-  return <section className="a02-lens" role="dialog" aria-modal="true" aria-label="Task lens"><button className="a02-lens-close" onClick={onClose}>ESC / close ×</button><div className="a02-lens-orbit"><i /><i /><i /><b>01</b></div><div className="a02-lens-copy"><span className="a02-eyebrow">TASK OBJECT / {block?.status === "in_progress" ? "IN MOTION" : "READY"}</span><h2>{title}</h2><p>{detail}</p><div className="a02-lens-meta"><span>{block?.status.replace("_", " ") ?? "DSA"}</span><span>{block?.elapsed_seconds ? `${Math.max(1, Math.round(block.elapsed_seconds / 60))} MIN` : "FOCUS"}</span><span>TODAY</span></div><div><button className="a02-lens-go" onClick={onFocus}>Launch focus →</button><button className="a02-lens-ask" onClick={onTutor}>Ask co-pilot</button></div></div><aside className="a02-lens-side"><span>COACHING SIGNAL</span><p>Before you begin, name the one question this block needs to answer.</p><button onClick={onTutor}>Open thought prompt ↗</button></aside></section>;
+  const title = block?.text ?? "No task selected";
+  const detail = block?.notes?.trim() || "Open a task from Today to see its details here.";
+  return <section className="a02-lens" role="dialog" aria-modal="true" aria-label="Task lens"><button className="a02-lens-close" onClick={onClose}>ESC / close ×</button><div className="a02-lens-orbit"><i /><i /><i /><b>01</b></div><div className="a02-lens-copy"><span className="a02-eyebrow">TASK OBJECT / {block?.status === "in_progress" ? "IN MOTION" : "READY"}</span><h2>{title}</h2><p>{detail}</p><div className="a02-lens-meta"><span>{block?.status.replace("_", " ") ?? "No task"}</span><span>{block?.elapsed_seconds ? `${Math.max(1, Math.round(block.elapsed_seconds / 60))} MIN` : "FOCUS"}</span><span>TODAY</span></div><div><button className="a02-lens-go" onClick={onFocus}>Launch focus →</button><button className="a02-lens-ask" onClick={onTutor}>Ask co-pilot</button></div></div><aside className="a02-lens-side"><span>COACHING SIGNAL</span><p>Before you begin, name the one question this block needs to answer.</p><button onClick={onTutor}>Open thought prompt ↗</button></aside></section>;
 }
 
 function TutorConsole({ onClose }: { onClose: () => void }) {
   return <section className="a02-tutor" role="dialog" aria-label="Tutor copilot"><header><div><span className="a02-live-pip" /> CO-PILOT ONLINE</div><button onClick={onClose}>×</button></header><div className="a02-tutor-stream"><p className="a02-tutor-context">CONTEXT RECEIVED / TWO SUM / DSA</p><article><i>YOU</i><p>I keep thinking of two loops. Is that wrong?</p></article><article className="a02-tutor-response"><i>CO-PILOT</i><p>It is a sound starting point. Before replacing it, name the repeated question the inner loop asks. Could an earlier answer be saved?</p></article></div><div className="a02-tutor-input"><button>+</button><span>Reply with a thought…</span><kbd>↵</kbd></div></section>;
-}
-
-function FocusChamber({ onExit }: { onExit: () => void }) {
-  const [running, setRunning] = useState(false);
-  const [tutorOpen, setTutorOpen] = useState(false);
-  return <main className="a02-focus"><div className="a02-focus-stars" /><header><button onClick={onExit}>× EXIT FIELD</button><span>MTDO / FOCUS PROTOCOL 01</span><button onClick={() => setTutorOpen(true)}>CO-PILOT ✦</button></header><section className="a02-focus-main"><div className="a02-focus-status"><i className={running ? "is-running" : ""} /> DSA / TASK IN MOTION</div><h1>Two<br /><em>Sum.</em></h1><p>One question. One clean answer.</p><button className="a02-focus-clock" onClick={() => setRunning(!running)}><span>{running ? "PAUSE" : "BEGIN"}</span><strong>{running ? "44:27" : "45:00"}</strong><i>{running ? "signal stable" : "tap to launch"}</i></button></section><footer><span>NOTES READY</span><i>◆</i><span>DEEP WORK RADIO</span><i>◆</i><span>GUIDANCE AVAILABLE</span></footer>{tutorOpen && <TutorConsole onClose={() => setTutorOpen(false)} />}</main>;
 }
