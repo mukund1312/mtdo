@@ -1,0 +1,116 @@
+.a02-manual-step {
+  width: min(100%, 640px);
+}
+
+.a02-manual-categories {
+  display: grid;
+  gap: 16px;
+  margin-top: 24px;
+}
+
+.a02-manual-category {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.02);
+  padding: 16px;
+}
+
+.a02-manual-category header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  color: var(--dim);
+  font: 9px "DM Mono", monospace;
+  letter-spacing: 0.08em;
+}
+
+.a02-manual-category header button {
+  border: 0;
+  background: none;
+  color: var(--coral);
+  font: 9px "DM Mono", monospace;
+}
+
+.a02-manual-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+}
+
+.a02-manual-category select {
+  width: 100%;
+  margin-top: 9px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: rgba(11, 14, 40, 0.52);
+  padding: 12px;
+  color: var(--ink);
+  font: 13px/1.5 "Space Grotesk", sans-serif;
+  outline: none;
+}
+
+.a02-manual-category select:focus,
+.a02-manual-category input:focus {
+  border-color: var(--aqua);
+  box-shadow: 0 0 0 3px rgba(87, 231, 255, 0.1);
+}
+
+.a02-manual-tasks {
+  display: grid;
+  gap: 6px;
+  margin: 10px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.a02-manual-tasks li {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  background: rgba(255, 255, 255, 0.03);
+  padding: 8px 10px;
+  font-size: 12px;
+}
+
+.a02-manual-tasks li span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.a02-manual-tasks li button {
+  flex-shrink: 0;
+  border: 0;
+  background: none;
+  color: var(--dim);
+  font-size: 13px;
+}
+
+.a02-manual-tasks li button:hover {
+  color: var(--coral);
+}
+
+.a02-manual-add-category {
+  width: 100%;
+  margin-top: 12px;
+  border: 1px dashed var(--line);
+  border-radius: 8px;
+  background: none;
+  color: var(--dim);
+  padding: 12px;
+  font: 10px "DM Mono", monospace;
+  letter-spacing: 0.06em;
+}
+
+.a02-manual-add-category:hover {
+  border-color: var(--aqua);
+  color: var(--aqua);
+}
+
+@media (max-width: 560px) {
+  .a02-manual-row {
+    grid-template-columns: 1fr;
+  }
+}

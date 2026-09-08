@@ -77,8 +77,13 @@ profiles(id uuid pk → auth.users, display_name, is_anonymous, timezone, create
 
 -- the plan (ports goals.json)
 plans(id, user_id, app_name, goal_line, is_active, created_at,
+      onboarding_answers jsonb null,
       unique(id, user_id))                      -- composite-FK target
   -- unique index plans_one_active (user_id) where is_active  → free tier's "one goal"
+  -- onboarding_answers (0016): the OnboardingAnswers that produced this plan
+  -- via AI generation, or NULL for Manual Setup/Import -- see that column's
+  -- own comment for why NULL (not a defaulted empty object) is the real
+  -- "no onboarding answers" state. decisions.md 2026-09-08.
 plan_categories(id, plan_id, name, label, days int[], min_blocks, score_weight,
                 topic_type, coaching_framework jsonb, sort_order,
                 menu_unlocked_week_index (check >= 0), menu_unlocked_iso_week,
@@ -87,9 +92,15 @@ plan_categories(id, plan_id, name, label, days int[], min_blocks, score_weight,
   -- INPUT it's the weekdays the user can study. For a CURRICULUM category
   -- only days.length survives: how many day-lists make one week of content.
   -- It is NOT a set of weekdays to schedule curriculum onto (api.md §3b).
-  -- menu_unlocked_* is the weekly-menu cursor added in 0012.
+  -- menu_unlocked_* is the weekly-menu cursor added in 0012, also advanced
+  -- by extend_plan() (0016) for a category it just extended.
 curriculum_items(id, category_id, week_index, position, task, meta jsonb,
-                 unique(id, category_id))
+                 unique(id, category_id),
+                 unique(category_id, week_index, position))
+  -- The (category_id, week_index, position) unique constraint is 0016 --
+  -- previously only an index (0012), so two concurrent appends could both
+  -- compute the same next slot. extend_plan() relies on this constraint,
+  -- under its own advisory lock, to make that structurally impossible.
   -- meta keeps focus_points/questions/mistakes/tips/mental_models as jsonb:
   -- rich, nested, always read whole. Do not over-normalize.
   -- week_index/position derivation (api.md §2a): a generated/imported plan's

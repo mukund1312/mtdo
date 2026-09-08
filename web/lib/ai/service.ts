@@ -11,7 +11,7 @@
 // (lib/plan-generation/fallback.ts) still happens one layer up, in
 // app/api/onboarding/plan/route.ts, if the provider selected here also
 // fails to produce a parseable plan.
-import type { AIProvider, StreamTextOptions } from "./provider";
+import type { AIProvider, GenerateTextOptions, StreamTextOptions } from "./provider";
 import { AnthropicProvider } from "./providers/anthropic";
 import { OllamaProvider } from "./providers/ollama";
 
@@ -52,5 +52,23 @@ export async function generateGoalPlan(options: Omit<StreamTextOptions, "maxToke
     if (provider.id === "anthropic") throw err;
     console.error(`[ai/service] ${provider.id} provider failed mid-stream, falling back to Anthropic:`, err);
     return await anthropicProvider.streamText({ ...options, maxTokens: 16000 });
+  }
+}
+
+/** Generates new curriculum content for the curriculum check-in flow (an
+ * existing plan's categories, not a fresh goal -- see app/api/plan/extend/
+ * route.ts). Non-streaming: unlike onboarding there is no "building your
+ * plan…" first-run moment to keep alive with live deltas, just a short
+ * background request from an already-active session. Same provider
+ * resolution and one-time Anthropic fallback as generateGoalPlan(). */
+export async function generatePlanExtension(options: Omit<GenerateTextOptions, "maxTokens">): Promise<string> {
+  const provider = await resolveProvider();
+  try {
+    return await provider.generateText({ ...options, maxTokens: 8000 });
+  } catch (err) {
+    if (options.signal?.aborted) throw err;
+    if (provider.id === "anthropic") throw err;
+    console.error(`[ai/service] ${provider.id} provider failed, falling back to Anthropic:`, err);
+    return await anthropicProvider.generateText({ ...options, maxTokens: 8000 });
   }
 }

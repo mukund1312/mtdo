@@ -77,6 +77,50 @@ describe("parseGeneratedPlan", () => {
       /topic_type must be one of dsa, backend, database, system_design/,
     );
   });
+
+  it("accepts a missing schema_version as mtdo.plan.v1", () => {
+    expect(() => parseGeneratedPlan(generatedPlan())).not.toThrow();
+  });
+
+  it("accepts an explicit, correct schema_version", () => {
+    const raw = JSON.stringify({
+      schema_version: "mtdo.plan.v1",
+      app_name: "Interview Route",
+      goal_line: "Become confident with backend interviews.",
+      categories: [generatedCategory()],
+    });
+    expect(() => parseGeneratedPlan(raw)).not.toThrow();
+  });
+
+  it("rejects an unrecognized schema_version", () => {
+    const raw = JSON.stringify({
+      schema_version: "mtdo.plan.v2",
+      app_name: "Interview Route",
+      goal_line: "Become confident with backend interviews.",
+      categories: [generatedCategory()],
+    });
+    expect(() => parseGeneratedPlan(raw)).toThrow(/Unsupported schema_version "mtdo.plan.v2"/);
+  });
+
+  it("with weekCount: 'any', accepts any whole number of weeks, not just 2", () => {
+    const oneWeek = generatedCategory({ curriculum: [["Only one day"]] });
+    const plan = parseGeneratedPlan(generatedPlan([oneWeek]), { weekCount: "any" });
+    expect(plan.categories[0]?.curriculum).toHaveLength(1);
+
+    const threeWeeks = generatedCategory({ curriculum: [["a"], ["b"], ["c"]] });
+    const plan3 = parseGeneratedPlan(generatedPlan([threeWeeks]), { weekCount: "any" });
+    expect(plan3.categories[0]?.curriculum).toHaveLength(3);
+  });
+
+  it("with weekCount: 'any', still rejects a partial week", () => {
+    // days.length is 2 here (0 and 2 from generatedCategory's default `days:
+    // [0]`... use an explicit 2-day category so a 3-entry curriculum is
+    // unambiguously a partial week, not a valid 1.5x something.
+    const category = generatedCategory({ days: [0, 2], curriculum: [["a"], ["b"], ["c"]] });
+    expect(() => parseGeneratedPlan(generatedPlan([category]), { weekCount: "any" })).toThrow(
+      /isn't a whole number of 2-day weeks/,
+    );
+  });
 });
 
 describe("onboarding plan fallbacks", () => {

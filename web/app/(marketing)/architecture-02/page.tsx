@@ -81,6 +81,14 @@ function ArchitectureTwoDeck() {
 
   useEffect(() => {
     if (authState) return;
+    // A ?deck handoff (onboarding/Manual Setup/Import all finish this way)
+    // is a deliberate landing on a specific deck -- the walkthrough's own
+    // first step forces deck back to "home" on open (SignalDeckWalkthrough's
+    // onDeckChange effect), which would silently undo the handoff for any
+    // first-time visitor who reaches this page without having dismissed the
+    // tour on an earlier visit. The handoff wins; the tour is still one
+    // click away via "? Guide".
+    if (isDeck(searchParams.get("deck"))) return;
     try {
       if (!window.localStorage.getItem(SIGNAL_DECK_WALKTHROUGH_STORAGE_KEY)) {
         const timer = window.setTimeout(() => setWalkthroughOpen(true), 0);
@@ -89,7 +97,7 @@ function ArchitectureTwoDeck() {
     } catch {
       // Storage is only a convenience. A blocked storage API must not stop the deck.
     }
-  }, [authState]);
+  }, [authState, searchParams]);
 
   useEffect(() => {
     const openWithShortcut = (event: KeyboardEvent) => {

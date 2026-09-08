@@ -6,6 +6,7 @@
 // raw TypeError/KeyError-equivalent leak out.
 
 import {
+  PLAN_SCHEMA_VERSION,
   PlanGenerationError,
   type GeneratedCategory,
   type GeneratedCoachingFramework,
@@ -50,7 +51,7 @@ function stringArray(v: unknown, field: string): string[] {
   return v;
 }
 
-function parseTask(raw: unknown, context: string): string | GeneratedTask {
+export function parseTask(raw: unknown, context: string): string | GeneratedTask {
   if (typeof raw === "string") {
     if (!raw.trim()) {
       throw new PlanGenerationError(`${context}: a curriculum item is blank.`);
@@ -78,17 +79,35 @@ function parseTask(raw: unknown, context: string): string | GeneratedTask {
   };
 }
 
-function parseCurriculum(raw: unknown, context: string, daysPerWeek: number): GeneratedCurriculumDay[] {
+function parseCurriculum(
+  raw: unknown,
+  context: string,
+  daysPerWeek: number,
+  weekCount: number | "any",
+): GeneratedCurriculumDay[] {
   if (raw === undefined || raw === null) return [];
   if (!Array.isArray(raw)) {
     throw new PlanGenerationError(`${context}: "curriculum" should be an array.`);
   }
-  const expectedLength = daysPerWeek * 2;
-  if (raw.length !== expectedLength) {
-    throw new PlanGenerationError(
-      `${context}: "curriculum" has ${raw.length} day-menus, expected ${expectedLength} ` +
-        `(days.length ${daysPerWeek} * 2 weeks).`,
-    );
+  if (weekCount === "any") {
+    // Import/Manual Setup: any whole number of weeks is a valid plan, not
+    // just the AI-generation path's fixed 2. A partial week (day-menu count
+    // not a multiple of daysPerWeek) is still rejected -- that's a
+    // malformed file, not a legitimately shorter plan.
+    if (raw.length % daysPerWeek !== 0) {
+      throw new PlanGenerationError(
+        `${context}: "curriculum" has ${raw.length} day-menus, which isn't a whole number of ` +
+          `${daysPerWeek}-day weeks.`,
+      );
+    }
+  } else {
+    const expectedLength = daysPerWeek * weekCount;
+    if (raw.length !== expectedLength) {
+      throw new PlanGenerationError(
+        `${context}: "curriculum" has ${raw.length} day-menus, expected ${expectedLength} ` +
+          `(days.length ${daysPerWeek} * ${weekCount} weeks).`,
+      );
+    }
   }
   return raw.map((dayList, i) => {
     if (!Array.isArray(dayList)) {
@@ -115,7 +134,7 @@ function parseCoachingFramework(raw: unknown, context: string): GeneratedCoachin
   };
 }
 
-function parseCategory(raw: unknown, index: number): GeneratedCategory {
+function parseCategory(raw: unknown, index: number, weekCount: number | "any"): GeneratedCategory {
   if (typeof raw !== "object" || raw === null) {
     throw new PlanGenerationError(`categories[${index}] should be an object.`);
   }
@@ -166,15 +185,25 @@ function parseCategory(raw: unknown, index: number): GeneratedCategory {
     score_weight: scoreWeight,
     topic_type: topicType,
     coaching_framework: parseCoachingFramework(obj.coaching_framework, context),
-    curriculum: parseCurriculum(obj.curriculum, context, obj.days.length),
+    curriculum: parseCurriculum(obj.curriculum, context, obj.days.length, weekCount),
   };
 }
+
+export type ParseGeneratedPlanOptions = {
+  /** Number of weeks each category's curriculum must contain, or "any" for
+   * a non-negative whole number of weeks. Defaults to 2 -- the AI-generation
+   * route's fixed contract (prompt.ts rule 2) -- so every existing caller's
+   * behavior, including its exact error message, is unchanged unless a
+   * caller opts in. Import/Manual Setup pass "any". */
+  weekCount?: number | "any";
+};
 
 /** Throws PlanGenerationError on any malformed field -- callers (the Route
  * Handler) are expected to catch this specifically and fall back to the
  * static default plan (fallback.ts), same failure contract as coaching.py's
  * "degrade to static content, never block the core loop." */
-export function parseGeneratedPlan(rawText: string): GeneratedPlan {
+export function parseGeneratedPlan(rawText: string, options: ParseGeneratedPlanOptions = {}): GeneratedPlan {
+  const weekCount = options.weekCount ?? 2;
   const jsonText = extractJsonText(rawText);
   let data: unknown;
   try {
@@ -186,6 +215,15 @@ export function parseGeneratedPlan(rawText: string): GeneratedPlan {
     throw new PlanGenerationError("Model response's top level must be a JSON object.");
   }
   const obj = data as Record<string, unknown>;
+  // A missing schema_version is treated as PLAN_SCHEMA_VERSION -- true for
+  // the AI-generation path (never sets one) and for files predating this
+  // field. A *present* one must match; there is only one version today, so
+  // any other value is definitely wrong rather than a forward-compat guess.
+  if (obj.schema_version !== undefined && obj.schema_version !== PLAN_SCHEMA_VERSION) {
+    throw new PlanGenerationError(
+      `Unsupported schema_version "${String(obj.schema_version)}" -- expected "${PLAN_SCHEMA_VERSION}".`,
+    );
+  }
   if (!isNonBlankString(obj.goal_line)) {
     throw new PlanGenerationError('Model response is missing a non-blank "goal_line".');
   }
@@ -193,7 +231,7 @@ export function parseGeneratedPlan(rawText: string): GeneratedPlan {
     throw new PlanGenerationError('Model response\'s "categories" must be a non-empty array.');
   }
 
-  const categories = obj.categories.map((c, i) => parseCategory(c, i));
+  const categories = obj.categories.map((c, i) => parseCategory(c, i, weekCount));
   const names = new Set<string>();
   for (const c of categories) {
     if (names.has(c.name)) {
@@ -207,4 +245,51 @@ export function parseGeneratedPlan(rawText: string): GeneratedPlan {
     goal_line: obj.goal_line,
     categories,
   };
+}
+
+export type ExtensionCategory = { category_id: string; items: (string | GeneratedTask)[] };
+
+/** Validates the curriculum check-in extension response (app/api/plan/
+ * extend/route.ts) into extend_plan()'s own input shape. Deliberately a
+ * separate parser from parseGeneratedPlan -- an extension response has no
+ * app_name/goal_line/days/score_weight, only new items for categories that
+ * already exist, so reusing parseCategory would mean half its required
+ * fields are meaningless here. `validCategoryIds` is the exact set this
+ * request asked the model to extend -- a category_id the model invented or
+ * echoed from elsewhere is rejected rather than trusted, since extend_plan()
+ * itself re-checks ownership but a wrong id here should fail loudly at the
+ * parse step, not silently drop that category's content. */
+export function parseExtensionResponse(rawText: string, validCategoryIds: readonly string[]): ExtensionCategory[] {
+  const jsonText = extractJsonText(rawText);
+  let data: unknown;
+  try {
+    data = JSON.parse(jsonText);
+  } catch (e) {
+    throw new PlanGenerationError(`Model response wasn't valid JSON: ${(e as Error).message}`);
+  }
+  if (typeof data !== "object" || data === null) {
+    throw new PlanGenerationError("Model response's top level must be a JSON object.");
+  }
+  const obj = data as Record<string, unknown>;
+  if (!Array.isArray(obj.categories) || obj.categories.length === 0) {
+    throw new PlanGenerationError('Model response\'s "categories" must be a non-empty array.');
+  }
+  const validIds = new Set(validCategoryIds);
+
+  return obj.categories.map((raw, i) => {
+    if (typeof raw !== "object" || raw === null) {
+      throw new PlanGenerationError(`categories[${i}] should be an object.`);
+    }
+    const c = raw as Record<string, unknown>;
+    if (!isNonBlankString(c.category_id) || !validIds.has(c.category_id)) {
+      throw new PlanGenerationError(`categories[${i}].category_id is missing or not one of the requested categories.`);
+    }
+    if (!Array.isArray(c.items) || c.items.length === 0) {
+      throw new PlanGenerationError(`categories[${i}].items must be a non-empty array.`);
+    }
+    return {
+      category_id: c.category_id,
+      items: c.items.map((item, j) => parseTask(item, `categories[${i}].items[${j}]`)),
+    };
+  });
 }

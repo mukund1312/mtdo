@@ -9,6 +9,73 @@ Add each session's PROGRESS.md entry to the same branch as the code it describes
 
 ---
 
+## [backend+web] 2026-09-08 (PR pending) — Operating-engine plan, Phase 3 complete
+
+Janhwi still unavailable; both backend and frontend done in one session, Sonnet throughout (no
+schema/RLS/session-authority *design* -- `extend_plan()` reuses the exact advisory-lock pattern
+`activate_plan()`/`pick_curriculum_item()` already established).
+
+**A real problem surfaced and resolved before any code was written**: the plan's premise for this
+phase ("reverses decisions.md's re-onboard call") cited `docs/designs/curriculum-exhaustion.md` as
+already-settled -- that file was never merged to `main`; it exists only in an orphaned commit
+(`de9b943`) whose own message says *"unresolved against main... one of them has to win; that call
+is not made here."* The founder was asked directly rather than silently following a stale plan
+file, and chose to formally reverse the merged decision -- see `decisions.md`'s new 2026-09-08
+entry for the real justification (Phase 4's Dynamic Weekly mode structurally needs ongoing
+generation into the *same* plan_id, which re-onboard's "acceptable tradeoff" breaks).
+
+- **Migration 0016**: `plans.onboarding_answers jsonb` (persists `experienceLevel`/`notes`,
+  previously dropped -- wired through `persistGeneratedPlan()`'s new optional 4th param and both
+  of `route.ts`'s call sites). `curriculum_items` gets a real unique constraint
+  `(category_id, week_index, position)` (was only an index). `extend_plan()` RPC: same advisory
+  lock key as `ensure_curriculum_menu()`/`pick_curriculum_item()`, computes each category's next
+  week/position from its own current max (never trusts the caller), advances the unlock cursor in
+  the *same transaction* as the insert. Pushed live, types regenerated.
+  `supabase/tests/09_extend_plan.sql`: 9 new assertions including the exact week-bucketing math
+  and the same-transaction cursor advance, live-verified.
+- **`POST /api/plan/extend`**: detects exhausted categories (cursor pinned, real content exists)
+  server-side, builds a per-category prompt carrying a real picked/completed/still-unpicked signal
+  from `blocks` (`lib/plan-generation/extend-prompt.ts`), calls a new non-streaming
+  `aiService.generatePlanExtension()`, validates with a new `parseExtensionResponse()` (distinct
+  from `parseGeneratedPlan` -- an extension has no app_name/days/score_weight), persists via
+  `extend_plan()`. No static-fallback equivalent to onboarding's `buildFallbackPlan()` --
+  documented as a deliberate choice, not a gap: a generic template doesn't fit an
+  already-personalized plan, so this fails loudly (502) rather than persisting something wrong.
+  7 tests.
+- **Curriculum check-in trigger**: `today-deck.tsx` computes exhaustion client-side (every
+  category with content has its cursor pinned, menu down to ≤3 items) and shows a banner; confirm
+  calls the route above and reloads.
+- **Manual Setup** (`onboarding/manual/`): goal/category/task editor, persists straight through
+  the existing `persistGeneratedPlan()` -- no new Route Handler needed, since every write it makes
+  is an ordinary RLS-scoped client table plus the already-audited `activate_plan()` RPC. This is
+  `goal_created`'s first real call site, reserved for exactly this since Wave 1.
+- **Import/Export** (`onboarding/import/`): import validates via `parseGeneratedPlan(text,
+  {weekCount:"any"})` -- a new option, default unchanged for every existing caller (regression
+  gate: the 7 pre-existing parse.ts tests still pass unchanged). Export reconstructs a
+  `mtdo.plan.v1` JSON from the DB, documented honestly as a *not* byte-perfect reverse for
+  AI-generated multi-item day-lists (only Manual Setup's own one-item-per-slot output round-trips
+  exactly) -- `week_index`/`position` alone don't record the original day-list grouping.
+- **Setup-method chooser**: new first step in the onboarding wizard (Guided AI / Manual / Import).
+  Existing `onboarding.spec.ts` updated to click through it -- a deliberate UX change, not a
+  broken regression gate.
+
+**A real, previously-latent bug found and fixed along the way**: a first-time visitor who reaches
+`?deck=work` (onboarding/Manual/Import's handoff to Today) without having dismissed the walkthrough
+tour on an earlier visit got silently bounced back to Home -- `SignalDeckWalkthrough`'s own step-1
+`onDeckChange("home")` effect raced the handoff and won. Never caught before because the existing
+onboarding e2e test always dismisses the walkthrough first. Fixed: the walkthrough no longer
+auto-opens when a `?deck` handoff is in progress -- the handoff wins, the tour stays one click away.
+
+Verification: `supabase/tests/run.sh` (124/124), `tsc`/`eslint`/`vitest` (70/70)/`next build` all
+clean, `playwright test` against a real production build (14/14, including 8 new tests). One
+false alarm along the way: a full-suite run under 5 parallel workers hit real Supabase/Anthropic
+rate limits from this session's own testing volume (not a code issue) -- confirmed by an identical
+serial run passing clean.
+
+Docs closed: `schema.md` (both new columns/constraints), `api.md` §3c (new section: the whole
+pipeline, `extend_plan()`'s contract, the honest-not-perfect export note), `decisions.md` (the
+reversal itself, with real justification, not the phantom doc).
+
 ## [backend+web] 2026-09-08 (PR #141, merged) — Operating-engine plan, Phase 1 complete
 
 Full plan: `~/.claude/plans/role-you-are-keen-avalanche.md`. Janhwi unavailable for ~2 days, so

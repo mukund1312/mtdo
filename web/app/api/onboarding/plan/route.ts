@@ -145,7 +145,7 @@ export async function POST(request: Request) {
       }
 
       try {
-        const persisted = await persistGeneratedPlan(supabase, user.id, plan);
+        const persisted = await persistGeneratedPlan(supabase, user.id, plan, answers);
         // plan_generated (schema.md §4): fired once, right after the plan
         // that's actually going to be shown to the user is durably persisted
         // -- not before, so a persist failure that falls through to the
@@ -181,7 +181,7 @@ export async function POST(request: Request) {
           // fallback once before giving up entirely.
           try {
             const fallbackPlan = buildFallbackPlan(answers);
-            const persisted = await persistGeneratedPlan(supabase, user.id, fallbackPlan);
+            const persisted = await persistGeneratedPlan(supabase, user.id, fallbackPlan, answers);
             await recordEvent(supabase, "plan_generated", {
               usedFallback: true,
               categoryCount: persisted.categories.length,
