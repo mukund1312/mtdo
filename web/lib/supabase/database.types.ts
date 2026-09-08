@@ -465,6 +465,7 @@ export type Database = {
           id: string
           is_active: boolean
           onboarding_answers: Json | null
+          planning_mode: string
           user_id: string
         }
         Insert: {
@@ -474,6 +475,7 @@ export type Database = {
           id?: string
           is_active?: boolean
           onboarding_answers?: Json | null
+          planning_mode?: string
           user_id: string
         }
         Update: {
@@ -483,6 +485,7 @@ export type Database = {
           id?: string
           is_active?: boolean
           onboarding_answers?: Json | null
+          planning_mode?: string
           user_id?: string
         }
         Relationships: []

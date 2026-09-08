@@ -94,7 +94,7 @@ export function TodayDeck({ onOpenBlock }: { onOpenBlock: (block: TodayBlock) =>
     setTimezone(userTimezone);
 
     const { data: activePlan, error: planError } = await supabase
-      .from("plans").select("id").eq("user_id", user.id).eq("is_active", true).maybeSingle();
+      .from("plans").select("id, planning_mode").eq("user_id", user.id).eq("is_active", true).maybeSingle();
     if (planError) {
       console.error("[today] failed to load active route:", planError);
       setState("error");
@@ -131,12 +131,20 @@ export function TodayDeck({ onOpenBlock }: { onOpenBlock: (block: TodayBlock) =>
     // cursor pinned (nothing left for ensure_curriculum_menu() to reveal even
     // next week) AND the whole menu is down to a handful of items. A
     // category with zero generated content at all doesn't count -- that's
-    // "never generated", not "ran out".
+    // "never generated", not "ran out". "Cursor pinned" only means anything
+    // for a dynamic_weekly plan (migrations/0017) -- an overall-mode plan's
+    // cursor never advances at all (by design, so switching back to
+    // dynamic_weekly resumes correctly), so checking it there would almost
+    // never detect exhaustion even though overall mode can genuinely run
+    // its menu down to nothing. overall mode only needs the item-count check.
     const categoriesWithContent = (categoryRows ?? []).filter((category) => (category.curriculum_items ?? []).length > 0);
-    const allPinned = categoriesWithContent.length > 0 && categoriesWithContent.every((category) => {
-      const maxWeek = Math.max(...category.curriculum_items.map((item) => item.week_index));
-      return category.menu_unlocked_week_index >= maxWeek;
-    });
+    const allPinned = categoriesWithContent.length > 0 && (
+      activePlan?.planning_mode === "overall" ||
+      categoriesWithContent.every((category) => {
+        const maxWeek = Math.max(...category.curriculum_items.map((item) => item.week_index));
+        return category.menu_unlocked_week_index >= maxWeek;
+      })
+    );
     setIsExhausted(allPinned && (menuData ?? []).length <= 3);
     setState("ready");
   }, []);

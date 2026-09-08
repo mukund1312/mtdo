@@ -62,7 +62,7 @@ export async function POST(request: Request) {
 
   const { data: planRow, error: planError } = await supabase
     .from("plans")
-    .select("id, goal_line")
+    .select("id, goal_line, planning_mode")
     .eq("user_id", user.id)
     .eq("is_active", true)
     .maybeSingle();
@@ -89,8 +89,14 @@ export async function POST(request: Request) {
     // "Cursor pinned": fully unlocked, nothing left for ensure_curriculum_menu()
     // to reveal even if the user waits. Extending a category that still has
     // unrevealed content would be pointless -- the real fix there is just
-    // showing up next week, not generating more.
-    if (category.menu_unlocked_week_index < maxWeek) continue;
+    // showing up next week, not generating more. Only meaningful for a
+    // dynamic_weekly plan -- an overall-mode plan's cursor never advances
+    // at all (migrations/0017, by design, so switching back to
+    // dynamic_weekly resumes correctly), so this check would almost never
+    // pass there even though overall mode can genuinely run its menu down
+    // to nothing; skip it entirely for overall and fall through to the
+    // real signal below (picked/completed/still-unpicked counts).
+    if (planRow.planning_mode === "dynamic_weekly" && category.menu_unlocked_week_index < maxWeek) continue;
 
     const { count: pickedCount } = await supabase
       .from("blocks")
