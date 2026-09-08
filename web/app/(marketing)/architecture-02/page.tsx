@@ -4,6 +4,7 @@ import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { SignalDeckAccountControl } from "./account-control";
+import { GoalsDeck } from "./goals-deck";
 import { ListenDeck } from "./listen-deck";
 import { SignalDeckListenProvider, useSignalDeckListen } from "./listen-state";
 import { fetchProfileTimezone } from "./profile-timezone";
@@ -21,11 +22,13 @@ import "./signal-deck-walkthrough.css";
 import "./account-control.css";
 import "./listen-deck.css";
 import "./listen-deck-polish.css";
+import "./goals-deck.css";
+import "./kanban-metadata.css";
 
-type Deck = "home" | "work" | "calendar" | "review" | "listen";
+type Deck = "home" | "work" | "goals" | "calendar" | "review" | "listen";
 
 function isDeck(value: string | null): value is Deck {
-  return value === "home" || value === "work" || value === "calendar" || value === "review" || value === "listen";
+  return value === "home" || value === "work" || value === "goals" || value === "calendar" || value === "review" || value === "listen";
 }
 
 export default function ArchitectureTwoPage() {
@@ -175,6 +178,7 @@ function ArchitectureTwoDeck() {
 
       {deck === "home" && <HomeDeck onTask={openBlock} onCalendar={() => setDeck("calendar")} onReview={() => setDeck("review")} onWork={() => setDeck("work")} />}
       {deck === "work" && <TodayDeck onOpenBlock={openBlock} />}
+      {deck === "goals" && <GoalsDeck />}
       {deck === "calendar" && <CalendarDeck />}
       {deck === "review" && <ProgressDeck />}
       {deck === "listen" && <ListenDeck />}
@@ -469,7 +473,7 @@ function CalendarDeck() {
 }
 
 function DeckDock({ active, onChange, onMore }: { active: Deck; onChange: (next: Deck) => void; onMore: () => void }) {
-  const items: [Deck, string, string][] = [["home", "◉", "Deck"], ["work", "▦", "Work"], ["calendar", "⌗", "Time"], ["review", "◌", "Review"], ["listen", "♫", "Listen"]];
+  const items: [Deck, string, string][] = [["home", "◉", "Deck"], ["work", "▦", "Kanban"], ["goals", "◎", "Goals"], ["calendar", "⌗", "Time"], ["review", "◌", "Review"], ["listen", "♫", "Listen"]];
   return <nav className="a02-dock" aria-label="Signal deck navigation">{items.map(([id, icon, label]) => <button key={id} className={active === id ? "is-active" : ""} onClick={() => onChange(id)}><i>{icon}</i><span>{label}</span></button>)}<button className="a02-dock-more" onClick={onMore}><i>···</i><span>More</span></button></nav>;
 }
 

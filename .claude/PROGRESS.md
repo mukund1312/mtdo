@@ -4541,3 +4541,36 @@ next build --webpack all clean, both migrations applied live via
 **Still open, the actual remaining work:** a settings UI to let a user set
 profiles.timezone, and wiring today-deck.tsx/progress-deck.tsx to read it.
 Written up as a brief for J rather than built here.
+
+## 2026-09-08 [frontend] Architecture 02 Kanban metadata and Goals
+
+- Kept the established internal `work` deck key and `?deck=work` handoff so
+  existing onboarding links and routes continue to work; changed only the
+  user-facing dock label to **Kanban**.
+- Added native client-side Kanban filters for the real persisted block status
+  values (`backlog`, `todo`, `in_progress`, `done`). Priority and estimate are
+  isolated in `kanban-metadata.ts`: the current blocks contract has neither
+  field, so the UI fallback is explicitly not sent to or read from Supabase.
+  This is the single adapter to replace when the product task contract adds
+  persisted `priority` / `estimated_minutes` fields.
+- Added subtle priority and estimated-minute presentation without changing
+  card structure or the existing drag/status persistence behavior. Backlog
+  and Done remain visible on mobile Kanban rather than being hidden by the
+  older generic board mobile rule.
+- Added the Goals dock destination. It is read-only and uses the existing
+  active `plans` and `plan_categories` data; it includes loading, error, and
+  no-active-route states and creates no goal API, schema, or backend flow.
+
+## 2026-09-08 [frontend] Architecture 02 Planning Mode
+
+- Added one shared, accessible Planning Mode selector to the existing Rhythm
+  screen and Settings. It does not add an onboarding step or alter the
+  onboarding request/Today handoff.
+- The current backend/database contract contains no `planning_mode` field, so
+  `planning-mode.ts` deliberately keeps `dynamic_weekly` and `overall` in
+  browser storage only. The selector has explicit loading, storage-fallback
+  error, selected, and disabled states; arrow keys, Home, and End move the
+  radio selection.
+- Browser coverage verifies the inline onboarding selector, keyboard mode
+  change, and the Settings selector. It keeps the frontend ready for a future
+  persisted field without inventing an API or changing product state today.

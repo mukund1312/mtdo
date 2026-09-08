@@ -1,12 +1,13 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useState, type DragEvent } from "react";
 
 import { recordEvent } from "@/lib/analytics/record-event";
 import { createClient } from "@/lib/supabase/client";
 
 import { fetchProfileTimezone } from "./profile-timezone";
 import { utcToday } from "./product-data";
+import { kanbanMetadataFor, priorityLabel, type TaskPriority } from "./kanban-metadata";
 
 export type BlockStatus = "backlog" | "todo" | "in_progress" | "done";
 
@@ -76,6 +77,8 @@ export function TodayDeck({ onOpenBlock }: { onOpenBlock: (block: TodayBlock) =>
   const [isExhausted, setIsExhausted] = useState(false);
   const [checkInState, setCheckInState] = useState<"idle" | "loading" | "done" | "error">("idle");
   const [checkInMessage, setCheckInMessage] = useState("");
+  const [statusFilter, setStatusFilter] = useState<BlockStatus | "all">("all");
+  const [priorityFilter, setPriorityFilter] = useState<TaskPriority | "all">("all");
 
   const load = useCallback(async () => {
     setState("loading");
@@ -237,22 +240,52 @@ export function TodayDeck({ onOpenBlock }: { onOpenBlock: (block: TodayBlock) =>
     setPickingId(null);
   };
 
+  const hasFilters = statusFilter !== "all" || priorityFilter !== "all";
+  const visibleBlocks = blocks.filter((block) => {
+    const metadata = kanbanMetadataFor(block);
+    return (statusFilter === "all" || block.status === statusFilter) && (priorityFilter === "all" || metadata.priority === priorityFilter);
+  });
+
   return <section className="a02-work" aria-labelledby="today-title">
-    <div className="a02-view-head"><div><span className="a02-eyebrow">TODAY / FLOW MAP</span><h1 id="today-title">Move the<br /><em>right pieces.</em></h1></div><div className="a02-view-controls"><button type="button" onClick={() => void load()}>Refresh</button><button type="button" disabled>Today / {timezone}</button><button className="a02-add" type="button" onClick={openComposer} disabled={state === "loading"}>+ Add from route</button></div></div>
+    <div className="a02-view-head"><div><span className="a02-eyebrow">KANBAN / TODAY</span><h1 id="today-title">Move the<br /><em>right pieces.</em></h1></div><div className="a02-view-controls"><button type="button" onClick={() => void load()}>Refresh</button><button type="button" disabled>Today / {timezone}</button><button className="a02-add" type="button" onClick={openComposer} disabled={state === "loading"}>+ Add from route</button></div></div>
     {isExhausted && state === "ready" && checkInState !== "done" && <section className="a02-checkin-banner" role="status">
       {checkInState === "idle" && <><p>Your route menu is running low across every subject.</p><button type="button" onClick={() => void runCheckIn()}>Check in for more ↗</button></>}
       {checkInState === "loading" && <p>Reading your progress and generating more…</p>}
       {checkInState === "error" && <><p role="alert">{checkInMessage}</p><button type="button" onClick={() => setCheckInState("idle")}>Try again</button></>}
     </section>}
     {checkInState === "done" && <p className="a02-checkin-done" role="status">{checkInMessage}</p>}
+    <section className="a02-kanban-filters" aria-label="Kanban filters">
+      <div className="a02-filter-group" role="group" aria-label="Filter by status"><span>STATUS</span><button type="button" className={statusFilter === "all" ? "is-active" : ""} aria-pressed={statusFilter === "all"} onClick={() => setStatusFilter("all")}>All</button>{LANES.map((lane) => <button type="button" key={lane.id} className={statusFilter === lane.id ? "is-active" : ""} aria-pressed={statusFilter === lane.id} onClick={() => setStatusFilter(lane.id)}>{lane.label}</button>)}</div>
+      <div className="a02-filter-group" role="group" aria-label="Filter by priority"><span>PRIORITY</span><button type="button" className={priorityFilter === "all" ? "is-active" : ""} aria-pressed={priorityFilter === "all"} onClick={() => setPriorityFilter("all")}>All</button>{(["high", "medium", "low"] as TaskPriority[]).map((priority) => <button type="button" key={priority} className={priorityFilter === priority ? `is-active is-${priority}` : ""} aria-pressed={priorityFilter === priority} onClick={() => setPriorityFilter(priority)}>{priorityLabel(priority)}</button>)}</div>
+      {hasFilters && <button className="a02-filter-reset" type="button" onClick={() => { setStatusFilter("all"); setPriorityFilter("all"); }}>Reset</button>}
+    </section>
     {state === "error" ? <section className="a02-product-state" role="alert"><b>Today is unavailable.</b><p>We could not load your blocks. Your route is unchanged.</p><button type="button" onClick={() => void load()}>Try again ↗</button></section> : <div className={`a02-board a02-board--today ${state === "loading" ? "is-loading" : ""}`} aria-busy={state === "loading"}>{LANES.map((lane) => {
-      const laneBlocks = blocks.filter((block) => block.status === lane.id);
-      return <section key={lane.id} className={`a02-lane a02-today-lane a02-today-lane--${lane.id} ${dropTarget === lane.id ? "is-drop-target" : ""}`} onDragOver={(event) => { event.preventDefault(); setDropTarget(lane.id); }} onDragLeave={() => setDropTarget((current) => current === lane.id ? null : current)} onDrop={(event) => { event.preventDefault(); dropBlock(lane.id); }}><header><span>{lane.index}</span><b>{lane.label}</b><i>{state === "loading" ? "…" : laneBlocks.length}</i></header>{state === "loading" ? <LoadingBlocks /> : laneBlocks.length === 0 ? <p className="a02-lane-empty">Drop a signal here.</p> : laneBlocks.map((block) => <article className={`a02-work-unit a02-live-block ${block.claimed || block.status === "in_progress" ? "is-claimed" : ""}`} key={block.id} aria-busy={updatingId === block.id} draggable={updatingId !== block.id} onDragStart={(event) => { event.dataTransfer.effectAllowed = "move"; event.dataTransfer.setData("text/plain", block.id); setDraggedBlockId(block.id); }} onDragEnd={() => { setDraggedBlockId(null); setDropTarget(null); }}><em>{block.status === "backlog" ? "BACKLOG" : block.status === "in_progress" ? "IN MOTION" : block.status === "done" ? "CLOSED" : "READY"}</em><button type="button" className="a02-work-open" onClick={() => onOpenBlock(block)}><strong>{block.text}</strong></button><small>{roughDuration(block.elapsed_seconds) ?? (block.notes?.trim() || "Personal route")}</small>{block.status === "in_progress" && <span className="a02-unit-pulse" aria-label="In progress" />}<span className="a02-drag-hint" aria-hidden="true">Drag to move</span></article>)}</section>;
+      const laneBlocks = visibleBlocks.filter((block) => block.status === lane.id);
+      const totalInLane = blocks.filter((block) => block.status === lane.id).length;
+      return <section key={lane.id} className={`a02-lane a02-today-lane a02-today-lane--${lane.id} ${dropTarget === lane.id ? "is-drop-target" : ""}`} onDragOver={(event) => { event.preventDefault(); setDropTarget(lane.id); }} onDragLeave={() => setDropTarget((current) => current === lane.id ? null : current)} onDrop={(event) => { event.preventDefault(); dropBlock(lane.id); }}><header><span>{lane.index}</span><b>{lane.label}</b><i>{state === "loading" ? "…" : laneBlocks.length === totalInLane ? totalInLane : `${laneBlocks.length}/${totalInLane}`}</i></header>{state === "loading" ? <LoadingBlocks /> : laneBlocks.length === 0 ? <p className="a02-lane-empty">{hasFilters ? "No signals match." : "Drop a signal here."}</p> : laneBlocks.map((block) => <KanbanCard key={block.id} block={block} updating={updatingId === block.id} onOpen={() => onOpenBlock(block)} onDragStart={(event) => { event.dataTransfer.effectAllowed = "move"; event.dataTransfer.setData("text/plain", block.id); setDraggedBlockId(block.id); }} onDragEnd={() => { setDraggedBlockId(null); setDropTarget(null); }} />)}</section>;
     })}</div>}
     {state === "ready" && blocks.length === 0 && <p className="a02-product-note">No blocks are scheduled for today. Add a route item to begin.</p>}
     {writeError && <p className="a02-product-write-error" role="alert">{writeError}</p>}
     {composerOpen && <CurriculumMenu hasActiveRoute={hasActiveRoute} items={menuItems} error={composerError} pickingId={pickingId} onClose={() => setComposerOpen(false)} onPick={(item) => void pickMenuItem(item)} />}
   </section>;
+}
+
+function KanbanCard({ block, updating, onOpen, onDragEnd, onDragStart }: {
+  block: TodayBlock;
+  updating: boolean;
+  onOpen: () => void;
+  onDragEnd: () => void;
+  onDragStart: (event: DragEvent<HTMLElement>) => void;
+}) {
+  const metadata = kanbanMetadataFor(block);
+  const stateLabel = block.status === "backlog" ? "BACKLOG" : block.status === "in_progress" ? "IN MOTION" : block.status === "done" ? "CLOSED" : "READY";
+  return <article className={`a02-work-unit a02-live-block ${block.claimed || block.status === "in_progress" ? "is-claimed" : ""}`} key={block.id} aria-busy={updating} draggable={!updating} onDragStart={onDragStart} onDragEnd={onDragEnd}>
+    <div className="a02-card-signal"><em>{stateLabel}</em><span className={`a02-priority a02-priority--${metadata.priority}`}>{priorityLabel(metadata.priority)}</span></div>
+    <button type="button" className="a02-work-open" onClick={onOpen}><strong>{block.text}</strong></button>
+    <div className="a02-card-footer"><small>{roughDuration(block.elapsed_seconds) ?? (block.notes?.trim() || "Personal route")}</small><span className="a02-card-estimate">{metadata.estimatedMinutes} min</span></div>
+    {block.status === "in_progress" && <span className="a02-unit-pulse" aria-label="In progress" />}
+    <span className="a02-drag-hint" aria-hidden="true">Drag to move</span>
+  </article>;
 }
 
 function LoadingBlocks() { return <><div className="a02-work-unit a02-skeleton" /><div className="a02-work-unit a02-skeleton a02-skeleton--short" /></>; }
