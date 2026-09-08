@@ -510,9 +510,12 @@ Both are `authenticated`-callable; both derive the user from `auth.uid()` and ta
 - `pick_curriculum_item()` is **idempotent per (user, item)** — a double-clicked pick returns the
   block the user already has rather than a `23505` you'd have to decode. It allocates `position`
   server-side under an advisory lock.
-- It copies `task` → `blocks.text` and `meta` → `blocks.coaching` (empty `meta` becomes `null`).
-  The copy is what lets the block survive the curriculum item being edited or deleted;
-  `blocks.curriculum_item_id` is `on delete set null`.
+- It copies `task` → `blocks.text`, `meta` → `blocks.coaching` (empty `meta` becomes `null`), and
+  (migrations/0018, Phase 5) `priority`/`estimated_minutes` verbatim. The copy is what lets the
+  block survive the curriculum item being edited or deleted; `blocks.curriculum_item_id` is
+  `on delete set null`. The idempotent re-pick branch does **not** re-copy — a user's own manual
+  re-prioritization of an already-picked block (`blocks.priority` is ordinary client-writable)
+  survives a repeat pick of the same item, it isn't silently reset back to the item's value.
 - **Blocks land on today, in the caller's own zone (migrations/0014)** —
   `coalesce(profiles.timezone, 'UTC')`, same fallback pattern as `recompute_daily_rollups()`
   (§3a). There is no target-date parameter; this is what keeps a freshly-picked block's date

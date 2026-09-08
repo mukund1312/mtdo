@@ -335,7 +335,10 @@ function HomeDeck({
       onTask(null);
       return;
     }
-    onTask({ claimed: false, elapsed_seconds: 0, id: next.id, notes: null, position: next.position, status: next.status, text: next.text });
+    // ObjectLens never reads category/priority/estimate (or claimed/elapsed_seconds/notes,
+    // already synthesized below before migrations/0018 existed) -- Home's own
+    // lightweight query intentionally doesn't fetch fields nothing here displays.
+    onTask({ category_id: "", category_label: null, claimed: false, elapsed_seconds: 0, estimated_minutes: null, id: next.id, notes: null, position: next.position, priority: "medium", status: next.status, text: next.text });
   };
 
   const loading = state === "loading";

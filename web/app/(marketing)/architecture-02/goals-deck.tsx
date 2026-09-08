@@ -79,7 +79,7 @@ export function GoalsDeck() {
         <span className="a02-eyebrow">ROUTE / GOALS</span>
         <h1 id="goals-title">Hold the<br /><em>line.</em></h1>
       </div>
-      <div className="a02-view-controls"><button type="button" onClick={() => void load()} disabled={state === "loading"}>Refresh</button></div>
+      <div className="a02-view-controls"><a className="a02-goals-import-export" href="/architecture-02/onboarding/import">Import / Export ↗</a><button type="button" onClick={() => void load()} disabled={state === "loading"}>Refresh</button></div>
     </div>
 
     {state === "loading" && <section className="a02-goals-state" aria-busy="true"><span className="a02-goals-orbit" /><b>Reading your route…</b><p>Finding the commitments that shape this plan.</p></section>}

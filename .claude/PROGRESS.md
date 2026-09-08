@@ -9,6 +9,48 @@ Add each session's PROGRESS.md entry to the same branch as the code it describes
 
 ---
 
+## [backend+web] 2026-09-08 (PR pending) — Operating-engine plan, Phase 5 complete (Kanban + task metadata)
+
+Both sides done in one session (Janhwi not actively coordinating in real time on this piece;
+backend is unambiguously mine, and the frontend swap is the same small, pre-agreed adapter
+pattern as the planning-mode swap -- `kanban-metadata.ts` was explicitly built by her as "the
+single adapter to replace when the product task contract adds persisted priority/estimated_minutes
+fields," her own words in PR #144). Sonnet throughout -- no schema/RLS *design*, a plain column
+add plus one already-hardened function gaining two more copied fields.
+
+- **Migration 0018**: `priority text not null default 'medium' check in ('high','medium','low')`
+  and `estimated_minutes integer check (> 0)` on both `curriculum_items` and `blocks`.
+  `pick_curriculum_item()` copies both alongside `task`/`meta`, same "copied, not referenced"
+  reasoning 0012 established. Deliberately NOT touched: the AI-generation prompt, Manual Setup's
+  form, or the extension prompt -- none collect these explicitly yet; `priority`'s own default is
+  what makes every task get a real, uniform value regardless, richer collection is a fast-follow.
+  11 new SQL assertions, including one proving a manual re-prioritization of an already-picked
+  block survives a repeat pick (the idempotent branch must not silently re-copy and clobber it).
+  Pushed live, types regenerated.
+- **`kanban-metadata.ts`**: removed the deterministic per-block-id hash generator Janhwi built as
+  an explicit placeholder; `today-deck.tsx` now reads `block.priority`/`block.estimated_minutes`
+  directly off the real row, narrowed through a new `isTaskPriority()` guard (same pattern the
+  file already used for `BlockStatus`). An unset estimate renders as genuinely absent, not a
+  fabricated number.
+- **Category filter** added to Kanban (status + priority already existed from #144) -- derived
+  from whatever's actually on today's board, no extra query. "Filter by goal" from the plan's own
+  wording was deliberately not built: the free tier's `plans_one_active` constraint means there is
+  only ever one goal to filter by right now, so a goal filter would be inherently meaningless
+  UI, not a missing feature.
+- **Goals dock**: added a real "Import / Export ↗" link to the already-built, already-working
+  Import/Export screen. Did not add a fake "Adjust" action -- editing an existing plan's
+  categories/tasks isn't a feature that exists anywhere yet, and the plan's own "extend/adjust"
+  wording doesn't specify enough to build responsibly without inventing new, undesigned UI.
+
+Verification: `supabase/tests/run.sh` (161/161), `tsc`/`eslint`/`vitest` (78/78, including
+`kanban-metadata.test.ts` rewritten for the real `isTaskPriority`/`priorityLabel` API), `next
+build` clean, real Playwright run against a production build (18/18, including 2 new tests: a
+picked task shows its real defaulted priority with no fabricated estimate, and the
+priority/category filters narrow the board using real data end to end).
+
+Docs closed: `schema.md` (both tables' new columns), `api.md` §3b (`pick_curriculum_item()`'s
+copy-through, including the idempotent-branch-doesn't-reclobber note).
+
 ## [backend+web] 2026-09-08 (PR #146, merged) — Planning mode: swapped the localStorage placeholder for the real column
 
 Follow-up to Phase 4 (#145) and Janhwi's #144. She built the planning-mode selector *ahead* of

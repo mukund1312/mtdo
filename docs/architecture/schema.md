@@ -101,8 +101,18 @@ plan_categories(id, plan_id, name, label, days int[], min_blocks, score_weight,
   -- menu_unlocked_* is the weekly-menu cursor added in 0012, also advanced
   -- by extend_plan() (0016) for a category it just extended.
 curriculum_items(id, category_id, week_index, position, task, meta jsonb,
+                 priority check in ('high','medium','low') default 'medium',
+                 estimated_minutes null (check > 0),
                  unique(id, category_id),
                  unique(category_id, week_index, position))
+  -- priority/estimated_minutes (0018, Phase 5): no authoring surface sets
+  -- either explicitly yet (prompt.ts, Manual Setup, extend-prompt.ts all
+  -- still omit them) -- priority's NOT NULL DEFAULT is what makes every
+  -- task, old and new, get a real (if uniform) value instead of the
+  -- Kanban UI's old client-side hash fake. estimated_minutes has no
+  -- default: genuinely unset is genuinely unset, same reasoning as
+  -- profiles.timezone/plans.onboarding_answers. Copied to blocks by
+  -- pick_curriculum_item(). api.md §3b.
   -- The (category_id, week_index, position) unique constraint is 0016 --
   -- previously only an index (0012), so two concurrent appends could both
   -- compute the same next slot. extend_plan() relies on this constraint,
@@ -122,6 +132,13 @@ curriculum_items(id, category_id, week_index, position, task, meta jsonb,
 -- daily work (ports state.json per-date entries)
 blocks(id, user_id, plan_id, category_id, date, position, text,
        status check in ('backlog','todo','in_progress','done'), notes, coaching jsonb,
+       priority check in ('high','medium','low') default 'medium',
+       estimated_minutes null (check > 0),
+       -- Copied from curriculum_items by pick_curriculum_item() (0018) at
+       -- pick time, same "copied, not referenced" reasoning as text/meta --
+       -- a re-pick of an already-picked item (the idempotent branch) does
+       -- NOT re-copy, so a user's own manual re-prioritization of their
+       -- board survives. Client-updatable like the rest of blocks.
        -- 'backlog' added in migrations/0011 for J's Today board Backlog
        -- lane -- default stays 'todo'; RLS/FKs/RPCs/daily_rollups logic
        -- are all unaffected (recompute_daily_rollups() never reads

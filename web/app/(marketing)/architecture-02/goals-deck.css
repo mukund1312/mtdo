@@ -1,4 +1,6 @@
 .a02-goals { position:relative; z-index:1; min-height:calc(100dvh - 83px); padding:clamp(46px,8vh,100px) clamp(26px,7vw,112px) 115px; }
+.a02-goals-import-export { display:flex; align-items:center; border:1px solid var(--line); border-radius:5px; background:rgba(255,255,255,.03); padding:10px 11px; color:var(--dim); font-size:10px; text-decoration:none; }
+.a02-goals-import-export:hover { border-color:var(--aqua); color:var(--ink); }
 .a02-goals-grid { display:grid; grid-template-columns:minmax(0,1.05fr) minmax(300px,.95fr); gap:14px; margin-top:57px; }
 .a02-goal-line,.a02-goal-list,.a02-goals-state { border:1px solid var(--line); border-radius:11px; background:rgba(15,18,49,.72); }
 .a02-goal-line { min-height:285px; display:flex; flex-direction:column; justify-content:end; padding:26px; background:linear-gradient(145deg,rgba(137,117,255,.26),rgba(15,18,49,.74) 66%); }

@@ -74,7 +74,8 @@ fail=0
   -f "$ROOT/supabase/tests/07_per_user_timezone.sql" \
   -f "$ROOT/supabase/tests/08_ai_provider_settings.sql" \
   -f "$ROOT/supabase/tests/09_extend_plan.sql" \
-  -f "$ROOT/supabase/tests/10_planning_mode.sql" 2>&1 \
+  -f "$ROOT/supabase/tests/10_planning_mode.sql" \
+  -f "$ROOT/supabase/tests/11_task_priority_estimate.sql" 2>&1 \
   | sed 's/^psql:[^ ]* //; s/^NOTICE:  //' | grep -E "^(PASS|FAIL|ERROR|---)" || fail=1
 
 echo
