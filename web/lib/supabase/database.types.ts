@@ -464,6 +464,7 @@ export type Database = {
           goal_line: string
           id: string
           is_active: boolean
+          onboarding_answers: Json | null
           user_id: string
         }
         Insert: {
@@ -472,6 +473,7 @@ export type Database = {
           goal_line: string
           id?: string
           is_active?: boolean
+          onboarding_answers?: Json | null
           user_id: string
         }
         Update: {
@@ -480,6 +482,7 @@ export type Database = {
           goal_line?: string
           id?: string
           is_active?: boolean
+          onboarding_answers?: Json | null
           user_id?: string
         }
         Relationships: []
@@ -713,6 +716,23 @@ export type Database = {
           task: string
           week_index: number
         }[]
+      }
+      extend_plan: {
+        Args: { p_extension: Json }
+        Returns: {
+          category_id: string
+          id: string
+          meta: Json
+          position: number
+          task: string
+          week_index: number
+        }[]
+        SetofOptions: {
+          from: "*"
+          to: "curriculum_items"
+          isOneToOne: false
+          isSetofReturn: true
+        }
       }
       pick_curriculum_item: {
         Args: { p_item_id: string }

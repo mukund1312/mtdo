@@ -13,6 +13,10 @@ test("onboarding wizard: intent -> rhythm -> build a route end-to-end", async ({
   await page.getByRole("link", { name: /set up your route/i }).click();
   await expect(page).toHaveURL(/\/architecture-02\/onboarding$/);
 
+  // Step 0: choose a path. Guided AI continues into the same wizard this
+  // test already exercises below.
+  await page.getByRole("button", { name: /guided ai/i }).click();
+
   // Step 1: Intent. The primary button stays disabled until a goal is typed
   // and at least one focus area is added.
   const continueButton = page.getByRole("button", { name: /set the rhythm/i });

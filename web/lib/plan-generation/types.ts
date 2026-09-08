@@ -68,6 +68,14 @@ export interface GeneratedCategory {
   curriculum: GeneratedCurriculumDay[];
 }
 
+/** The one versioned wire shape a GeneratedPlan round-trips through --
+ * export (persist.ts's inverse) writes it, import validates it via
+ * parseGeneratedPlan()'s schema_version check. A missing schema_version on
+ * import is treated as "mtdo.plan.v1" (parse.ts) for compatibility with
+ * files predating this field (and the terminal app's own goals.json, which
+ * has never carried one) -- export always writes it explicitly. */
+export const PLAN_SCHEMA_VERSION = "mtdo.plan.v1";
+
 export interface GeneratedPlan {
   app_name: string;
   goal_line: string;

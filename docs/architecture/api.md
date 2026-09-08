@@ -508,9 +508,8 @@ Both are `authenticated`-callable; both derive the user from `auth.uid()` and ta
 - **Blocks land on today, in the caller's own zone (migrations/0014)** —
   `coalesce(profiles.timezone, 'UTC')`, same fallback pattern as `recompute_daily_rollups()`
   (§3a). There is no target-date parameter; this is what keeps a freshly-picked block's date
-  agreeing with what the Today screen is querying for, once Today itself reads a user's real
-  zone too (`web/lib/product-data.ts`'s `utcToday(timezone)` — not yet wired to a profile read at
-  the call site as of this writing, tracked separately from the backend work).
+  agreeing with what the Today screen is querying for — Today itself reads a user's real zone
+  too as of Phase 1 (`today-deck.tsx`'s `fetchProfileTimezone()` call, wired to `utcToday(timezone)`).
 - The item's `meta` is the Learning Coach payload (`focus_points`, `questions`, `mistakes`,
   `tips`, `mental_models`, …) — read it from the menu row for a preview, or from
   `blocks.coaching` once picked.
@@ -521,6 +520,79 @@ concurrency risk `blocks_slot_key`'s DEFERRABLE constraint couldn't catch at INS
 longer exists: block creation goes exclusively through `pick_curriculum_item()`, which allocates
 `position` under `pg_advisory_xact_lock`. Confirmed by inspection of the current file, not
 assumed from the original finding.
+
+## 3c. Curriculum check-in and the plan pipeline (Phase 3, operating-engine plan)
+
+**Reverses `decisions.md` 2026-09-07's "re-onboard, not extend in place"** — see the 2026-09-08
+entry there for why, and read it before touching `extend_plan()`.
+
+**`POST /api/plan/extend`** — `web/app/api/plan/extend/route.ts`. No request body; eligible
+categories (unlock cursor pinned — fully unlocked, nothing left to reveal — and having at least
+one generated item) are detected server-side from the caller's own active plan, never trusted
+from the client. Builds a prompt per eligible category (`web/lib/plan-generation/
+extend-prompt.ts`) carrying a real picked/completed/still-unpicked signal from `blocks`, calls
+`aiService.generatePlanExtension()` (non-streaming — this is a background action from an
+already-active session, not onboarding's first-run "building your plan…" moment), validates the
+response with `parseExtensionResponse()` (a distinct parser from `parseGeneratedPlan` — an
+extension has no `app_name`/`days`/`score_weight`, only new items for categories that already
+exist), then persists via the `extend_plan()` RPC (migrations/0016):
+
+- `security definer`, `pg_advisory_xact_lock`-serialized under the **same lock key**
+  `ensure_curriculum_menu()`/`pick_curriculum_item()` already use (`mtdo.curriculum_menu:<uid>`)
+  — all three touch the same (`plan_categories` cursor, `curriculum_items` position) invariant
+  pair for one user and must never interleave.
+- Computes each category's next `week_index`/`position` from that category's own current max,
+  bucketed by `array_length(plan_categories.days, 1)` items per week — never trusts a
+  client-supplied value.
+- **Advances `menu_unlocked_week_index`/stamps `menu_unlocked_iso_week` in the same transaction**
+  as the insert — the exact trap named in the reversal: without this, a user who just asked for
+  more work would get nothing until the cursor's ordinary weekly cadence caught up, up to seven
+  days later.
+- `curriculum_items_category_week_position_key` (0016) backstops the append under concurrency,
+  the same role `blocks_curriculum_item_once` plays for picks.
+
+Response: `{ extended: false, reason }` (an honest no-op — no active plan, or nothing is actually
+exhausted right now, since the client's own trigger can race a state change) or
+`{ extended: true, categories: [{ categoryId, label, addedCount }] }`. `502` if the AI call or its
+own retry fail, or the response doesn't parse — **there is no static-fallback equivalent to
+onboarding's `buildFallbackPlan()` here**: a generic template doesn't fit an already-personalized
+plan's specific categories, so this fails loudly rather than persisting something wrong. This does
+not block the core loop — the user's existing board and content are completely unaffected either
+way, they just don't get new content added.
+
+**Trigger**: `today-deck.tsx` computes "exhausted" client-side (every category with generated
+content has its cursor pinned, and the combined `ensure_curriculum_menu()` result is ≤ 3 items)
+and shows a check-in banner; confirming calls the route above and reloads the board.
+
+**The rest of the plan pipeline** (`persistGeneratedPlan()`, `parseGeneratedPlan()`) needed no new
+Route Handler — both take an already-constructed `GeneratedPlan`/raw JSON and every write they
+perform is an ordinary RLS-scoped client table plus the already-audited `activate_plan()` RPC, so
+these run directly from the browser's own authenticated client, the same way `today-deck.tsx`
+already writes to `blocks`:
+
+- **Manual Setup** (`web/app/(marketing)/architecture-02/onboarding/manual/page.tsx`) — a
+  goal/category/task editor. One task per curriculum day-list slot (`curriculum:
+  tasks.map(task => [task])`), so `persistGeneratedPlan()`'s existing `week_index` bucketing
+  (`floor(dayListIndex / daysPerWeek)`) assigns weeks correctly without this screen needing to
+  think in week/day terms. This is `goal_created`'s first real call site — reserved for exactly
+  this since §2's original "not fired alongside `plan_generated`" decision.
+- **Import** (`web/app/(marketing)/architecture-02/onboarding/import/page.tsx`) — paste, drag, or
+  file-pick a `mtdo.plan.v1` JSON, validated with `parseGeneratedPlan(text, { weekCount: "any" })`
+  — import isn't bound to onboarding's fixed-2-weeks AI contract, so this accepts any whole number
+  of weeks per category rather than exactly 2 (`ParseGeneratedPlanOptions`, default unchanged for
+  every existing caller). Shows a human-readable preview before persisting on confirm.
+- **Export**, same page — reads the active plan's categories/`curriculum_items` and reconstructs
+  a `mtdo.plan.v1` JSON, one item per day-list slot ordered by `(week_index, position)`. This is
+  an honest, not a byte-perfect, reverse: `week_index`/`position` alone don't record which
+  original items shared one multi-item day-list entry (only Manual Setup's own one-item-per-slot
+  output round-trips byte-for-byte), only the items themselves, correctly ordered and re-bucketed.
+- **Setup-method chooser** — a new first step in `web/app/(marketing)/architecture-02/onboarding/
+  page.tsx` (`step: "method"`), routing to Guided AI (the existing wizard, unchanged), Manual
+  Setup, or Import.
+- `PLAN_SCHEMA_VERSION` (`"mtdo.plan.v1"`, `lib/plan-generation/types.ts`) is written by Export and
+  validated by `parseGeneratedPlan` on Import — a missing `schema_version` is accepted as this
+  version (compatibility with files predating the field, and the terminal app's own `goals.json`,
+  which has never carried one); a present-but-different value is rejected outright.
 
 ## 4. The EmberMorph component contract
 

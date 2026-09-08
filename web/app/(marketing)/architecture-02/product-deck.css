@@ -56,3 +56,9 @@
 @keyframes a02-product-shimmer { to { background-position:-200% 0; } }
 @media(max-width:900px){.a02-board--today{grid-template-columns:repeat(4,minmax(220px,1fr));overflow-x:auto;padding-bottom:4px}.a02-today-lane{min-height:280px}.a02-record-dialog{max-height:calc(100dvh - 38px);overflow:auto}.a02-record-card{min-height:unset}}
 @media(max-width:560px){.a02-board--today{grid-template-columns:repeat(4,minmax(190px,1fr));margin-top:38px}.a02-today-lane{display:block!important}.a02-record-overlay{padding:14px}.a02-record-dialog{padding:40px 14px 14px}.a02-record-card{min-height:490px}}
+
+/* Curriculum check-in banner (Phase 3, operating-engine plan). */
+.a02-checkin-banner{display:flex;align-items:center;justify-content:space-between;gap:16px;margin-bottom:16px;border:1px solid var(--line);border-radius:8px;background:rgba(137,117,255,.09);padding:14px 16px}
+.a02-checkin-banner p{margin:0;color:var(--ink);font-size:12px}
+.a02-checkin-banner button{flex-shrink:0;border:1px solid var(--aqua);border-radius:5px;background:rgba(87,231,255,.08);color:var(--aqua);padding:9px 13px;font-size:11px}
+.a02-checkin-done{margin:0 0 16px;border-left:2px solid var(--acid);padding:9px 11px;background:rgba(215,255,82,.08);color:var(--ink);font-size:12px}

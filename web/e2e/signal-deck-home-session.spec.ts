@@ -48,6 +48,7 @@ test("Home reflects a real picked task and Session shows real, non-fake coaching
   await page.getByRole("button", { name: /close walkthrough/i }).click();
   await page.getByRole("link", { name: /set up your route/i }).click();
   await expect(page).toHaveURL(/\/architecture-02\/onboarding$/);
+  await page.getByRole("button", { name: /guided ai/i }).click();
 
   await page.getByLabel(/your goal/i).fill("Get fluent in SQL joins for interviews");
   await page.getByPlaceholder(/add a subject or skill/i).fill("Databases");

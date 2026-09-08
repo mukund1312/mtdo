@@ -346,6 +346,51 @@ through. `ensure_curriculum_menu()`'s ISO-week unlock cursor also still advances
 of a user's zone — left alone deliberately (0014's own comment): a coarse, weekly-granularity
 nicety, not the sharp daily-date mismatch the rest of this work closes.
 
+## 2026-09-08 — Curriculum exhaustion, reversed again: extend in place, not re-onboard
+
+Reverses **2026-09-07's "re-onboard, free, no streak bonus"** entry above, one day after it was
+made. That entry closed with an explicit tradeoff: *"Progress/Today will read as two separate
+plans rather than one continuous journey across the boundary — acceptable for V1, revisit if it
+turns out to matter."* It turned out to matter sooner than expected: the operating-engine plan's
+**Phase 4 (Dynamic Weekly planning mode)** structurally requires generating more content into the
+*same* plan on an ongoing basis — streaks, blocks, and rollups all hang off `plan_id`, so a mode
+whose entire premise is continuous re-planning cannot be built on top of a flow that quietly forks
+a new plan (and a new `plan_id`) every time the menu runs dry. Re-onboard was the right call for a
+V1 that ships once and stops; it is the wrong foundation for a product whose next phase is
+explicitly about generating more curriculum into an ongoing plan.
+
+**This reversal is decided on that basis, not on a phantom prior decision.** A separate,
+never-merged commit (`de9b943`, `docs/designs/curriculum-exhaustion.md`) claimed to have already
+recorded "extend in place" as settled — it hadn't; that file was never merged to `main`, and the
+commit's own message flagged itself as *"unresolved against main... one of them has to win; that
+call is not made here."* Citing it as authority would have been building on a doc that doesn't
+exist on this branch. The real justification is the Phase 4 dependency above, confirmed with the
+founder before any code was written (not silently overridden by a stale plan file).
+
+**Decision: extend in place**, reopening the exact three costs the 2026-09-07 entry declined to
+pay, now paid deliberately:
+
+1. `plans.onboarding_answers jsonb` — persists `experienceLevel`/`notes` (previously dropped after
+   generation), so an extension prompt has the same context the original plan generation did.
+2. `curriculum_items` gets a real unique constraint `(category_id, week_index, position)` (was
+   only an index) — makes an append idempotent under concurrency, not just usually-correct.
+3. `extend_plan()` (migrations/0016) — a `security definer` RPC, `pg_advisory_xact_lock`-serialized
+   under the same lock key `ensure_curriculum_menu()`/`pick_curriculum_item()` already use for this
+   exact (plan_categories cursor, curriculum_items position) invariant pair, so all three can never
+   interleave for one user. Computes each category's next `week_index`/`position` from its own
+   current max (never trusts a client-supplied value) and, critically, advances
+   `menu_unlocked_week_index`/stamps `menu_unlocked_iso_week` for every category it extends **in
+   the same transaction** — otherwise a user who just asked for more work gets nothing until the
+   cursor's normal weekly cadence catches up, up to seven days later.
+
+**Extensions stay free, no streak bonus** — both still hold from the reversed entry; nothing about
+this reversal touches monetization or pacing, only which plan_id new content lands on.
+
+**What's still true from the reversed entry:** `activate_plan()` remains untouched and still does
+exactly what it always did (atomic single-active-plan swap) — extension is additive to an existing
+active plan, not a new activation event, so this reversal adds a second entry point into
+`curriculum_items`/`plan_categories` rather than replacing anything already built.
+
 ## Open, not yet decided
 
 - Whether the founder-facing analytics need anything beyond PostHog (deferred until W2 has real
