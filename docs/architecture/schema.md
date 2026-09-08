@@ -78,12 +78,18 @@ profiles(id uuid pk → auth.users, display_name, is_anonymous, timezone, create
 -- the plan (ports goals.json)
 plans(id, user_id, app_name, goal_line, is_active, created_at,
       onboarding_answers jsonb null,
+      planning_mode check in ('dynamic_weekly', 'overall') default 'dynamic_weekly',
       unique(id, user_id))                      -- composite-FK target
   -- unique index plans_one_active (user_id) where is_active  → free tier's "one goal"
   -- onboarding_answers (0016): the OnboardingAnswers that produced this plan
   -- via AI generation, or NULL for Manual Setup/Import -- see that column's
   -- own comment for why NULL (not a defaulted empty object) is the real
   -- "no onboarding answers" state. decisions.md 2026-09-08.
+  -- planning_mode (0017): dynamic_weekly (default, unchanged behavior) or
+  -- overall (whole plan visible on the menu at once). NOT NULL DEFAULT,
+  -- deliberately unlike onboarding_answers/profiles.timezone -- every plan
+  -- needs a real mode to behave under, there is no meaningful "unset"
+  -- state here for ensure_curriculum_menu() to fall back from. api.md §3b.
 plan_categories(id, plan_id, name, label, days int[], min_blocks, score_weight,
                 topic_type, coaching_framework jsonb, sort_order,
                 menu_unlocked_week_index (check >= 0), menu_unlocked_iso_week,

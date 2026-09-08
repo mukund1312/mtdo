@@ -9,7 +9,41 @@ Add each session's PROGRESS.md entry to the same branch as the code it describes
 
 ---
 
-## [backend+web] 2026-09-08 (PR pending) — Operating-engine plan, Phase 3 complete
+## [backend] 2026-09-08 (PR pending) — Operating-engine plan, Phase 4 complete (backend); Janhwi back for frontend
+
+Janhwi is back -- ownership reverts to the dev-split model starting this phase. Backend only
+here (Sonnet, no schema/RLS *design* -- one small branch in an already-hardened function).
+Frontend (onboarding mode selector + Settings → Planning) is a closed-form brief, not built in
+this session: `docs/designs/phase1-3-catchup-and-phase4-brief.md` (also covers catching her up on
+everything that shipped in Phases 1-3 while she was out).
+
+- **Migration 0017**: `plans.planning_mode text not null default 'dynamic_weekly' check in
+  ('dynamic_weekly','overall')`. `ensure_curriculum_menu()`: only branch changed is whether the
+  cursor-advance block runs at all (`dynamic_weekly` only) and whether the final SELECT's
+  week-gating filter applies (`overall` skips it, returns everything). Byte-identical
+  `dynamic_weekly` behavior confirmed by the full pre-existing suite passing unchanged.
+  `supabase/tests/10_planning_mode.sql`: 8 new assertions, including one specifically designed to
+  catch a wrong "overall mode silently pre-advances the cursor" implementation -- the fixture uses
+  a 3-week category deliberately, since a 2-week one can't distinguish "resumed from 0" from
+  "wrongly pre-advanced to 1" (both would land on the same value). Pushed live, types regenerated.
+- **A real interaction bug found and fixed while locking this contract, not left for Janhwi to
+  discover**: Phase 3's curriculum check-in exhaustion check (`today-deck.tsx` and
+  `/api/plan/extend`) assumed `dynamic_weekly`'s cursor semantics (`menu_unlocked_week_index >=
+  max_week` = exhausted) -- for an `overall`-mode plan, whose cursor never advances by design,
+  that check would almost never fire, silently breaking curriculum check-in for anyone using the
+  new mode. Both call sites now check `planning_mode` and skip the cursor test entirely for
+  `overall` (item-count alone decides exhaustion there). New test added to `route.test.ts`
+  proving an overall-mode category is eligible despite an unpinned cursor.
+
+Verification: `supabase/tests/run.sh` (150/150), `tsc`/`eslint`/`vitest` (71/71)/`next build` all
+clean, real Playwright run against a production build.
+
+Docs closed: `schema.md` (`planning_mode` column), `api.md` §3b (the mode branch + the frozen-
+cursor note) and fixed two other stale claims found in the same section along the way (Today's
+timezone wiring was still described as "not yet wired" though Phase 1 shipped it; "no
+auto-regeneration yet" was still true before Phase 3's `extend_plan()`, not after).
+
+## [backend+web] 2026-09-08 (PR #143, merged) — Operating-engine plan, Phase 3 complete
 
 Janhwi still unavailable; both backend and frontend done in one session, Sonnet throughout (no
 schema/RLS/session-authority *design* -- `extend_plan()` reuses the exact advisory-lock pattern

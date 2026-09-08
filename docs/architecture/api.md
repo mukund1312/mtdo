@@ -474,12 +474,18 @@ public.pick_curriculum_item(p_item_id uuid) returns blocks
 
 Both are `authenticated`-callable; both derive the user from `auth.uid()` and take no user id.
 
-**The model.**
+**The model.** Governed by `plans.planning_mode` (migrations/0017, `dynamic_weekly` default):
 
-- **Unlocking.** Each category unlocks one more week of curriculum per ISO week, and only when
-  `ensure_curriculum_menu()` is actually called — so call it from the board's load path. Weeks
-  the user is away cost nothing, because nothing advances while nobody calls it. The first call
-  ever unlocks week 0 only.
+- **Unlocking (`dynamic_weekly` only).** Each category unlocks one more week of curriculum per
+  ISO week, and only when `ensure_curriculum_menu()` is actually called — so call it from the
+  board's load path. Weeks the user is away cost nothing, because nothing advances while nobody
+  calls it. The first call ever unlocks week 0 only.
+- **`overall` mode**: the menu ignores the unlock cursor entirely and returns every not-yet-picked
+  item across every week at once. `menu_unlocked_week_index`/`_iso_week` are **not touched** while
+  a plan is in this mode — no free advance happens, so switching back to `dynamic_weekly` later
+  resumes from exactly where the cursor was left, not from wherever it would have drifted to had
+  it kept advancing unseen. `plans.planning_mode` is an ordinary client-writable column; no RPC
+  needed to read or change it.
 - **Carry-forward.** The menu is every unlocked item not yet pulled onto a board, not just the
   current week's slice. Unpicked items persist. This is a deliberate divergence from the terminal
   app (which drops them): a generated plan holds exactly **two weeks** of content, so
@@ -498,7 +504,9 @@ Both are `authenticated`-callable; both derive the user from `auth.uid()` and ta
   state. Same for a retired plan.
 - **An empty menu is also the normal end state.** Two weeks of content means the menu legitimately
   runs dry after two unlock steps. Design for it: it means "time for a check-in / extend the plan",
-  not a failure. There is no auto-regeneration yet.
+  not a failure. As of Phase 3, this has a real answer — `POST /api/plan/extend` (§3c) generates
+  and appends more content once every category's cursor is pinned; `today-deck.tsx` surfaces this
+  as a check-in banner rather than requiring the user to notice on their own.
 - `pick_curriculum_item()` is **idempotent per (user, item)** — a double-clicked pick returns the
   block the user already has rather than a `23505` you'd have to decode. It allocates `position`
   server-side under an advisory lock.

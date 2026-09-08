@@ -81,7 +81,7 @@ describe("POST /api/plan/extend -- auth and eligibility", () => {
 
   it("returns extended:false when no category's cursor is pinned", async () => {
     mockFrom.mockImplementation((table: string) => {
-      if (table === "plans") return chain({ data: { id: "plan-1", goal_line: "Learn SQL" } });
+      if (table === "plans") return chain({ data: { id: "plan-1", goal_line: "Learn SQL", planning_mode: "dynamic_weekly" } });
       if (table === "plan_categories") {
         return chain({
           data: [
@@ -105,12 +105,48 @@ describe("POST /api/plan/extend -- auth and eligibility", () => {
     await expect(response.json()).resolves.toEqual({ extended: false, reason: "No category is exhausted right now." });
     expect(mockGeneratePlanExtension).not.toHaveBeenCalled();
   });
+
+  it("ignores the cursor entirely for an overall-mode plan (migrations/0017)", async () => {
+    // Same fixture as the dynamic_weekly test above (cursor at 0, max week
+    // 1 -- "not pinned" under dynamic_weekly rules) but planning_mode is
+    // "overall", where the cursor never advances at all and is therefore
+    // meaningless as an eligibility signal -- this category must still be
+    // treated as eligible.
+    mockFrom.mockImplementation((table: string) => {
+      if (table === "plans") return chain({ data: { id: "plan-1", goal_line: "Learn SQL", planning_mode: "overall" } });
+      if (table === "plan_categories") {
+        return chain({
+          data: [
+            {
+              id: "cat-1",
+              label: "SQL",
+              days: [0, 1],
+              topic_type: null,
+              menu_unlocked_week_index: 0,
+              curriculum_items: [{ id: "i1", week_index: 0 }, { id: "i2", week_index: 1 }],
+            },
+          ],
+        });
+      }
+      if (table === "blocks") return chain({ count: 0 });
+      throw new Error(`unexpected table ${table}`);
+    });
+    mockGeneratePlanExtension.mockResolvedValue(JSON.stringify({ categories: [{ category_id: "cat-1", items: ["New task"] }] }));
+    mockRpc.mockResolvedValue({ data: [{ id: "new-1", category_id: "cat-1" }], error: null });
+
+    const response = await POST(makeRequest());
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({
+      extended: true,
+      categories: [{ categoryId: "cat-1", label: "SQL", addedCount: 1 }],
+    });
+  });
 });
 
 describe("POST /api/plan/extend -- happy path", () => {
   function mockEligibleCategory() {
     mockFrom.mockImplementation((table: string) => {
-      if (table === "plans") return chain({ data: { id: "plan-1", goal_line: "Learn SQL" } });
+      if (table === "plans") return chain({ data: { id: "plan-1", goal_line: "Learn SQL", planning_mode: "dynamic_weekly" } });
       if (table === "plan_categories") {
         return chain({
           data: [
