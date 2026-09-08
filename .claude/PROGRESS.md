@@ -9,7 +9,7 @@ Add each session's PROGRESS.md entry to the same branch as the code it describes
 
 ---
 
-## [backend+web] 2026-09-08 (PR pending) — Operating-engine plan, Phase 5 complete (Kanban + task metadata)
+## [backend+web] 2026-09-08 (PR #148, merged) — Operating-engine plan, Phase 5 complete (Kanban + task metadata)
 
 Both sides done in one session (Janhwi not actively coordinating in real time on this piece;
 backend is unambiguously mine, and the frontend swap is the same small, pre-agreed adapter
