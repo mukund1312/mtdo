@@ -1,0 +1,13 @@
+.a02-planning-mode { margin-top:28px; }
+.a02-planning-mode-head { display:flex; justify-content:space-between; gap:12px; margin-bottom:10px; color:var(--dim); font:9px "DM Mono",monospace; letter-spacing:.08em; }
+.a02-planning-mode-head i { color:var(--aqua); font-style:normal; letter-spacing:0; text-align:right; }
+.a02-planning-mode-options { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:8px; }
+.a02-planning-mode-options button { min-height:126px; display:flex; flex-direction:column; align-items:flex-start; gap:7px; border:1px solid var(--line); border-radius:7px; padding:14px; background:rgba(255,255,255,.025); color:var(--dim); text-align:left; transition:border-color .16s ease,background .16s ease,transform .16s ease; }
+.a02-planning-mode-options button:hover:not(:disabled),.a02-planning-mode-options button:focus-visible { border-color:var(--aqua); background:rgba(87,231,255,.07); color:var(--ink); outline:none; }
+.a02-planning-mode-options button:focus-visible { box-shadow:0 0 0 3px rgba(87,231,255,.12); }
+.a02-planning-mode-options button.is-selected { border-color:var(--ultra); background:linear-gradient(145deg,rgba(137,117,255,.25),rgba(20,23,57,.54)); color:var(--ink); }
+.a02-planning-mode-options button:disabled { cursor:not-allowed; opacity:.55; }
+.a02-planning-mode-options b { font-size:12px; letter-spacing:-.02em; }.a02-planning-mode-options span { font-size:11px; line-height:1.4; }.a02-planning-mode-options small { margin-top:auto; color:var(--aqua); font:9px "DM Mono",monospace; line-height:1.35; }
+.a02-planning-mode > p { margin:9px 0 0; color:var(--dim); font-size:10px; line-height:1.45; }.a02-planning-mode > p.is-error { color:var(--coral); }
+@media(max-width:560px) { .a02-planning-mode-options { grid-template-columns:1fr; }.a02-planning-mode-options button { min-height:105px; }.a02-planning-mode-head { align-items:start; flex-direction:column; gap:4px; }.a02-planning-mode-head i { text-align:left; } }
+@media(prefers-reduced-motion:reduce) { .a02-planning-mode-options button { transition:none; } }

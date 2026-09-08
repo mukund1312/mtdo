@@ -29,6 +29,11 @@ test("Home and Time show honest empty states for a brand-new user, no fake liter
   await expect(page.getByText(/scheduling isn.t built yet/i)).toBeVisible();
   await expect(page.getByText("Two Sum")).toHaveCount(0);
 
+  // Goals is a first-class dock destination. It reads the existing active
+  // route when present; the shell must remain useful even before one exists.
+  await page.getByRole("navigation", { name: "Signal deck navigation" }).getByRole("button", { name: /goals/i }).click();
+  await expect(page.getByRole("heading", { name: /hold the line/i })).toBeVisible();
+
   // The header's live clock replaced a hardcoded "TUESDAY / 06 SEP / 09:24"
   // -- assert it renders the real current weekday, not that literal string.
   const today = new Intl.DateTimeFormat("en", { weekday: "long" }).format(new Date()).toUpperCase();

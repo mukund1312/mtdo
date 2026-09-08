@@ -1,0 +1,23 @@
+.a02-goals { position:relative; z-index:1; min-height:calc(100dvh - 83px); padding:clamp(46px,8vh,100px) clamp(26px,7vw,112px) 115px; }
+.a02-goals-grid { display:grid; grid-template-columns:minmax(0,1.05fr) minmax(300px,.95fr); gap:14px; margin-top:57px; }
+.a02-goal-line,.a02-goal-list,.a02-goals-state { border:1px solid var(--line); border-radius:11px; background:rgba(15,18,49,.72); }
+.a02-goal-line { min-height:285px; display:flex; flex-direction:column; justify-content:end; padding:26px; background:linear-gradient(145deg,rgba(137,117,255,.26),rgba(15,18,49,.74) 66%); }
+.a02-goal-line strong { max-width:620px; margin:18px 0 12px; font:900 clamp(31px,4vw,56px)/.9 "Archivo Black",Arial,sans-serif; letter-spacing:-.09em; text-transform:uppercase; }
+.a02-goal-line p { max-width:410px; margin:0; color:var(--dim); font-size:11px; line-height:1.55; }
+.a02-goal-list { overflow:hidden; }
+.a02-goal-list header { display:flex; justify-content:space-between; align-items:center; padding:17px 18px; border-bottom:1px solid var(--line); color:var(--dim); font:10px "DM Mono",monospace; letter-spacing:.08em; }
+.a02-goal-list header i { color:var(--acid); font-style:normal; }
+.a02-goal-list article { display:grid; grid-template-columns:34px 1fr auto; gap:10px; align-items:center; padding:17px 18px; border-bottom:1px solid rgba(216,221,255,.1); }
+.a02-goal-list article:last-child { border-bottom:0; }
+.a02-goal-list article > span { color:var(--aqua); font:10px "DM Mono",monospace; }
+.a02-goal-list article b { font-size:14px; letter-spacing:-.03em; }
+.a02-goal-list article small { color:var(--dim); font-size:10px; text-align:right; }
+.a02-goal-list-empty { margin:0; padding:22px 18px; color:var(--dim); font-size:11px; }
+.a02-goals-state { min-height:260px; display:grid; place-items:center; align-content:center; gap:9px; margin-top:57px; text-align:center; }
+.a02-goals-state b { font-size:15px; }
+.a02-goals-state p { margin:0; color:var(--dim); font-size:11px; }
+.a02-goals-orbit { width:38px; height:38px; border:1px solid var(--aqua); border-right-color:transparent; border-radius:50%; animation:a02-goals-spin .8s linear infinite; }
+@keyframes a02-goals-spin { to { transform:rotate(360deg); } }
+@media (max-width:900px) { .a02-goals-grid { grid-template-columns:1fr; } }
+@media (max-width:560px) { .a02-goals { padding:52px 18px 145px; }.a02-goals-grid,.a02-goals-state { margin-top:38px; }.a02-goal-line { min-height:230px; padding:20px; }.a02-goal-list article { grid-template-columns:27px 1fr; }.a02-goal-list article small { grid-column:2; text-align:left; }.a02-goal-line strong { font-size:38px; } }
+@media (prefers-reduced-motion:reduce) { .a02-goals-orbit { animation:none; } }

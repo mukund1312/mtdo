@@ -2,7 +2,9 @@
 
 import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
+import { PlanningModeSelector } from "../planning-mode-selector";
 import "../signal-deck.css";
+import "../planning-mode-selector.css";
 import "./settings.css";
 
 type AIStatus = { models: string[]; provider: string; reachable: boolean };
@@ -88,6 +90,12 @@ export default function SignalDeckSettingsPage() {
           switch here yet. Self-hosting with Ollama: point <code>OLLAMA_ENDPOINT</code> at a
           running daemon; a failed health check falls back to Anthropic automatically.
         </p>
+      </section>
+
+      <section className="a02-product-state a02-settings-card" aria-labelledby="planning-mode-title">
+        <b id="planning-mode-title">Planning mode</b>
+        <p className="a02-settings-note">Choose whether your Signal Deck should frame the route one week at a time or against the whole goal.</p>
+        <PlanningModeSelector />
       </section>
     </main>
   );

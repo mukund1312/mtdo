@@ -62,6 +62,8 @@ test("onboarding wizard: intent -> rhythm -> build a route end-to-end", async ({
   await enterTodayButton.click();
   await expect(page).toHaveURL(/\/architecture-02\?deck=work$/);
   await expect(page.getByRole("heading", { name: /move the right pieces/i })).toBeVisible();
+  await expect(page.getByLabel("Kanban filters")).toBeVisible();
+  await expect(page.getByRole("group", { name: /filter by priority/i }).getByRole("button", { name: "High" })).toBeVisible();
 
   // The active plan's curriculum is retrieved through ensure_curriculum_menu.
   // Pulling an item onto Today uses the lock-safe, idempotent picker RPC -- it
