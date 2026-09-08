@@ -58,6 +58,13 @@ function isValidAnswers(body: unknown): body is OnboardingAnswers {
   }
   if (b.appName !== undefined && typeof b.appName !== "string") return false;
   if (b.notes !== undefined && typeof b.notes !== "string") return false;
+  if (
+    b.planningMode !== undefined &&
+    b.planningMode !== "dynamic_weekly" &&
+    b.planningMode !== "overall"
+  ) {
+    return false;
+  }
   return true;
 }
 
@@ -145,7 +152,7 @@ export async function POST(request: Request) {
       }
 
       try {
-        const persisted = await persistGeneratedPlan(supabase, user.id, plan, answers);
+        const persisted = await persistGeneratedPlan(supabase, user.id, plan, { onboardingAnswers: answers, planningMode: answers.planningMode });
         // plan_generated (schema.md §4): fired once, right after the plan
         // that's actually going to be shown to the user is durably persisted
         // -- not before, so a persist failure that falls through to the
@@ -181,7 +188,7 @@ export async function POST(request: Request) {
           // fallback once before giving up entirely.
           try {
             const fallbackPlan = buildFallbackPlan(answers);
-            const persisted = await persistGeneratedPlan(supabase, user.id, fallbackPlan, answers);
+            const persisted = await persistGeneratedPlan(supabase, user.id, fallbackPlan, { onboardingAnswers: answers, planningMode: answers.planningMode });
             await recordEvent(supabase, "plan_generated", {
               usedFallback: true,
               categoryCount: persisted.categories.length,

@@ -6,35 +6,57 @@ import { PLANNING_MODE_DETAILS, PLANNING_MODES, PLANNING_MODE_STORAGE_KEY, isPla
 
 type SelectorState = "loading" | "ready" | "error";
 
-export function PlanningModeSelector({ disabled = false, onChange }: { disabled?: boolean; onChange?: (mode: PlanningMode) => void }) {
+export function PlanningModeSelector({
+  disabled = false,
+  onChange,
+  value,
+}: {
+  disabled?: boolean;
+  onChange?: (mode: PlanningMode) => void;
+  /** Controlled mode: when set, this is the source of truth (a real
+   * plans.planning_mode value the caller already loaded/is saving --
+   * Settings, migrations/0017) and localStorage is never touched. Omitted
+   * (uncontrolled): the original behavior for onboarding, where there is no
+   * plan row yet to read/write against -- the component owns its own value,
+   * persisted to localStorage as a draft the caller reads via `onChange`
+   * and includes in the eventual plan-creation payload. */
+  value?: PlanningMode;
+}) {
   const labelId = useId();
-  const [mode, setMode] = useState<PlanningMode>("dynamic_weekly");
-  const [state, setState] = useState<SelectorState>("loading");
+  const controlled = value !== undefined;
+  const [internalMode, setInternalMode] = useState<PlanningMode>("dynamic_weekly");
+  const [state, setState] = useState<SelectorState>(controlled ? "ready" : "loading");
+  const mode = controlled ? value : internalMode;
 
   useEffect(() => {
+    if (controlled) return;
     const timer = window.setTimeout(() => {
       try {
         const saved = window.localStorage.getItem(PLANNING_MODE_STORAGE_KEY);
-        if (isPlanningMode(saved)) setMode(saved);
+        if (isPlanningMode(saved)) setInternalMode(saved);
         setState("ready");
       } catch {
-        // There is no backend planning_mode field in the current contract.
-        // Let the user use the in-memory preference if browser storage is unavailable.
+        // No local draft available -- the in-memory default still works,
+        // it just won't survive a refresh.
         setState("error");
       }
     }, 0);
     return () => window.clearTimeout(timer);
-  }, []);
+  }, [controlled]);
 
   const choose = (next: PlanningMode) => {
-    if (disabled || state === "loading") return;
-    setMode(next);
-    try {
-      window.localStorage.setItem(PLANNING_MODE_STORAGE_KEY, next);
-      setState("ready");
-    } catch {
-      setState("error");
+    if (disabled || (!controlled && state === "loading")) return;
+    if (!controlled) {
+      setInternalMode(next);
+      try {
+        window.localStorage.setItem(PLANNING_MODE_STORAGE_KEY, next);
+        setState("ready");
+      } catch {
+        setState("error");
+      }
     }
+    // Controlled mode: the caller owns saving (and its own loading/error
+    // state around this component) -- this call is the entire write path.
     onChange?.(next);
   };
 
