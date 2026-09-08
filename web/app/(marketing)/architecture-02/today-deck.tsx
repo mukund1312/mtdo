@@ -7,16 +7,23 @@ import { createClient } from "@/lib/supabase/client";
 
 import { fetchProfileTimezone } from "./profile-timezone";
 import { utcToday } from "./product-data";
-import { kanbanMetadataFor, priorityLabel, type TaskPriority } from "./kanban-metadata";
+import { isTaskPriority, priorityLabel, type TaskPriority } from "./kanban-metadata";
 
 export type BlockStatus = "backlog" | "todo" | "in_progress" | "done";
 
 export type TodayBlock = {
+  category_id: string;
+  category_label: string | null;
   claimed: boolean;
   elapsed_seconds: number;
+  estimated_minutes: number | null;
   id: string;
   notes: string | null;
   position: number;
+  // migrations/0018 -- always a real value (curriculum_items/blocks.priority
+  // is NOT NULL DEFAULT 'medium'), never the client-side hash fake this type
+  // carried before real backend support existed.
+  priority: TaskPriority;
   status: BlockStatus;
   text: string;
 };
@@ -79,6 +86,7 @@ export function TodayDeck({ onOpenBlock }: { onOpenBlock: (block: TodayBlock) =>
   const [checkInMessage, setCheckInMessage] = useState("");
   const [statusFilter, setStatusFilter] = useState<BlockStatus | "all">("all");
   const [priorityFilter, setPriorityFilter] = useState<TaskPriority | "all">("all");
+  const [categoryFilter, setCategoryFilter] = useState<string | "all">("all");
 
   const load = useCallback(async () => {
     setState("loading");
@@ -111,7 +119,7 @@ export function TodayDeck({ onOpenBlock }: { onOpenBlock: (block: TodayBlock) =>
     const [{ data, error }, { data: menuData, error: menuError }, { data: categoryRows, error: categoryError }] = await Promise.all([
       supabase
       .from("blocks")
-      .select("id, text, status, notes, claimed, elapsed_seconds, position")
+      .select("id, text, status, notes, claimed, elapsed_seconds, position, priority, estimated_minutes, category_id, plan_categories(label)")
       .eq("user_id", user.id).eq("date", utcToday(userTimezone)).order("position"),
       supabase.rpc("ensure_curriculum_menu"),
       activePlan
@@ -123,7 +131,21 @@ export function TodayDeck({ onOpenBlock }: { onOpenBlock: (block: TodayBlock) =>
       setState("error");
       return;
     }
-    setBlocks((data ?? []).flatMap((block) => isBlockStatus(block.status) ? [{ ...block, status: block.status }] : []));
+    setBlocks((data ?? []).flatMap((block) => {
+      // Both are DB CHECK-constrained values Supabase's generated types
+      // still widen to plain `string` -- same narrowing this file already
+      // does for status, now also for priority (migrations/0018). A block
+      // failing either guard would mean real schema/client drift, so it's
+      // dropped rather than silently coerced, matching status's own
+      // established handling.
+      if (!isBlockStatus(block.status) || !isTaskPriority(block.priority)) return [];
+      return [{
+        ...block,
+        status: block.status,
+        priority: block.priority,
+        category_label: block.plan_categories?.label ?? null,
+      }];
+    }));
     setMenuItems((menuData ?? []).map((item) => ({
       category_label: item.category_label,
       curriculum_item_id: item.curriculum_item_id,
@@ -226,18 +248,25 @@ export function TodayDeck({ onOpenBlock }: { onOpenBlock: (block: TodayBlock) =>
     setComposerError(null);
     const supabase = createClient();
     const { data, error } = await supabase.rpc("pick_curriculum_item", { p_item_id: item.curriculum_item_id });
-    if (error || !data || !isBlockStatus(data.status)) {
+    if (error || !data || !isBlockStatus(data.status) || !isTaskPriority(data.priority)) {
       console.error("[today] failed to pick route item:", databaseErrorMessage(error, "No row returned."));
       setComposerError(databaseErrorMessage(error, "We could not add that route item. Your board is unchanged."));
       setPickingId(null);
       return;
     }
     const createdBlock: TodayBlock = {
+      category_id: data.category_id,
+      // pick_curriculum_item() returns the plain blocks row -- no
+      // plan_categories embed to read a label from, but the menu item this
+      // pick came from already carries its own category's label.
+      category_label: item.category_label,
       claimed: data.claimed,
       elapsed_seconds: data.elapsed_seconds,
+      estimated_minutes: data.estimated_minutes,
       id: data.id,
       notes: data.notes,
       position: data.position,
+      priority: data.priority,
       status: data.status,
       text: data.text,
     };
@@ -248,11 +277,18 @@ export function TodayDeck({ onOpenBlock }: { onOpenBlock: (block: TodayBlock) =>
     setPickingId(null);
   };
 
-  const hasFilters = statusFilter !== "all" || priorityFilter !== "all";
-  const visibleBlocks = blocks.filter((block) => {
-    const metadata = kanbanMetadataFor(block);
-    return (statusFilter === "all" || block.status === statusFilter) && (priorityFilter === "all" || metadata.priority === priorityFilter);
-  });
+  // Categories to offer are whatever's actually on today's board -- no
+  // point filtering by a category with nothing here today, and this needs
+  // no extra query beyond what load() already fetched.
+  const categoryOptions = Array.from(
+    new Map(blocks.map((block) => [block.category_id, block.category_label ?? "Uncategorized"])).entries(),
+  );
+  const hasFilters = statusFilter !== "all" || priorityFilter !== "all" || categoryFilter !== "all";
+  const visibleBlocks = blocks.filter((block) =>
+    (statusFilter === "all" || block.status === statusFilter) &&
+    (priorityFilter === "all" || block.priority === priorityFilter) &&
+    (categoryFilter === "all" || block.category_id === categoryFilter),
+  );
 
   return <section className="a02-work" aria-labelledby="today-title">
     <div className="a02-view-head"><div><span className="a02-eyebrow">KANBAN / TODAY</span><h1 id="today-title">Move the<br /><em>right pieces.</em></h1></div><div className="a02-view-controls"><button type="button" onClick={() => void load()}>Refresh</button><button type="button" disabled>Today / {timezone}</button><button className="a02-add" type="button" onClick={openComposer} disabled={state === "loading"}>+ Add from route</button></div></div>
@@ -265,7 +301,8 @@ export function TodayDeck({ onOpenBlock }: { onOpenBlock: (block: TodayBlock) =>
     <section className="a02-kanban-filters" aria-label="Kanban filters">
       <div className="a02-filter-group" role="group" aria-label="Filter by status"><span>STATUS</span><button type="button" className={statusFilter === "all" ? "is-active" : ""} aria-pressed={statusFilter === "all"} onClick={() => setStatusFilter("all")}>All</button>{LANES.map((lane) => <button type="button" key={lane.id} className={statusFilter === lane.id ? "is-active" : ""} aria-pressed={statusFilter === lane.id} onClick={() => setStatusFilter(lane.id)}>{lane.label}</button>)}</div>
       <div className="a02-filter-group" role="group" aria-label="Filter by priority"><span>PRIORITY</span><button type="button" className={priorityFilter === "all" ? "is-active" : ""} aria-pressed={priorityFilter === "all"} onClick={() => setPriorityFilter("all")}>All</button>{(["high", "medium", "low"] as TaskPriority[]).map((priority) => <button type="button" key={priority} className={priorityFilter === priority ? `is-active is-${priority}` : ""} aria-pressed={priorityFilter === priority} onClick={() => setPriorityFilter(priority)}>{priorityLabel(priority)}</button>)}</div>
-      {hasFilters && <button className="a02-filter-reset" type="button" onClick={() => { setStatusFilter("all"); setPriorityFilter("all"); }}>Reset</button>}
+      {categoryOptions.length > 1 && <div className="a02-filter-group" role="group" aria-label="Filter by category"><span>CATEGORY</span><button type="button" className={categoryFilter === "all" ? "is-active" : ""} aria-pressed={categoryFilter === "all"} onClick={() => setCategoryFilter("all")}>All</button>{categoryOptions.map(([id, label]) => <button type="button" key={id} className={categoryFilter === id ? "is-active" : ""} aria-pressed={categoryFilter === id} onClick={() => setCategoryFilter(id)}>{label}</button>)}</div>}
+      {hasFilters && <button className="a02-filter-reset" type="button" onClick={() => { setStatusFilter("all"); setPriorityFilter("all"); setCategoryFilter("all"); }}>Reset</button>}
     </section>
     {state === "error" ? <section className="a02-product-state" role="alert"><b>Today is unavailable.</b><p>We could not load your blocks. Your route is unchanged.</p><button type="button" onClick={() => void load()}>Try again ↗</button></section> : <div className={`a02-board a02-board--today ${state === "loading" ? "is-loading" : ""}`} aria-busy={state === "loading"}>{LANES.map((lane) => {
       const laneBlocks = visibleBlocks.filter((block) => block.status === lane.id);
@@ -285,12 +322,11 @@ function KanbanCard({ block, updating, onOpen, onDragEnd, onDragStart }: {
   onDragEnd: () => void;
   onDragStart: (event: DragEvent<HTMLElement>) => void;
 }) {
-  const metadata = kanbanMetadataFor(block);
   const stateLabel = block.status === "backlog" ? "BACKLOG" : block.status === "in_progress" ? "IN MOTION" : block.status === "done" ? "CLOSED" : "READY";
   return <article className={`a02-work-unit a02-live-block ${block.claimed || block.status === "in_progress" ? "is-claimed" : ""}`} key={block.id} aria-busy={updating} draggable={!updating} onDragStart={onDragStart} onDragEnd={onDragEnd}>
-    <div className="a02-card-signal"><em>{stateLabel}</em><span className={`a02-priority a02-priority--${metadata.priority}`}>{priorityLabel(metadata.priority)}</span></div>
+    <div className="a02-card-signal"><em>{stateLabel}</em><span className={`a02-priority a02-priority--${block.priority}`}>{priorityLabel(block.priority)}</span></div>
     <button type="button" className="a02-work-open" onClick={onOpen}><strong>{block.text}</strong></button>
-    <div className="a02-card-footer"><small>{roughDuration(block.elapsed_seconds) ?? (block.notes?.trim() || "Personal route")}</small><span className="a02-card-estimate">{metadata.estimatedMinutes} min</span></div>
+    <div className="a02-card-footer"><small>{roughDuration(block.elapsed_seconds) ?? (block.notes?.trim() || "Personal route")}</small>{block.estimated_minutes && <span className="a02-card-estimate">{block.estimated_minutes} min</span>}</div>
     {block.status === "in_progress" && <span className="a02-unit-pulse" aria-label="In progress" />}
     <span className="a02-drag-hint" aria-hidden="true">Drag to move</span>
   </article>;

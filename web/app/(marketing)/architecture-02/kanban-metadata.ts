@@ -1,35 +1,25 @@
-import type { TodayBlock } from "./today-deck";
-
 /**
- * The current `blocks` contract deliberately has no priority or
- * `estimated_minutes` column. Keep the temporary presentation data here,
- * rather than smuggling invented fields into Supabase reads or writes. When
- * the task contract grows, this adapter is the single replacement point.
+ * curriculum_items/blocks.priority + estimated_minutes (migrations/0018).
+ * Real columns now -- this file used to fabricate a deterministic per-block
+ * value here as a placeholder ("the current blocks contract deliberately
+ * has no priority or estimated_minutes column... this adapter is the
+ * single replacement point"); this is that replacement. today-deck.tsx
+ * reads block.priority/block.estimated_minutes directly off the row now,
+ * not through a generator.
  */
 export type TaskPriority = "high" | "medium" | "low";
 
-export type KanbanMetadata = {
-  estimatedMinutes: number;
-  priority: TaskPriority;
-};
+const TASK_PRIORITIES: readonly TaskPriority[] = ["high", "medium", "low"];
 
-const PRIORITIES: TaskPriority[] = ["high", "medium", "low"];
-const ESTIMATES = [25, 45, 60] as const;
-
-function stableIndex(value: string): number {
-  let hash = 0;
-  for (let index = 0; index < value.length; index += 1) {
-    hash = (hash * 31 + value.charCodeAt(index)) | 0;
-  }
-  return Math.abs(hash);
-}
-
-export function kanbanMetadataFor(block: Pick<TodayBlock, "id">): KanbanMetadata {
-  const index = stableIndex(block.id);
-  return {
-    priority: PRIORITIES[index % PRIORITIES.length]!,
-    estimatedMinutes: ESTIMATES[index % ESTIMATES.length]!,
-  };
+/** blocks.priority/curriculum_items.priority are DB `text` columns (Supabase's
+ * generated types don't narrow a CHECK constraint to a literal union) --
+ * this is the same is-a-known-value guard pattern today-deck.tsx already
+ * uses for BlockStatus (isBlockStatus). The CHECK constraint means a
+ * genuinely unexpected value here would indicate a schema/client drift,
+ * not normal user input -- callers should treat a `false` as worth logging,
+ * not silently coercing to a fallback. */
+export function isTaskPriority(value: string): value is TaskPriority {
+  return (TASK_PRIORITIES as readonly string[]).includes(value);
 }
 
 export function priorityLabel(priority: TaskPriority): string {

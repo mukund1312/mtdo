@@ -144,10 +144,12 @@ export type Database = {
           curriculum_item_id: string | null
           date: string
           elapsed_seconds: number
+          estimated_minutes: number | null
           id: string
           notes: string | null
           plan_id: string
           position: number
+          priority: string
           started_at: string | null
           status: string
           text: string
@@ -161,10 +163,12 @@ export type Database = {
           curriculum_item_id?: string | null
           date: string
           elapsed_seconds?: number
+          estimated_minutes?: number | null
           id?: string
           notes?: string | null
           plan_id: string
           position: number
+          priority?: string
           started_at?: string | null
           status?: string
           text: string
@@ -178,10 +182,12 @@ export type Database = {
           curriculum_item_id?: string | null
           date?: string
           elapsed_seconds?: number
+          estimated_minutes?: number | null
           id?: string
           notes?: string | null
           plan_id?: string
           position?: number
+          priority?: string
           started_at?: string | null
           status?: string
           text?: string
@@ -241,25 +247,31 @@ export type Database = {
       curriculum_items: {
         Row: {
           category_id: string
+          estimated_minutes: number | null
           id: string
           meta: Json
           position: number
+          priority: string
           task: string
           week_index: number
         }
         Insert: {
           category_id: string
+          estimated_minutes?: number | null
           id?: string
           meta?: Json
           position: number
+          priority?: string
           task: string
           week_index: number
         }
         Update: {
           category_id?: string
+          estimated_minutes?: number | null
           id?: string
           meta?: Json
           position?: number
+          priority?: string
           task?: string
           week_index?: number
         }
@@ -724,9 +736,11 @@ export type Database = {
         Args: { p_extension: Json }
         Returns: {
           category_id: string
+          estimated_minutes: number | null
           id: string
           meta: Json
           position: number
+          priority: string
           task: string
           week_index: number
         }[]
@@ -747,10 +761,12 @@ export type Database = {
           curriculum_item_id: string | null
           date: string
           elapsed_seconds: number
+          estimated_minutes: number | null
           id: string
           notes: string | null
           plan_id: string
           position: number
+          priority: string
           started_at: string | null
           status: string
           text: string

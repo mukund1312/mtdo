@@ -1,16 +1,22 @@
 import { describe, expect, it } from "vitest";
 
-import { kanbanMetadataFor, priorityLabel } from "./kanban-metadata";
+import { isTaskPriority, priorityLabel } from "./kanban-metadata";
 
-describe("Kanban metadata adapter", () => {
-  it("provides stable UI-only metadata for the same block", () => {
-    expect(kanbanMetadataFor({ id: "block-alpha" })).toEqual(kanbanMetadataFor({ id: "block-alpha" }));
+describe("Kanban task priority (migrations/0018)", () => {
+  it("recognizes every real CHECK-constrained value", () => {
+    expect(isTaskPriority("high")).toBe(true);
+    expect(isTaskPriority("medium")).toBe(true);
+    expect(isTaskPriority("low")).toBe(true);
   });
 
-  it("only exposes the presentation values supported by the temporary adapter", () => {
-    const metadata = kanbanMetadataFor({ id: "block-beta" });
-    expect(["high", "medium", "low"]).toContain(metadata.priority);
-    expect([25, 45, 60]).toContain(metadata.estimatedMinutes);
-    expect(priorityLabel(metadata.priority)).toMatch(/^(High|Medium|Low)$/);
+  it("rejects anything the CHECK constraint wouldn't accept", () => {
+    expect(isTaskPriority("urgent")).toBe(false);
+    expect(isTaskPriority("")).toBe(false);
+  });
+
+  it("formats each priority as a capitalized label", () => {
+    expect(priorityLabel("high")).toBe("High");
+    expect(priorityLabel("medium")).toBe("Medium");
+    expect(priorityLabel("low")).toBe("Low");
   });
 });
