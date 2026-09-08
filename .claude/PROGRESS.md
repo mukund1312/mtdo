@@ -9,7 +9,51 @@ Add each session's PROGRESS.md entry to the same branch as the code it describes
 
 ---
 
-## [backend] 2026-09-08 (PR pending) — Operating-engine plan, Phase 4 complete (backend); Janhwi back for frontend
+## [backend+web] 2026-09-08 (PR #146, merged) — Planning mode: swapped the localStorage placeholder for the real column
+
+Follow-up to Phase 4 (#145) and Janhwi's #144. She built the planning-mode selector *ahead* of
+0017 landing, deliberately scoped frontend-only with a localStorage placeholder — her own PR
+description says "until backend support exists." GitHub auto-merged both PRs cleanly (no textual
+conflict), but that only proves the merge was syntactically fine, not that the two halves actually
+worked *together* — the localStorage version and the real column had never been run against each
+other. Verified that combination separately (tsc/eslint/vitest clean, one full local Playwright
+pass green) before doing anything further.
+
+Once 0017 (real `plans.planning_mode`) was confirmed live, the founder asked for the swap to be
+done directly rather than left for Janhwi — this PR is that, touching three of her files
+(`planning-mode-selector.tsx`, `onboarding/page.tsx`, `settings/page.tsx`) plus the shared backend
+contract. Flagged clearly in the PR body for her review rather than landed silently, per the
+review-authority norm.
+
+- `planning-mode-selector.tsx` gained an optional `value` prop: controlled (Settings, a real plan
+  to read/write) vs. uncontrolled (onboarding, no plan row exists yet — stays localStorage-backed
+  draft state exactly as she built it, now actually wired to the create-plan payload via
+  `onChange`, which nothing previously read).
+- `settings/page.tsx`: real `plans.planning_mode` read/write, with an honest "set up a route
+  first" empty state instead of a live control with nothing to save to.
+- `lib/plan-generation/{types,persist}.ts` + `route.ts`: `persistGeneratedPlan()`'s trailing
+  optional params became an options object (`onboardingAnswers`, `planningMode`); Manual Setup and
+  Import, which pass neither, are unaffected. 4 new tests.
+- `e2e/settings.spec.ts`: the planning-mode test now verifies the actual round trip (onboarding
+  choice → persisted column → Settings reads it back, survives a reload) instead of "the selector
+  renders in both places"; added the honest-empty-state case.
+
+**A genuinely difficult local-verification stretch, worth recording honestly:** this session ran
+the e2e suite roughly 20+ times today. Later runs started failing in patterns inconsistent with
+any real code issue — a previously-100%-reliable, completely unrelated test (Settings' empty
+state) started failing too, and failures skewed toward whichever tests ran *later* in a sequential
+single-worker run. Traced to local exhaustion of a real external rate limit (Supabase anonymous
+sign-in and/or Anthropic), not a defect: a direct `curl` confirmed Supabase's signup endpoint was
+healthy standalone, and CI (a different, unburdened environment) passed cleanly on the exact same
+merged code for every PR today, including this one. Decision: stop re-running locally against a
+rate limit that isn't a code problem, rely on the one clean local pass already obtained for the
+genuinely new logic, and let CI be the tiebreaker — consistent with how this same class of issue
+was already diagnosed and resolved earlier in the session (a stale `.next` cache, that time).
+
+Verification: `tsc`/`eslint`/`vitest` (77/77) clean, `supabase/tests/run.sh` (150/150, unaffected
+but re-confirmed), CI `web-e2e` green on the actual merged code.
+
+## [backend] 2026-09-08 (PR #145, merged) — Operating-engine plan, Phase 4 complete (backend); Janhwi back for frontend
 
 Janhwi is back -- ownership reverts to the dev-split model starting this phase. Backend only
 here (Sonnet, no schema/RLS *design* -- one small branch in an already-hardened function).
