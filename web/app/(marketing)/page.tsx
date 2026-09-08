@@ -66,7 +66,10 @@ export default function MarketingHomePage() {
           ))}
           <Link href="/theme-studio" className="flex min-h-11 items-center rounded-full px-4 text-[13px] text-[var(--muted)] transition-colors hover:text-[var(--text)] focus-visible:ring-2 focus-visible:ring-[var(--accent)]">Theme Studio ↗</Link>
         </div>
-        <button type="button" onClick={() => setIsPaletteOpen(true)} className="flex min-h-11 items-center rounded-full border border-[var(--border)] px-4 text-[13px] font-medium text-[var(--text)] transition-all duration-200 hover:border-[rgba(34,211,238,.45)] hover:bg-[var(--surface)] focus-visible:ring-2 focus-visible:ring-[var(--accent)]">Explore concept <span className="ml-2 text-[var(--dim)]">↗</span></button>
+        <div className="flex items-center gap-2">
+          <Link href="/architecture-02" className="flex min-h-11 items-center rounded-full px-4 text-[13px] font-medium text-[var(--text)] transition-colors hover:text-[var(--accent)] focus-visible:ring-2 focus-visible:ring-[var(--accent)]">Open the app ↗</Link>
+          <button type="button" onClick={() => setIsPaletteOpen(true)} className="flex min-h-11 items-center rounded-full border border-[var(--border)] px-4 text-[13px] font-medium text-[var(--text)] transition-all duration-200 hover:border-[rgba(34,211,238,.45)] hover:bg-[var(--surface)] focus-visible:ring-2 focus-visible:ring-[var(--accent)]">Explore concept <span className="ml-2 text-[var(--dim)]">↗</span></button>
+        </div>
       </nav>
 
       <section id="arrival" className="relative mx-auto flex min-h-[820px] max-w-[1280px] flex-col justify-end px-[30px] pb-16 pt-[180px] sm:pb-24 lg:pb-28">
