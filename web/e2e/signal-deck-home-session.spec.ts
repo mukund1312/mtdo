@@ -23,10 +23,14 @@ test("Home and Time show honest empty states for a brand-new user, no fake liter
   await expect(page.getByText(/no active route yet/i)).toBeVisible();
   await expect(page.getByText(/0-day streak/i)).toBeVisible();
 
-  // Time deck: no fabricated "09:30 -- 10:15 / Two Sum" event -- an honest
-  // not-built-yet state instead.
+  // Time deck (Phase 6 frontend): no fabricated "09:30 -- 10:15 / Two Sum"
+  // event -- the real calendar's own honest empty state instead (nothing on
+  // the grid, nothing waiting in Unscheduled for a brand-new user with no
+  // blocks at all).
   await page.getByRole("navigation", { name: "Signal deck navigation" }).getByRole("button", { name: /time/i }).click();
-  await expect(page.getByText(/scheduling isn.t built yet/i)).toBeVisible();
+  await expect(page.getByRole("heading", { name: /give time/i })).toBeVisible();
+  await expect(page.getByText(/nothing waiting/i)).toBeVisible();
+  await expect(page.locator('[data-testid^="calendar-event-"]')).toHaveCount(0);
   await expect(page.getByText("Two Sum")).toHaveCount(0);
 
   // Goals is a first-class dock destination. It reads the existing active

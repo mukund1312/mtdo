@@ -4,6 +4,7 @@ import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { SignalDeckAccountControl } from "./account-control";
+import { CalendarDeck } from "./calendar-deck";
 import { GoalsDeck } from "./goals-deck";
 import { ListenDeck } from "./listen-deck";
 import { SignalDeckListenProvider, useSignalDeckListen } from "./listen-state";
@@ -24,6 +25,7 @@ import "./listen-deck.css";
 import "./listen-deck-polish.css";
 import "./goals-deck.css";
 import "./kanban-metadata.css";
+import "./calendar-deck.css";
 import "./fixed-layer-safety.css";
 
 type Deck = "home" | "work" | "goals" | "calendar" | "review" | "listen";
@@ -452,27 +454,6 @@ function LiveReadout() {
     <div className="a02-live-readout">
       <span className="a02-live-pip" /> {day} / {date} / {time} <i>{"///"}</i> PERSONAL ROUTE
     </div>
-  );
-}
-
-function CalendarDeck() {
-  return (
-    <section className="a02-calendar">
-      <div className="a02-view-head">
-        <div>
-          <span className="a02-eyebrow">TIME FIELD</span>
-          <h1>
-            Give time
-            <br />
-            <em>a shape.</em>
-          </h1>
-        </div>
-      </div>
-      <section className="a02-product-state">
-        <b>Scheduling isn&apos;t built yet.</b>
-        <p>A real calendar -- day/week/month views, drag-to-reschedule, Google Calendar sync -- lands in a later phase. Nothing here is faked in the meantime.</p>
-      </section>
-    </section>
   );
 }
 
