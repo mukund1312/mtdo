@@ -499,6 +499,7 @@ export type Database = {
       plan_categories: {
         Row: {
           coaching_framework: Json
+          created_at: string
           days: number[]
           id: string
           label: string
@@ -510,9 +511,11 @@ export type Database = {
           score_weight: number
           sort_order: number
           topic_type: string | null
+          weekly_target_blocks: number | null
         }
         Insert: {
           coaching_framework?: Json
+          created_at?: string
           days?: number[]
           id?: string
           label: string
@@ -524,9 +527,11 @@ export type Database = {
           score_weight?: number
           sort_order?: number
           topic_type?: string | null
+          weekly_target_blocks?: number | null
         }
         Update: {
           coaching_framework?: Json
+          created_at?: string
           days?: number[]
           id?: string
           label?: string
@@ -538,6 +543,7 @@ export type Database = {
           score_weight?: number
           sort_order?: number
           topic_type?: string | null
+          weekly_target_blocks?: number | null
         }
         Relationships: [
           {
@@ -728,6 +734,116 @@ export type Database = {
           },
         ]
       }
+      weekly_plan_changes: {
+        Row: {
+          change_type: string
+          created_at: string
+          decided_at: string | null
+          id: string
+          new_value: number | null
+          old_value: number | null
+          plan_id: string
+          reason: string
+          signal: string
+          status: string
+          target_category_id: string | null
+          user_id: string
+          weekly_plan_id: string
+        }
+        Insert: {
+          change_type: string
+          created_at?: string
+          decided_at?: string | null
+          id?: string
+          new_value?: number | null
+          old_value?: number | null
+          plan_id: string
+          reason: string
+          signal: string
+          status?: string
+          target_category_id?: string | null
+          user_id: string
+          weekly_plan_id: string
+        }
+        Update: {
+          change_type?: string
+          created_at?: string
+          decided_at?: string | null
+          id?: string
+          new_value?: number | null
+          old_value?: number | null
+          plan_id?: string
+          reason?: string
+          signal?: string
+          status?: string
+          target_category_id?: string | null
+          user_id?: string
+          weekly_plan_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "weekly_plan_changes_category_fk"
+            columns: ["target_category_id", "plan_id"]
+            isOneToOne: false
+            referencedRelation: "plan_categories"
+            referencedColumns: ["id", "plan_id"]
+          },
+          {
+            foreignKeyName: "weekly_plan_changes_plan_fk"
+            columns: ["weekly_plan_id", "user_id"]
+            isOneToOne: false
+            referencedRelation: "weekly_plans"
+            referencedColumns: ["id", "user_id"]
+          },
+        ]
+      }
+      weekly_plans: {
+        Row: {
+          created_at: string
+          effective_iso_week: string
+          generated_by: string
+          id: string
+          iso_week: string
+          metrics: Json
+          plan_id: string
+          status: string
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          effective_iso_week: string
+          generated_by?: string
+          id?: string
+          iso_week: string
+          metrics: Json
+          plan_id: string
+          status?: string
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          effective_iso_week?: string
+          generated_by?: string
+          id?: string
+          iso_week?: string
+          metrics?: Json
+          plan_id?: string
+          status?: string
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "weekly_plans_plan_fk"
+            columns: ["plan_id", "user_id"]
+            isOneToOne: false
+            referencedRelation: "plans"
+            referencedColumns: ["id", "user_id"]
+          },
+        ]
+      }
     }
     Views: {
       [_ in never]: never
@@ -753,6 +869,10 @@ export type Database = {
           isSetofReturn: false
         }
       }
+      accept_all_weekly_plan_changes: {
+        Args: { p_weekly_plan_id: string }
+        Returns: Json
+      }
       activate_plan: { Args: { p_plan_id: string }; Returns: undefined }
       append_event: {
         Args: {
@@ -774,6 +894,30 @@ export type Database = {
         SetofOptions: {
           from: "*"
           to: "activity_events"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
+      apply_weekly_plan_change: {
+        Args: { p_change_id: string; p_decision: string; p_new_value?: number }
+        Returns: {
+          change_type: string
+          created_at: string
+          decided_at: string | null
+          id: string
+          new_value: number | null
+          old_value: number | null
+          plan_id: string
+          reason: string
+          signal: string
+          status: string
+          target_category_id: string | null
+          user_id: string
+          weekly_plan_id: string
+        }
+        SetofOptions: {
+          from: "*"
+          to: "weekly_plan_changes"
           isOneToOne: true
           isSetofReturn: false
         }
@@ -831,6 +975,7 @@ export type Database = {
           isSetofReturn: true
         }
       }
+      iso_week_start: { Args: { p_iso_week: string }; Returns: string }
       pick_curriculum_item: {
         Args: { p_item_id: string; p_target_date?: string }
         Returns: {
@@ -882,6 +1027,20 @@ export type Database = {
           isOneToOne: true
           isSetofReturn: false
         }
+      }
+      refresh_weekly_plan_status: {
+        Args: { p_weekly_plan_id: string }
+        Returns: undefined
+      }
+      save_weekly_plan: {
+        Args: {
+          p_changes: Json
+          p_effective_iso_week: string
+          p_iso_week: string
+          p_metrics: Json
+          p_plan_id: string
+        }
+        Returns: string
       }
       schedule_block: {
         Args: {
@@ -964,6 +1123,10 @@ export type Database = {
           recent: Json
           summary: string
         }[]
+      }
+      weekly_performance: {
+        Args: { p_iso_week: string; p_plan_id: string }
+        Returns: Json
       }
     }
     Enums: {
