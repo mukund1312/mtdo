@@ -113,6 +113,57 @@ describe("buildWeeklyProposal", () => {
     expect(only(proposal.changes).reason).toContain("still a priority?");
   });
 
+  // The other side of the seed fixture's contract. 13_weekly_performance.sql
+  // asserts that weekly_performance() computes exactly these numbers for
+  // `system_design` (assertions 7-7g); this asserts that those numbers, fed
+  // to the engine unchanged, actually reach weekly_plan_changes as a flagged
+  // question. Neither suite alone catches a signal that classifies correctly
+  // and is then dropped on the way to a row, because each stops at the seam.
+  //
+  // Every field below is the fixture's real output, not a rounded retelling:
+  // a low-but-NON-ZERO pick rate in both trailing weeks, perfect completion,
+  // and an unremarkable pace -- the shape that proves avoided is about
+  // engagement rather than failure. If avoided ever stopped firing here, the
+  // category would fall through to on_track and produce NO change row at all
+  // while every other category kept working, which is exactly how this would
+  // reach a user: silently.
+  it("turns the seed fixture's real system_design numbers into a flagged question", () => {
+    const sysd = (pickRate: number, offered: number) =>
+      category({
+        category_id: "cat-sysd",
+        name: "system_design",
+        label: "System Design",
+        days_per_week: 2,
+        current_target: 2,
+        picked_count: 1,
+        done_count: 1,
+        completion_rate: 1.0,
+        pace_ratio: 1.0,
+        menu_offered_count: offered,
+        menu_picked_count: 1,
+        pick_rate: pickRate,
+      });
+
+    const proposal = buildWeeklyProposal({
+      current: week("2026-W36", [sysd(0.1667, 6)]),
+      previous: week("2026-W35", [sysd(0.2, 5)]),
+    });
+
+    expect(proposal.outcomes[0]?.classification).toBe("avoided");
+    expect(proposal.changes).toHaveLength(1);
+    expect(only(proposal.changes)).toMatchObject({
+      change_type: "flag_question",
+      target_category_id: "cat-sysd",
+      signal: "avoided",
+      old_value: null,
+      new_value: null,
+    });
+    // The reason quotes the real counts, so a user can check it on their board.
+    expect(only(proposal.changes).reason).toContain("1 of 6");
+    expect(only(proposal.changes).reason).toContain("1 of 5");
+    expect(only(proposal.changes).reason).toContain("System Design");
+  });
+
   it("proposes nothing for a category that is on track", () => {
     const cat = category();
     const proposal = buildWeeklyProposal({
