@@ -56,7 +56,6 @@ function ArchitectureTwoDeck() {
   const authState = searchParams.get("auth");
   const [deck, setDeck] = useState<Deck>("home");
   const [lensOpen, setLensOpen] = useState(false);
-  const [tutorOpen, setTutorOpen] = useState(false);
   const [activeBlock, setActiveBlock] = useState<TodayBlock | null>(null);
   const [walkthroughOpen, setWalkthroughOpen] = useState(false);
   const [confirmedWelcomeOpen, setConfirmedWelcomeOpen] = useState(false);
@@ -175,7 +174,6 @@ function ArchitectureTwoDeck() {
         <div className="a02-top-actions">
           <SignalDeckAccountControl />
           <button className="a02-guide-trigger" onClick={() => setWalkthroughOpen(true)} aria-keyshortcuts="?">? Guide</button>
-          <button className="a02-command" onClick={() => setTutorOpen(true)}>⌘ &nbsp; Ask anything <kbd>space</kbd></button>
         </div>
       </header>
 
@@ -186,11 +184,9 @@ function ArchitectureTwoDeck() {
       {deck === "review" && <ProgressDeck />}
       {deck === "listen" && <ListenDeck />}
 
-      <button className={`a02-beacon ${tutorOpen ? "is-active" : ""}`} onClick={() => setTutorOpen(true)} aria-label="Open tutor copilot"><span>✦</span><i>CO-PILOT</i></button>
       <AudioTransport onOpenListen={() => setDeck("listen")} />
       <DeckDock active={deck} onChange={setDeck} onMore={() => router.push("/architecture-02/settings")} />
-      {lensOpen && <ObjectLens block={activeBlock} onClose={() => setLensOpen(false)} onFocus={beginActiveBlock} onTutor={() => setTutorOpen(true)} />}
-      {tutorOpen && <TutorConsole onClose={() => setTutorOpen(false)} />}
+      {lensOpen && <ObjectLens block={activeBlock} onClose={() => setLensOpen(false)} onFocus={beginActiveBlock} />}
       {confirmedWelcomeOpen && <SignalDeckConfirmedWelcome onBeginGuide={beginConfirmedGuide} onRecover={recoverConfirmation} onSkipToOnboarding={finishConfirmedJourney} />}
       {walkthroughOpen && <SignalDeckWalkthrough
         completionLabel={confirmedWalkthrough ? "Set up my route ↗" : undefined}
@@ -474,12 +470,8 @@ function AudioTransport({ onOpenListen }: { onOpenListen: () => void }) {
   return <div className="a02-audio"><button onClick={toggle} aria-label={active ? "Pause listening preview" : "Play listening preview"} disabled={!musicTrack && !radioStation}>{active ? "Ⅱ" : "▶"}</button><div className={active ? "a02-wave is-playing" : "a02-wave"}>{Array.from({ length: 18 }, (_, index) => <i key={index} />)}</div><span><b>{title}</b><small>{detail}</small></span><button className="a02-audio-expand" onClick={onOpenListen} aria-label="Open Listen">↗</button></div>;
 }
 
-function ObjectLens({ block, onClose, onFocus, onTutor }: { block: TodayBlock | null; onClose: () => void; onFocus: () => void; onTutor: () => void }) {
+function ObjectLens({ block, onClose, onFocus }: { block: TodayBlock | null; onClose: () => void; onFocus: () => void }) {
   const title = block?.text ?? "No task selected";
   const detail = block?.notes?.trim() || "Open a task from Today to see its details here.";
-  return <section className="a02-lens" role="dialog" aria-modal="true" aria-label="Task lens"><button className="a02-lens-close" onClick={onClose}>ESC / close ×</button><div className="a02-lens-orbit"><i /><i /><i /><b>01</b></div><div className="a02-lens-copy"><span className="a02-eyebrow">TASK OBJECT / {block?.status === "in_progress" ? "IN MOTION" : "READY"}</span><h2>{title}</h2><p>{detail}</p><div className="a02-lens-meta"><span>{block?.status.replace("_", " ") ?? "No task"}</span><span>{block?.elapsed_seconds ? `${Math.max(1, Math.round(block.elapsed_seconds / 60))} MIN` : "FOCUS"}</span><span>TODAY</span></div><div><button className="a02-lens-go" onClick={onFocus}>Launch focus →</button><button className="a02-lens-ask" onClick={onTutor}>Ask co-pilot</button></div></div><aside className="a02-lens-side"><span>COACHING SIGNAL</span><p>Before you begin, name the one question this block needs to answer.</p><button onClick={onTutor}>Open thought prompt ↗</button></aside></section>;
-}
-
-function TutorConsole({ onClose }: { onClose: () => void }) {
-  return <section className="a02-tutor" role="dialog" aria-label="Tutor copilot"><header><div><span className="a02-live-pip" /> CO-PILOT ONLINE</div><button onClick={onClose}>×</button></header><div className="a02-tutor-stream"><p className="a02-tutor-context">CONTEXT RECEIVED / TWO SUM / DSA</p><article><i>YOU</i><p>I keep thinking of two loops. Is that wrong?</p></article><article className="a02-tutor-response"><i>CO-PILOT</i><p>It is a sound starting point. Before replacing it, name the repeated question the inner loop asks. Could an earlier answer be saved?</p></article></div><div className="a02-tutor-input"><button>+</button><span>Reply with a thought…</span><kbd>↵</kbd></div></section>;
+  return <section className="a02-lens" role="dialog" aria-modal="true" aria-label="Task lens"><button className="a02-lens-close" onClick={onClose}>ESC / close ×</button><div className="a02-lens-orbit"><i /><i /><i /><b>01</b></div><div className="a02-lens-copy"><span className="a02-eyebrow">TASK OBJECT / {block?.status === "in_progress" ? "IN MOTION" : "READY"}</span><h2>{title}</h2><p>{detail}</p><div className="a02-lens-meta"><span>{block?.status.replace("_", " ") ?? "No task"}</span><span>{block?.elapsed_seconds ? `${Math.max(1, Math.round(block.elapsed_seconds / 60))} MIN` : "FOCUS"}</span><span>TODAY</span></div><div><button className="a02-lens-go" onClick={onFocus}>Launch focus →</button></div></div></section>;
 }
