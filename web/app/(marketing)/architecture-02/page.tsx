@@ -24,6 +24,7 @@ import "./listen-deck.css";
 import "./listen-deck-polish.css";
 import "./goals-deck.css";
 import "./kanban-metadata.css";
+import "./fixed-layer-safety.css";
 
 type Deck = "home" | "work" | "goals" | "calendar" | "review" | "listen";
 

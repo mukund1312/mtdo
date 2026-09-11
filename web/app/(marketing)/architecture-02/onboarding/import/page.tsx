@@ -11,6 +11,7 @@ import { PLAN_SCHEMA_VERSION, PlanGenerationError, type GeneratedPlan } from "@/
 import "../../signal-deck.css";
 import "../onboarding.css";
 import "./import-export.css";
+import "../../fixed-layer-safety.css";
 
 type Tab = "import" | "export";
 type ImportState = "idle" | "previewing" | "importing" | "error";

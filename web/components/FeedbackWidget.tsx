@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { usePathname } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { submitFeedback } from "@/lib/feedback";
@@ -24,6 +24,20 @@ export function FeedbackWidget() {
   // surface in the product... nothing else on screen." A floating widget
   // there would violate that on every visit, not just while open.
   const isFocusSurface = pathname === "/session";
+  const isSignalDeck = pathname.startsWith("/architecture-02");
+  const isSignalDeckOnboarding = pathname.startsWith("/architecture-02/onboarding");
+
+  // Architecture 02 has a persistent dock and two utility controls. Keep the
+  // feedback form in the same layout system instead of letting its global
+  // fixed position compete with them. The attribute is intentionally set only
+  // while this temporary panel is open, so normal page density is unchanged.
+  useEffect(() => {
+    if (!isSignalDeck) return;
+    const root = document.documentElement;
+    if (state === "closed") root.removeAttribute("data-a02-feedback-open");
+    else root.setAttribute("data-a02-feedback-open", "true");
+    return () => root.removeAttribute("data-a02-feedback-open");
+  }, [isSignalDeck, state]);
 
   const open = useCallback(() => {
     setState("open");
@@ -56,7 +70,12 @@ export function FeedbackWidget() {
 
   if (state === "closed") {
     return (
-      <button type="button" className={styles.trigger} onClick={open} aria-label="Send feedback">
+      <button
+        type="button"
+        className={`${styles.trigger} ${isSignalDeck ? styles.signalDeckTrigger : ""} ${isSignalDeckOnboarding ? styles.signalDeckSetup : ""}`}
+        onClick={open}
+        aria-label="Send feedback"
+      >
         Feedback
       </button>
     );
@@ -64,7 +83,7 @@ export function FeedbackWidget() {
 
   if (state === "sent") {
     return (
-      <div className={styles.panel} role="status">
+      <div className={`${styles.panel} ${isSignalDeck ? styles.signalDeckPanel : ""} ${isSignalDeckOnboarding ? styles.signalDeckSetup : ""}`} role="status">
         <p className={styles.sentNote}>Thanks — that is on its way.</p>
       </div>
     );
@@ -73,31 +92,34 @@ export function FeedbackWidget() {
   const sending = state === "sending";
 
   return (
-    <div className={styles.panel} role="dialog" aria-modal="false" aria-label="Send feedback">
-      <div className={styles.panelHead}>
-        <span>Feedback</span>
-        <button type="button" className={styles.closeButton} onClick={close} aria-label="Close feedback form">
-          ×
+    <>
+      <button type="button" className={styles.backdrop} onClick={close} aria-label="Close feedback form" tabIndex={-1} />
+      <div className={`${styles.panel} ${isSignalDeck ? styles.signalDeckPanel : ""} ${isSignalDeckOnboarding ? styles.signalDeckSetup : ""}`} role="dialog" aria-modal="true" aria-label="Send feedback">
+        <div className={styles.panelHead}>
+          <span>Feedback</span>
+          <button type="button" className={styles.closeButton} onClick={close} aria-label="Close feedback form">
+            ×
+          </button>
+        </div>
+        <textarea
+          className={styles.textarea}
+          value={message}
+          onChange={(event) => setMessage(event.target.value)}
+          placeholder="What's working, what isn't -- anything."
+          maxLength={4096}
+          disabled={sending}
+          autoFocus
+        />
+        {state === "error" && errorText && <p className={styles.errorNote}>{errorText}</p>}
+        <button
+          type="button"
+          className={styles.sendButton}
+          onClick={() => void submit()}
+          disabled={sending || !message.trim()}
+        >
+          {sending ? "Sending…" : "Send"}
         </button>
       </div>
-      <textarea
-        className={styles.textarea}
-        value={message}
-        onChange={(event) => setMessage(event.target.value)}
-        placeholder="What's working, what isn't -- anything."
-        maxLength={4096}
-        disabled={sending}
-        autoFocus
-      />
-      {state === "error" && errorText && <p className={styles.errorNote}>{errorText}</p>}
-      <button
-        type="button"
-        className={styles.sendButton}
-        onClick={() => void submit()}
-        disabled={sending || !message.trim()}
-      >
-        {sending ? "Sending…" : "Send"}
-      </button>
-    </div>
+    </>
   );
 }

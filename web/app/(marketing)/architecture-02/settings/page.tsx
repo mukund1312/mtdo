@@ -8,6 +8,7 @@ import { isPlanningMode, type PlanningMode } from "../planning-mode";
 import "../signal-deck.css";
 import "../planning-mode-selector.css";
 import "./settings.css";
+import "../fixed-layer-safety.css";
 
 type AIStatus = { models: string[]; provider: string; reachable: boolean };
 type LoadState = "loading" | "ready" | "error";

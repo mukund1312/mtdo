@@ -37,6 +37,15 @@
   box-shadow: 0 10px 40px rgba(0, 0, 0, 0.6);
 }
 
+.backdrop {
+  position: fixed;
+  z-index: 39;
+  inset: 0;
+  border: 0;
+  background: rgba(3, 4, 16, 0.16);
+  cursor: default;
+}
+
 .panelHead {
   display: flex;
   align-items: center;
@@ -120,10 +129,80 @@
   font-size: 13px;
 }
 
+/* Architecture 02 reserves a fixed bottom system for its dock and utility
+   controls. These placements consume that shared geometry rather than adding
+   an unrelated global offset. */
+.signalDeckTrigger {
+  right: var(--a02-edge, var(--space-lg));
+  bottom: var(--a02-dock-bottom, var(--space-lg));
+}
+
+.signalDeckPanel {
+  right: var(--a02-edge, var(--space-lg));
+  bottom: calc(
+    var(--a02-dock-bottom, var(--space-lg)) +
+    var(--a02-dock-height, 0px) +
+    var(--a02-utility-height, 0px) +
+    (var(--a02-control-gap, 0px) * 2)
+  );
+  max-height: calc(100dvh - 96px);
+  overflow: auto;
+}
+
+.signalDeckSetup.trigger {
+  top: 21px;
+  right: 150px;
+  bottom: auto;
+  padding: 7px 10px;
+  font-size: 11px;
+}
+
+.signalDeckSetup.panel {
+  top: max(96px, env(safe-area-inset-top));
+  right: var(--space-lg);
+  bottom: auto;
+}
+
 /* Keep the global feedback control clear of mobile bottom navigation. */
 @media (max-width: 560px) {
   .trigger,
   .panel {
     bottom: calc(var(--space-lg) + 68px);
+  }
+
+  .signalDeckTrigger {
+    right: var(--a02-edge, 18px);
+    bottom: calc(
+      var(--a02-dock-bottom, 17px) +
+      var(--a02-dock-height, 55px) +
+      var(--a02-utility-height, 45px) +
+      (var(--a02-control-gap, 14px) * 2)
+    );
+  }
+
+  .signalDeckPanel {
+    right: var(--a02-edge, 18px);
+    bottom: calc(
+      var(--a02-dock-bottom, 17px) +
+      var(--a02-dock-height, 55px) +
+      var(--a02-utility-height, 45px) +
+      (var(--a02-control-gap, 14px) * 2)
+    );
+    width: min(320px, calc(100vw - 36px));
+    max-height: calc(100dvh - 180px);
+  }
+
+  .signalDeckSetup.trigger {
+    top: 17px;
+    right: 100px;
+    bottom: auto;
+    padding: 7px 8px;
+    font-size: 10px;
+  }
+
+  .signalDeckSetup.panel {
+    top: 82px;
+    right: 18px;
+    bottom: auto;
   }
 }
