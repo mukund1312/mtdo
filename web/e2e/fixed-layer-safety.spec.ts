@@ -27,7 +27,6 @@ test("Signal Deck persistent controls share a collision-free mobile safe area", 
 
     return {
       audio: rect(".a02-audio"),
-      beacon: rect(".a02-beacon"),
       dock: rect(".a02-dock"),
       feedback: rect('[aria-label="Send feedback"]'),
       horizontalOverflow: document.documentElement.scrollWidth > window.innerWidth,
@@ -36,15 +35,12 @@ test("Signal Deck persistent controls share a collision-free mobile safe area", 
 
   expect(geometry.horizontalOverflow).toBe(false);
   expect(geometry.audio).not.toBeNull();
-  expect(geometry.beacon).not.toBeNull();
   expect(geometry.dock).not.toBeNull();
   expect(geometry.feedback).not.toBeNull();
-  expect(overlaps(geometry.audio!, geometry.beacon!)).toBe(false);
   expect(overlaps(geometry.audio!, geometry.dock!)).toBe(false);
-  expect(overlaps(geometry.beacon!, geometry.dock!)).toBe(false);
   expect(overlaps(geometry.feedback!, geometry.audio!)).toBe(false);
-  expect(overlaps(geometry.feedback!, geometry.beacon!)).toBe(false);
   expect(overlaps(geometry.feedback!, geometry.dock!)).toBe(false);
+  expect(await page.getByRole("button", { name: /ask anything|open tutor copilot/i }).count()).toBe(0);
 });
 
 test("Onboarding keeps Feedback in the header and opens it as a modal", async ({ page }) => {

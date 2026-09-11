@@ -40,20 +40,6 @@ html[data-a02-feedback-open="true"] .a02-shell:not(.a02-onboarding-shell) {
   bottom: calc(var(--a02-dock-bottom) + 6px);
 }
 
-/* Co-pilot belongs above the dock, never beside a page heading. */
-.a02-beacon {
-  z-index: 21;
-  right: var(--a02-edge);
-  top: auto;
-  bottom: calc(var(--a02-dock-bottom) + var(--a02-dock-height) + var(--a02-control-gap));
-}
-
-.a02-tutor {
-  z-index: 30;
-  right: var(--a02-edge);
-  bottom: calc(var(--a02-dock-bottom) + var(--a02-dock-height) + var(--a02-control-gap));
-}
-
 .a02-home { padding-bottom: max(175px, var(--a02-content-safe-bottom)); }
 .a02-work,
 .a02-calendar,
@@ -68,8 +54,7 @@ html[data-a02-feedback-open="true"] .a02-onboarding-shell { --a02-feedback-clear
 .a02-onboarding-panel { padding-bottom: calc(70px + 64px + var(--a02-feedback-clearance)); }
 .a02-settings { padding-bottom: calc(80px + 64px + var(--a02-feedback-clearance, 0px)); }
 
-/* The dock is wide enough to reach the desktop transport at tablet widths.
-   Keep the full transport, but give it the same utility row as Co-pilot. */
+/* The dock is wide enough to reach the desktop transport at tablet widths. */
 @media (min-width: 561px) and (max-width: 900px) {
   .a02-audio {
     bottom: calc(var(--a02-dock-bottom) + var(--a02-dock-height) + var(--a02-control-gap));
@@ -90,18 +75,6 @@ html[data-a02-feedback-open="true"] .a02-onboarding-shell { --a02-feedback-clear
   }
 
   .a02-audio {
-    bottom: calc(var(--a02-dock-bottom) + var(--a02-dock-height) + var(--a02-control-gap));
-  }
-
-  .a02-beacon {
-    right: var(--a02-edge);
-    bottom: calc(var(--a02-dock-bottom) + var(--a02-dock-height) + var(--a02-control-gap));
-  }
-
-  .a02-tutor {
-    right: 14px;
-    left: 14px;
-    top: 82px;
     bottom: calc(var(--a02-dock-bottom) + var(--a02-dock-height) + var(--a02-control-gap));
   }
 
