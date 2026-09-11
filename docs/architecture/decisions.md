@@ -25,6 +25,7 @@ plan docs (`docs/designs/*.md`). Each entry: the call, and the reason.
 | 2026-09-04 | **Every pinned version and config choice above was verified**, not assumed | `npm view <pkg> version`/`versions` for real current releases, then a full `rm -rf node_modules && npm ci` + `tsc --noEmit` + `eslint .` + `next build` pass before committing — three real, current ecosystem incompatibilities (TS7, FlatCompat, `getFilename`) were caught this way and would otherwise have shipped broken |
 | 2026-09-06 | **`EmberMorph` takes plain `sessionId`/`plannedDurationS`/`elapsedS`/`originRect` values via a `phase`-tagged `trigger` prop, never a `focus_sessions` row or a Supabase client** (`api.md` §4.1) | The marketing showcase has no auth and no real session, so the component can't assume either; a `phase` union plus an `onExitComplete` callback also means neither caller has to separately track "is the reverse animation still playing" |
 | 2026-09-06 | **`daily_rollups` is materialized by a scheduled full recompute (pg_cron), not by a trigger on the ledger** (`0009`/`0010`, api.md §3a) | A trigger would put aggregation on the user's write path, where a failure fails the session or task write for the sake of a derived number; and incremental counters cannot self-heal, so a full recompute has to exist anyway — at which point the trigger is a second, divergeable writer into a table whose whole rule is "derived, NEVER hand-written". `computed_at` ("how stale is this row") is job-shaped and meaningless under a trigger. In-database cron over an Edge Function or a Vercel cron route because the aggregation is one SQL statement over data already in Postgres: no network hop, no service-role key in a second platform's environment, no third deploy target to keep in step with the migration |
+| 2026-09-11 | **The weekly recommendation engine is 100% deterministic and rule-based — zero AI calls in the metrics OR the recommendation path** (`0021`/`0022`, api.md §3f/§3g) | The moat is a rule engine over real behavioural data nobody else has, not a wrapper around a model a user could prompt themselves. Full writeup below |
 | 2026-09-07 | **Curriculum reaches the board as an unlocking, carry-forward weekly menu the user picks from — it is never scheduled onto a calendar date** (`0012`, api.md §3b) | `prompt.ts` rule 2, `core.py`'s `categories_for_day()` and `types.ts` all already say curriculum is "not locked to a specific calendar day"; `plan_categories.days` is a COUNT for curriculum categories (`days.length` = day-lists per week), not a weekday filter. A `floor((today - plan_start)/7)` bridge would have looked right and quietly rebuilt the day-by-day schedule the product abandoned. Carry-forward rather than the terminal app's use-it-or-lose-it because a generated plan holds exactly two weeks of content, so one missed week would cost half the plan |
 
 ---
@@ -485,6 +486,161 @@ so deleting a *scheduled, synced* block drops the link row and orphans the Googl
 cannot make an HTTP call from a cascade. The call-site contract (api.md §3e) is therefore "unsync
 before deleting"; a real reaper for events orphaned by a client that didn't is not built, and is
 named here as debt rather than discovered later.
+
+## 2026-09-11 — The weekly engine is deterministic by design
+
+**This overrides the operating-engine plan's own Phase 7 text**, which described
+`generateWeeklyPlanRecommendation()` as an LLM call producing a candidate `WeeklyPlanSchema`
+validated after the fact, and paired it with an `aiService.reviewWeek()` natural-language summary.
+Decided with the founder before any code was written.
+
+**The decision: no AI anywhere in the metrics path or the recommendation path.** Not as a
+temporary state until an API key is topped up — as the product's shape. `aiService.reviewWeek()`
+is **not built** in this phase and is explicitly descoped.
+
+**Why, in the founder's own framing:** the point of this engine is precisely that it is *not* a
+thin wrapper around a model. A user who wants a language model's opinion on their study week can
+open one and ask — that is worth nothing as a product. What nobody else can do is run
+deterministic rules over this user's real behavioural history: what they actually picked, what
+they actually finished, how long it actually took against what they estimated, what they quietly
+stopped opening. That data is the moat; the engine over it is the product.
+
+**The plan already agreed with this in spirit and we extended it one step.** Its own Phase 7
+section says *"the metrics must exist and be trusted before AI is allowed near them"* and **"AI
+never computes these"**. That sentence was written about the raw metrics. It applies with at least
+as much force to the recommendations, which are what actually change a user's plan — so "AI never
+computes these" now covers the rule evaluation and the `reason` strings too.
+
+**Three concrete consequences, none of them cosmetic:**
+
+1. **Reproducibility.** The same two weeks of numbers always produce the same classification and
+   the same proposal. That is what makes the engine unit-testable at exact boundary values, what
+   lets `weekly_plans.metrics` be a meaningful audit record, and what means a user who asks "why
+   did it say that?" gets an answer that is actually true rather than reconstructed after the fact.
+2. **Every `reason` string is assembled from computed numbers** — "Finished 1 of 4 tasks this week
+   (25%) and 2 of 6 the week before (33%) — under half both weeks." A user can check that against
+   their own board. A generated sentence cannot be checked, and a plausible-sounding wrong one is
+   worse than no sentence at all.
+3. **`generated_by` is `'rules_v1'`, not `'ai'`.** True today, versioned, and it leaves room for a
+   genuine `'ai_v1'` generator later with no schema change — so this is a decision that can be
+   revisited without being unpicked.
+
+### Where the logic lives, and why it is split across SQL and TypeScript
+
+Raw metric computation is in Postgres (`weekly_performance()`, 0021); rule evaluation and proposal
+generation are in TypeScript (`web/lib/planning/**`). This follows two precedents already set here
+rather than inventing a third arrangement: derived data is computed in the database
+(`daily_rollups`, 2026-09-06), and business-rule validation lives in TS
+(`plan-generation/parse.ts`). The thresholds also want to be readable and argued about, which they
+are not as SQL literals buried in a `CASE`.
+
+**But the hard constraints are enforced in BOTH.** The database does not get to assume its input
+came from the real engine: `save_weekly_plan()` re-validates every incoming change against the
+same rail `apply_weekly_plan_change()` applies. A stored proposal that violates the cap is a
+proposal that fails the instant a user clicks accept, which is the worst possible place to find
+out. Two of the four constraints are structural rather than checked — no code path in any of these
+functions writes `plans.goal_line` or `plan_categories.days` — and both are pinned by test, so a
+future edit that adds such a path fails loudly rather than passing as an ordinary feature.
+
+### `weekly_performance()` is read-computed, not trigger-maintained
+
+Same reasoning as `daily_rollups` (2026-09-06), and it applies more strongly here: a trigger would
+put a week-wide aggregation on the user's write path where a failure fails the task write for the
+sake of a derived number; and incremental counters cannot self-heal, so a full recompute has to
+exist anyway — at which point the trigger is a second, divergeable writer. Unlike `daily_rollups`
+there is not even a freshness argument for materializing it: a weekly review is read a handful of
+times per user per week, by a human, on demand.
+
+It also deliberately does **not** read `daily_rollups`, which would have given study days and
+focus time for free, already bucketed per user zone. That table is a pg_cron job's output, and a
+review generated inside the ten-minute gap would quietly under-report work the user did in the
+minutes before opening it. It reads the same two source tables `daily_rollups` reads, under the
+same day-attribution rules, so the two agree by construction and this one is never stale.
+
+### The lever: a new `weekly_target_blocks`, not `min_blocks`
+
+The brief suggested adjusting `plan_categories.min_blocks`. **It is the wrong lever, and using it
+would have shipped a recommendation engine whose accepted changes do nothing.** `min_blocks` is a
+per-*day* floor — that is what `prompt.ts` tells every model to write ("floor for counting this
+subject 'done' that day, 0-6"), and what `core.py`'s `category_own_complete()` means by it — and
+it is read by nothing in the web product. Its real-world values are 0 or 1, so ±25% of it rounds
+to no change at all.
+
+So Phase 7 adds `plan_categories.weekly_target_blocks` (nullable, resolving to
+`array_length(days,1)`). A genuinely new concept gets a genuinely new column rather than a quiet
+redefinition of one the plan-generation prompt still writes with the old meaning.
+
+**It does not violate "never invent availability".** `days` is what the user told us about their
+life and stays untouchable; a weekly target is a *goal*. Nothing is auto-placed from it, no date
+is derived from it, and `ensure_curriculum_menu()` does not read it.
+
+### The thresholds, and why each number
+
+All evaluated over the **trailing two weeks**, never one — a person has a bad week for reasons
+that have nothing to do with their study plan, and an engine that rewrites the plan every time
+they do is worse than no engine. These are starting points chosen for defensibility, **not tuned
+against real usage data, because there isn't any yet**; that is the first thing to revisit once
+there is.
+
+| threshold | value | reasoning |
+|---|---|---|
+| struggling — completion | `< 0.5` | Below half of *your own* choices, a far stronger signal than missing a number someone else set. Exactly 0.5 does not fire: at exactly half, the plan is not proven too heavy. |
+| struggling — pace | `> 1.3` | Estimates are coarse and user/model-supplied; treating a 10% overrun as a problem would fire constantly and mean nothing. |
+| coasting | `>= 0.9` **and** `< 0.7` | Both arms required. Finishing everything at a normal pace is just a good week; finishing fast while dropping half the tasks is triage, not spare capacity. |
+| avoided | `< 0.3` | Deliberately low: this signal adjusts nothing, it interrupts the user with a question, and a question asked on thin evidence is worse than silence. |
+| low-week floor | `< 0.40` overall | Someone who completed under 40% of their plan does not need more of anything — and the category that looks like it has spare capacity is very often the one they retreated into while avoiding the hard one. Suppresses increases everywhere; decreases are always allowed. |
+| adjustment step | ±25% | Confirmed from the brief. Large enough to be felt in one week, small enough that two consecutive wrong calls are recoverable. |
+| the cap | ±30% **or one whole block, whichever is larger** | The one number changed from the brief, and it had to be — see below. |
+
+**Why the cap needed the "or one whole block" half.** A flat ±30% rail is unimplementable against
+small integers. At a target of 3, one extra block is a 33% move, so every proposal would be
+rounded back to 3 and the engine would silently never adjust a 3-block category in either
+direction — a dead zone indistinguishable from "the rules are broken", and one that would have
+shipped looking correct. One block is the smallest expressible change; the proportional rail binds
+once targets are large enough for it to mean something (at a target of 10 it allows 7..13, not
+9..11). Caught before shipping because the TS generator and the SQL rail were written against each
+other: the generator could propose 3 → 4 and the RPC would have rejected it at the moment a user
+clicked accept.
+
+**Precedence is `avoided` → `struggling` → `coasting`**, which the brief left open. Engagement is
+upstream of everything else: a category someone picks 2 of 10 offered tasks from and then fails
+one of satisfies both `avoided` and `struggling`, but easing their weekly target answers a
+question they never asked — their target was never the obstacle, they aren't opening the category
+at all. Adjusting a number would also *look* like the engine had handled it, which is worse than
+doing nothing.
+
+### Two deviations from the brief's metric definitions, both flagged rather than made quietly
+
+1. **`pace_ratio` is a ratio of sums, not a mean of per-task ratios.** The brief said "averaged
+   over completed tasks". A mean lets one five-minute task done in fifteen produce a ratio of 3.0
+   and swing a whole week's classification. The mean is still computed and exposed as
+   `pace_ratio_mean` for display; the classifier reads the robust statistic.
+2. **A done task with an estimate but NO settled focus session is excluded from pace entirely**,
+   rather than counted as zero minutes. Without this, a user who finishes their work without ever
+   starting a timer computes as ~0 minutes against a real estimate, classifies as *coasting*, and
+   is handed 25% more work for not using a Pomodoro. That is the most damaging false positive this
+   engine can produce, and it is closed in the metric rather than patched around in the rules.
+
+### `menu_offered_count` is an estimate, and the direction of its error is chosen
+
+Nothing records the unlock cursor's *historical* position — `plan_categories` holds only where it
+is now and when it last moved. Since the cursor advances at most once per ISO week, walking it
+back one per elapsed week gives a **lower bound** on what was unlocked during a past week.
+Under-counting what was offered *inflates* `pick_rate`, which makes `avoided` **harder** to
+trigger — and since that signal interrupts a user with a question about their own priorities,
+biasing against a false accusation is the right way to be wrong.
+
+### Known gap, named rather than discovered later
+
+`postponement_count` captures the two shapes of "postponed" the data can actually express: a
+`task_regressed` event inside the week, and an open block dated before the week that is still
+unfinished. A block **silently moved forward** by a cross-date `schedule_block()` call leaves no
+trace at all — `blocks.date` is mutable and nothing records the move. That third, arguably most
+common, shape is therefore not counted. Recording it would need a move history the schema does not
+have; it is named here as debt rather than discovered from a number that looks wrong later.
+
+---
+
 
 ## Open, not yet decided
 

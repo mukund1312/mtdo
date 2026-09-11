@@ -93,7 +93,30 @@ plans(id, user_id, app_name, goal_line, is_active, created_at,
 plan_categories(id, plan_id, name, label, days int[], min_blocks, score_weight,
                 topic_type, coaching_framework jsonb, sort_order,
                 menu_unlocked_week_index (check >= 0), menu_unlocked_iso_week,
+                weekly_target_blocks null (check >= 0),   -- 0021, Phase 7
+                created_at timestamptz not null default now(),  -- 0021, Phase 7
                 unique(plan_id, name), unique(id, plan_id))
+  -- weekly_target_blocks (0021): blocks per week the user is AIMING to
+  -- finish in this category. NULLABLE with no default -- "never set an
+  -- explicit target" is a real, distinct state, same load-bearing NULL as
+  -- profiles.timezone. Resolve it as
+  --   coalesce(weekly_target_blocks, array_length(days, 1))
+  -- since one unlocked week_index holds exactly array_length(days,1) items.
+  -- THIS IS THE ONLY FIELD THE WEEKLY RULES ENGINE MAY ADJUST, and only
+  -- through apply_weekly_plan_change() (0022) after a human accepts.
+  -- Deliberately NOT min_blocks: that is a per-DAY floor written by plan
+  -- generation (prompt.ts still writes it with that meaning) whose real
+  -- values are 0 or 1, so +/-25% of it rounds to no change at all.
+  -- It is a GOAL, not a schedule: nothing is auto-placed from it, no date is
+  -- derived from it, and ensure_curriculum_menu() does not read it -- which
+  -- is why moving it does not "invent availability" the way changing `days`
+  -- would. api.md §3g.
+  -- created_at (0021): lets weekly_performance() report whether a category
+  -- existed for the whole week under review, so the rules engine can EXCLUDE
+  -- one that didn't rather than reading its quiet as "on track". Backfilled
+  -- from plans.created_at for rows predating 0021 -- exact, because nothing
+  -- adds a category to a plan after creation today (extend_plan() appends
+  -- items to existing categories, never new categories).
   -- `days` means two things and the difference matters. On the onboarding
   -- INPUT it's the weekdays the user can study. For a CURRICULUM category
   -- only days.length survives: how many day-lists make one week of content.
@@ -298,6 +321,65 @@ calendar_event_links(id uuid pk, user_id, block_id,
   -- cascade). Call sites unsync before deleting (api.md §3e); no reaper
   -- exists. RESTRICT was rejected — a user must always be able to delete
   -- their own block, calendar or no calendar.
+
+-- the weekly engine (0022, Phase 7; api.md §3f/§3g, decisions.md 2026-09-11).
+-- DETERMINISTIC BY DESIGN: every row here is produced by rule evaluation over
+-- weekly_performance()'s numbers, never by a model. That is a product
+-- decision, not a temporary state.
+weekly_plans(id uuid pk, user_id, plan_id,
+             iso_week,            -- the week whose performance was reviewed
+             effective_iso_week,  -- the week the proposed changes take effect in
+             status check in ('proposed','accepted','rejected','partial'),
+             metrics jsonb not null, generated_by default 'rules_v1',
+             created_at, updated_at,
+             unique(plan_id, iso_week), unique(id, user_id),
+             fk (plan_id, user_id) → plans (id, user_id) on delete restrict)
+  -- Clients get SELECT only; written by save_weekly_plan() (api.md §3g).
+  -- iso_week and effective_iso_week are separate columns rather than one
+  -- inferred from the other, so "which week is this about" is never
+  -- ambiguous at a read site.
+  -- metrics is the FULL weekly_performance() output for BOTH trailing weeks
+  -- ({schema_version, current, previous}; previous is null for a plan's
+  -- first review) exactly as the engine saw it. It is a frozen audit
+  -- snapshot -- never read it back instead of calling weekly_performance(),
+  -- or the Review deck starts showing history as if it were today.
+  -- generated_by is 'rules_v1': versioned, and deliberately not 'ai'. It is
+  -- true, and it leaves room for a real 'ai_v1' generator later with no
+  -- schema change.
+  -- status is RECOMPUTED from the child rows after every decision
+  -- (refresh_weekly_plan_status(), internal) rather than written alongside
+  -- them, so the summary cannot drift from what it summarises.
+
+weekly_plan_changes(id uuid pk, weekly_plan_id, user_id, plan_id,
+                    change_type check in ('weekly_target_blocks','flag_question'),
+                    target_category_id null, old_value numeric, new_value numeric,
+                    reason text not blank, signal check in
+                      ('struggling','coasting','avoided'),
+                    status check in ('pending','accepted','rejected','edited'),
+                    decided_at, created_at,
+                    check ((status = 'pending') = (decided_at is null)),
+                    check (flag_question ⇒ both values null;
+                           otherwise ⇒ both values not null),
+                    unique(id, user_id),
+                    fk (weekly_plan_id, user_id) → weekly_plans (id, user_id) on delete cascade,
+                    fk (target_category_id, plan_id) → plan_categories (id, plan_id)
+                        on delete cascade)
+  -- Clients get SELECT only; written by save_weekly_plan() and decided by
+  -- apply_weekly_plan_change() / accept_all_weekly_plan_changes().
+  -- plan_id is carried purely so the composite FK to plan_categories can
+  -- exist (that table is keyed (id, plan_id) and has no user_id) -- the same
+  -- denormalisation-for-an-ownership-chain trade blocks already makes.
+  -- change_type is the MECHANISM, not the direction: direction is readable
+  -- from old_value vs new_value and `signal` already says why, so a future
+  -- lever adds a value here without needing new signal vocabulary.
+  -- 'flag_question' APPLIES NOTHING, EVER. It carries no values (enforced by
+  -- constraint), and accept_all_weekly_plan_changes() deliberately skips it
+  -- -- a question's honest answer might be no, so a bulk "yes to everything"
+  -- must not answer it. That makes "never auto-applies" structural rather
+  -- than a UI promise.
+  -- reason is a plain, specific string built from the actual computed
+  -- numbers ("Finished 1 of 4 tasks this week (25%) and 2 of 6 the week
+  -- before (33%) -- under half both weeks."). No model wrote it.
 ```
 
 **The composite foreign keys are the point, not decoration.** `user_id` on a row proves only
@@ -492,6 +574,7 @@ erroring; where the grant itself is revoked, it errors with `42501`.
 | `ai_generations` | **select only** | `web/lib/ai/service.ts`'s callers, service-role (0015) |
 | `tutor_memory_summaries` | **select only** | future service-role summarization job |
 | `calendar_event_links` | **select only** | `POST /api/calendar/sync`, service-role (0020) |
+| `weekly_plans`, `weekly_plan_changes` | **select only** | `save_weekly_plan()` / `apply_weekly_plan_change()` / `accept_all_weekly_plan_changes()` (0022) |
 | `tutor_messages` | **nothing** | future service-role chat backend; read via `tutor_context()` |
 | `calendar_connections` | **nothing** | `GET /api/calendar/callback`, service-role (0020) |
 
@@ -544,6 +627,28 @@ Other rules, all enforced in the SQL:
   UPDATE time. It succeeds, looks fine, and fails at COMMIT. The RPC reallocates `position` under
   the same per-user advisory lock key as the three functions above, so all four serialize. Full
   contract, including the "passing NULLs un-schedules" rule: api.md §3d.
+- **The weekly engine's tables (migrations/0022) are SELECT-own with every write behind an
+  `authenticated` RPC** — the ordinary `revoke all` + `grant select` pattern, plus three
+  `security definer` functions. Unlike the calendar tables above, these are **not**
+  service-role: a review is entirely the caller's own data derived from their own plan, so
+  `save_weekly_plan()` derives the user from `auth.uid()` like every other RPC here. That
+  choice buys three things a service-role Route Handler would not: the review and all of its
+  changes land in **one transaction** rather than an insert plus a batch that can half-fail;
+  ownership is proved by `auth.uid()` rather than by a handler remembering to scope each query
+  itself; and the weekly engine keeps working in a deployment with no
+  `SUPABASE_SERVICE_ROLE_KEY`, which this one currently is. The RPCs are where the hard
+  constraints live (the ±30%-or-one-block cap, the "flagged questions never auto-apply" rule,
+  the derived parent status), which is exactly why the tables are not directly writable: if a
+  client could UPDATE them, "accepted" would stop meaning "applied under the constraints" and
+  `weekly_plans.metrics` — an audit record of what the engine saw — would be rewritable after
+  the fact. `apply_weekly_plan_change()` shares the `mtdo.curriculum_menu:<uid>` advisory lock
+  with the other four board/curriculum writers, since an accepted change writes
+  `plan_categories`; all five now serialize per user.
+- **`weekly_performance()` (migrations/0021) is granted to `authenticated` only, and is called
+  with the user's own anon client — never the service client.** It derives the user from
+  `auth.uid()` and takes no user id, so a sessionless service-role caller is rejected; that is
+  intentional, and it is the same call-site rule §3e already states for the calendar routes.
+  It is `stable` and writes nothing.
 - **`calendar_connections` (migrations/0020) is the first table in this schema with no client
   access of any kind by *both* mechanisms at once** — RLS on with zero policies, and `revoke all`
   from `anon`/`authenticated`. The doubling is the point: §6's opening paragraph explains why "no
