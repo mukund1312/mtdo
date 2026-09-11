@@ -150,6 +150,8 @@ export type Database = {
           plan_id: string
           position: number
           priority: string
+          scheduled_end_at: string | null
+          scheduled_start_at: string | null
           started_at: string | null
           status: string
           text: string
@@ -169,6 +171,8 @@ export type Database = {
           plan_id: string
           position: number
           priority?: string
+          scheduled_end_at?: string | null
+          scheduled_start_at?: string | null
           started_at?: string | null
           status?: string
           text: string
@@ -188,6 +192,8 @@ export type Database = {
           plan_id?: string
           position?: number
           priority?: string
+          scheduled_end_at?: string | null
+          scheduled_start_at?: string | null
           started_at?: string | null
           status?: string
           text?: string
@@ -213,6 +219,80 @@ export type Database = {
             columns: ["plan_id", "user_id"]
             isOneToOne: false
             referencedRelation: "plans"
+            referencedColumns: ["id", "user_id"]
+          },
+        ]
+      }
+      calendar_connections: {
+        Row: {
+          calendar_id: string
+          connected_at: string
+          id: string
+          provider: string
+          refresh_token_encrypted: string
+          scopes: string[]
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          calendar_id?: string
+          connected_at?: string
+          id?: string
+          provider?: string
+          refresh_token_encrypted: string
+          scopes?: string[]
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          calendar_id?: string
+          connected_at?: string
+          id?: string
+          provider?: string
+          refresh_token_encrypted?: string
+          scopes?: string[]
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
+      calendar_event_links: {
+        Row: {
+          block_id: string
+          created_at: string
+          external_calendar_id: string
+          external_event_id: string
+          id: string
+          provider: string
+          synced_at: string
+          user_id: string
+        }
+        Insert: {
+          block_id: string
+          created_at?: string
+          external_calendar_id?: string
+          external_event_id: string
+          id?: string
+          provider?: string
+          synced_at?: string
+          user_id: string
+        }
+        Update: {
+          block_id?: string
+          created_at?: string
+          external_calendar_id?: string
+          external_event_id?: string
+          id?: string
+          provider?: string
+          synced_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "calendar_event_links_block_fk"
+            columns: ["block_id", "user_id"]
+            isOneToOne: false
+            referencedRelation: "blocks"
             referencedColumns: ["id", "user_id"]
           },
         ]
@@ -752,7 +832,7 @@ export type Database = {
         }
       }
       pick_curriculum_item: {
-        Args: { p_item_id: string }
+        Args: { p_item_id: string; p_target_date?: string }
         Returns: {
           category_id: string
           claimed: boolean
@@ -767,6 +847,8 @@ export type Database = {
           plan_id: string
           position: number
           priority: string
+          scheduled_end_at: string | null
+          scheduled_start_at: string | null
           started_at: string | null
           status: string
           text: string
@@ -797,6 +879,41 @@ export type Database = {
         SetofOptions: {
           from: "*"
           to: "activity_events"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
+      schedule_block: {
+        Args: {
+          p_block_id: string
+          p_date?: string
+          p_end_at?: string
+          p_start_at?: string
+        }
+        Returns: {
+          category_id: string
+          claimed: boolean
+          coaching: Json | null
+          completed_at: string | null
+          curriculum_item_id: string | null
+          date: string
+          elapsed_seconds: number
+          estimated_minutes: number | null
+          id: string
+          notes: string | null
+          plan_id: string
+          position: number
+          priority: string
+          scheduled_end_at: string | null
+          scheduled_start_at: string | null
+          started_at: string | null
+          status: string
+          text: string
+          user_id: string
+        }
+        SetofOptions: {
+          from: "*"
+          to: "blocks"
           isOneToOne: true
           isSetofReturn: false
         }
