@@ -26,7 +26,15 @@
    two-thirds of a row below the grid line it names -- e.g. a block
    scheduled for 9am rendered correctly at the 9am row, but the "9a" label
    itself sat low enough to read as "10a" to the eye. */
-.a02-time-map > aside { display:grid; grid-template-rows:repeat(16,48px); color:var(--dim); font:9px "DM Mono",monospace; text-align:right; padding-top:1px; }
+/* align-items:start is load-bearing, not decoration: without it, a grid
+   item holding inline text (a <span>) defaults to stretching to fill its
+   48px row and then rendering the text near the row's own baseline/bottom,
+   not its top -- so every hour label sat ~42px below the grid line it
+   names, close enough to a full row that it read as belonging to the row
+   below. The chip geometry itself was always correct (verified against
+   the actual grid cell, not the label) -- only the label text's own
+   position within its row was ever wrong. */
+.a02-time-map > aside { display:grid; grid-template-rows:repeat(16,48px); align-items:start; color:var(--dim); font:9px "DM Mono",monospace; text-align:right; padding-top:1px; }
 .a02-time-map--week > aside { padding-top:44px; }
 .a02-time-map > aside span { transform:translateY(-6px); }
 .a02-time-column { min-width:0; }
