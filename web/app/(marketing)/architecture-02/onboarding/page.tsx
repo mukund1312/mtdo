@@ -8,6 +8,7 @@ import { PlanningModeSelector } from "../planning-mode-selector";
 import "../signal-deck.css";
 import "../planning-mode-selector.css";
 import "./onboarding.css";
+import "../fixed-layer-safety.css";
 
 type Step = "method" | "intent" | "rhythm" | "generating" | "complete";
 type PlanSummary = { appName: string; goalLine: string; categories: Array<{ id: string; name: string; label: string }> };

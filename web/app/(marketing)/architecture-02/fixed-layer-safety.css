@@ -1,0 +1,116 @@
+/*
+ * Signal Deck fixed-layer contract
+ *
+ * All persistent controls read these variables. Page surfaces reserve
+ * --a02-content-safe-bottom, so their final cards, forms, and controls can
+ * always scroll above the dock and the utility row. Temporary overlays remain
+ * intentionally modal; they do not participate in this persistent layout.
+ */
+.a02-shell:not(.a02-onboarding-shell) {
+  --a02-edge: clamp(18px, 2.4vw, 34px);
+  --a02-dock-bottom: max(23px, env(safe-area-inset-bottom));
+  --a02-dock-height: 59px;
+  --a02-utility-height: 53px;
+  --a02-control-gap: 16px;
+  --a02-feedback-clearance: 0px;
+  --a02-content-safe-bottom: calc(
+    var(--a02-dock-bottom) +
+    var(--a02-dock-height) +
+    var(--a02-utility-height) +
+    (var(--a02-control-gap) * 2) +
+    18px +
+    var(--a02-feedback-clearance)
+  );
+}
+
+/* A feedback form is a temporary, taller layer. The page grows beneath it so
+   the user can still scroll every product control clear of the form. */
+html[data-a02-feedback-open="true"] .a02-shell:not(.a02-onboarding-shell) {
+  --a02-feedback-clearance: 270px;
+}
+
+.a02-dock {
+  z-index: 20;
+  bottom: var(--a02-dock-bottom);
+}
+
+.a02-audio {
+  z-index: 19;
+  left: var(--a02-edge);
+  bottom: calc(var(--a02-dock-bottom) + 6px);
+}
+
+/* Co-pilot belongs above the dock, never beside a page heading. */
+.a02-beacon {
+  z-index: 21;
+  right: var(--a02-edge);
+  top: auto;
+  bottom: calc(var(--a02-dock-bottom) + var(--a02-dock-height) + var(--a02-control-gap));
+}
+
+.a02-tutor {
+  z-index: 30;
+  right: var(--a02-edge);
+  bottom: calc(var(--a02-dock-bottom) + var(--a02-dock-height) + var(--a02-control-gap));
+}
+
+.a02-home { padding-bottom: max(175px, var(--a02-content-safe-bottom)); }
+.a02-work,
+.a02-calendar,
+.a02-review,
+.a02-goals { padding-bottom: max(115px, var(--a02-content-safe-bottom)); }
+.a02-listen { padding-bottom: max(125px, var(--a02-content-safe-bottom)); }
+
+/* Onboarding and Settings intentionally have no deck dock. They still keep a
+   predictable clear area for the global Feedback control and its open form. */
+.a02-onboarding-shell { --a02-feedback-clearance: 0px; }
+html[data-a02-feedback-open="true"] .a02-onboarding-shell { --a02-feedback-clearance: 260px; }
+.a02-onboarding-panel { padding-bottom: calc(70px + 64px + var(--a02-feedback-clearance)); }
+.a02-settings { padding-bottom: calc(80px + 64px + var(--a02-feedback-clearance, 0px)); }
+
+/* The dock is wide enough to reach the desktop transport at tablet widths.
+   Keep the full transport, but give it the same utility row as Co-pilot. */
+@media (min-width: 561px) and (max-width: 900px) {
+  .a02-audio {
+    bottom: calc(var(--a02-dock-bottom) + var(--a02-dock-height) + var(--a02-control-gap));
+  }
+}
+
+@media (max-width: 560px) {
+  .a02-shell:not(.a02-onboarding-shell) {
+    --a02-edge: 18px;
+    --a02-dock-bottom: max(17px, env(safe-area-inset-bottom));
+    --a02-dock-height: 55px;
+    --a02-utility-height: 45px;
+    --a02-control-gap: 14px;
+  }
+
+  html[data-a02-feedback-open="true"] .a02-shell:not(.a02-onboarding-shell) {
+    --a02-feedback-clearance: 300px;
+  }
+
+  .a02-audio {
+    bottom: calc(var(--a02-dock-bottom) + var(--a02-dock-height) + var(--a02-control-gap));
+  }
+
+  .a02-beacon {
+    right: var(--a02-edge);
+    bottom: calc(var(--a02-dock-bottom) + var(--a02-dock-height) + var(--a02-control-gap));
+  }
+
+  .a02-tutor {
+    right: 14px;
+    left: 14px;
+    top: 82px;
+    bottom: calc(var(--a02-dock-bottom) + var(--a02-dock-height) + var(--a02-control-gap));
+  }
+
+  .a02-home,
+  .a02-work,
+  .a02-calendar,
+  .a02-review,
+  .a02-goals,
+  .a02-listen { padding-bottom: max(145px, var(--a02-content-safe-bottom)); }
+
+  .a02-onboarding-panel { padding-bottom: calc(70px + 74px + var(--a02-feedback-clearance)); }
+}
