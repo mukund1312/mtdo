@@ -63,6 +63,12 @@ for f in "$ROOT"/supabase/migrations/*.sql; do
   printf '%s\n' "$out" | grep -E '^NOTICE' || true
 done
 
+# The weekly-engine demo fixture (Phase 7). Defines a function, runs nothing
+# on its own -- 13_weekly_performance.sql calls it. Sourced here rather than
+# from inside a test file so a human poking at the cluster by hand has it too;
+# see the file's own header for the manual invocation.
+"$PGBIN/psql" -v ON_ERROR_STOP=1 -q -f "$ROOT/supabase/seeds/weekly_engine_demo.sql" >/dev/null
+
 fail=0
 "$PGBIN/psql" -v ON_ERROR_STOP=1 -q \
   -f "$ROOT/supabase/tests/01_harness.sql" \
@@ -76,7 +82,9 @@ fail=0
   -f "$ROOT/supabase/tests/09_extend_plan.sql" \
   -f "$ROOT/supabase/tests/10_planning_mode.sql" \
   -f "$ROOT/supabase/tests/11_task_priority_estimate.sql" \
-  -f "$ROOT/supabase/tests/12_block_scheduling_calendar.sql" 2>&1 \
+  -f "$ROOT/supabase/tests/12_block_scheduling_calendar.sql" \
+  -f "$ROOT/supabase/tests/13_weekly_performance.sql" \
+  -f "$ROOT/supabase/tests/14_weekly_plan_changes.sql" 2>&1 \
   | sed 's/^psql:[^ ]* //; s/^NOTICE:  //' | grep -E "^(PASS|FAIL|ERROR|---)" || fail=1
 
 echo
