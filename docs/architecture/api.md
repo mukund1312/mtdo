@@ -296,14 +296,15 @@ actually call them (7, 8), not speculatively here.
 
 ## 3. How the app talks to the database
 
-Most tables are read and written directly with the anon-key client under RLS. **Eight are not**
+Most tables are read and written directly with the anon-key client under RLS. **Ten are not**
 (`focus_sessions`, `activity_events`, `daily_rollups`, `ai_generations`, `tutor_messages`,
-`tutor_memory_summaries`, `calendar_connections`, `calendar_event_links`), and this is the part
+`tutor_memory_summaries`, `calendar_connections`, `calendar_event_links`, `weekly_plans`,
+`weekly_plan_changes`), and this is the part
 that is easy to get wrong: they are read-only — or, for `tutor_messages` and
 `calendar_connections`, **no-access** — to clients, and their writes go through
 `security definer` RPCs or a service-role backend. (This count said "five" until Phase 6 and was
 already stale by two: `ai_generations` landed in Phase 2 and `tutor_memory_summaries` predates
-both. `schema.md` §6's table has always been the authoritative list.) Calling `.insert()` on them does not fail
+both; Phase 7 adds the two weekly-engine tables. `schema.md` §6's table has always been the authoritative list.) Calling `.insert()` on them does not fail
 silently — it returns a `42501` permission error — but the fix is to use the RPC, never to add a
 policy or a grant. `schema.md` §6 has the full privilege table.
 
@@ -319,6 +320,8 @@ policy or a grant. `schema.md` §6 has the full privilege table.
 | `from('blocks').update({ date, position })` (a **cross-date** move) | `rpc('schedule_block', { p_block_id, p_date, p_start_at, p_end_at })` — a client-side cross-date move fails at COMMIT, not at UPDATE, because `blocks_slot_key` is DEFERRABLE; see §3d. A **same-day** reorder stays an ordinary `update`. |
 | `from('calendar_connections').select(...)` | *not available to clients at all* — service-role only, the token never reaches a browser (§3e) |
 | `from('calendar_event_links').insert/update/delete(...)` | `POST /api/calendar/sync` (§3e). Reads are an ordinary RLS-filtered `select`. |
+| `from('weekly_plans').insert(...)` | `POST /api/plan/weekly-review` (§3g), which calls `rpc('save_weekly_plan', ...)`. Reads are an ordinary RLS-filtered `select`. |
+| `from('weekly_plan_changes').update({ status })` | `rpc('apply_weekly_plan_change', { p_change_id, p_decision, p_new_value })` or `rpc('accept_all_weekly_plan_changes', { p_weekly_plan_id })` (§3g) — a direct update is `42501`, and accepting is what *applies* the change, not just what records it |
 
 Reads of `focus_sessions`, `activity_events` and `daily_rollups` are ordinary RLS-filtered
 `select`s and need no RPC.
@@ -762,6 +765,276 @@ alternative is discovering it at the moment a real user finishes Google's consen
 no read scope, because one-way sync never needs to read the user's calendar. The scopes Google
 actually *granted* are stored on the connection row (not the ones requested), so a later scope
 addition is detectable as missing consent rather than a 403 at event-creation time.
+
+## 3f. `weekly_performance()` — the deterministic weekly metrics (Phase 7, migrations/0021)
+
+**Read `decisions.md` 2026-09-11 "The weekly engine is deterministic by design" first.** Nothing
+in this section or §3g calls a model. That is a product decision, not a sequencing accident.
+
+```sql
+public.iso_week_start(p_iso_week text) returns date          -- Monday of an ISO week
+public.weekly_performance(p_plan_id uuid, p_iso_week text) returns jsonb
+```
+
+`authenticated`-callable, `security definer`, `stable`, derives the user from `auth.uid()` and
+takes no user id. **Call it with the user's own anon client, never the service client** — a
+service-role caller has a null `auth.uid()` and is rejected with `42501`, which is intentional
+(same call-site rule as §3e). Writes nothing. Reviewing a **retired** plan is allowed; nothing
+here touches the board.
+
+**Errors.** `42501` for a plan that isn't yours (deliberately not distinguished from "no such
+plan"). `22023` for a malformed `p_iso_week` — the format is exactly `YYYY-Www`
+(`'IYYY-"W"IW'`), the same vocabulary `plan_categories.menu_unlocked_iso_week` already uses.
+
+**It is read-computed, not materialized**, matching `daily_rollups`' precedent (`decisions.md`
+2026-09-06) — and it deliberately does **not** read `daily_rollups`, because that table is a
+pg_cron job's output and a review generated inside the ten-minute gap would under-report the work
+someone just did. It reads the same two source tables (`activity_events`, `focus_sessions`) under
+the same day-attribution rules as §3a, so the two agree by construction and this one is never
+stale.
+
+**Return shape** (`mtdo.weekly_performance.v1`). TypeScript mirrors of every field, plus a
+`asWeeklyPerformance()` narrowing helper, are exported from `web/lib/planning/types.ts` — import
+those rather than casting the RPC's generated `Json`.
+
+```jsonc
+{
+  "schema_version": "mtdo.weekly_performance.v1",
+  "plan_id": "…", "iso_week": "2026-W36",
+  "week_start": "2026-08-31", "week_end": "2026-09-06",
+  "timezone": "UTC", "planning_mode": "dynamic_weekly", "computed_at": "…",
+  "plan": {
+    "picked_count", "done_count", "completion_rate",
+    "estimated_minutes", "actual_minutes", "paced_actual_minutes",
+    "paced_task_count", "pace_ratio",
+    "menu_offered_count", "menu_picked_count", "pick_rate",
+    "regressed_count", "stale_open_count", "postponement_count",
+    "backlog_count", "sessions_completed", "study_days",
+    "score", "score_max"
+  },
+  "categories": [{
+    "category_id", "name", "label", "sort_order", "min_blocks", "score_weight",
+    "days_per_week", "weekly_target_blocks", "current_target",
+    "category_created_at", "existed_before_week",
+    "picked_count", "done_count", "completion_rate",
+    "estimated_minutes", "actual_minutes", "paced_actual_minutes",
+    "paced_task_count", "pace_ratio", "pace_ratio_mean",
+    "menu_offered_count", "menu_picked_count", "skipped_count", "pick_rate",
+    "regressed_count", "stale_open_count", "postponement_count",
+    "backlog_count", "sessions_completed", "study_days"
+  }]  // one row per category of the plan, INCLUDING ones with no activity,
+      // ordered by (sort_order, label)
+}
+```
+
+⚠️ **EVERY RATE IS `null` WHEN ITS DENOMINATOR IS ZERO, NEVER `0.0`.** This is the single most
+important property of the whole subsystem, and a `?? 0` anywhere downstream breaks it:
+
+| field | `null` means |
+|---|---|
+| `completion_rate` | nothing was picked in this category that week |
+| `pace_ratio` / `pace_ratio_mean` | no completed task had **both** an estimate and a real focus session |
+| `pick_rate` | the menu offered nothing |
+
+"Picked nothing" and "picked everything and finished none of it" are different facts about a
+person. Collapsing both to 0% makes the engine propose cutting the load of a category the user
+simply never opened. Counts (`picked_count`, `done_count`, …) are genuinely `0` and are safe to
+read as numbers.
+
+**What each number actually means, where it is non-obvious:**
+
+- **"Picked that week" = a block whose board `date` falls in that ISO week.** `blocks` has no
+  `created_at`, and this is also the faithful port: `core.py`'s `compute_week_progress()` iterates
+  the week's *date keys*. A block moved to another week moves its attribution with it, which is
+  the right frame for "what was on my board that week".
+- **"Done" is the ledger's verdict, not `blocks.status`.** A block's **last**
+  `task_completed`/`task_regressed` event wins (the same last-event-wins rule §3a uses per day,
+  applied across the block's whole history — `compute_week_progress()` reads *current* done-ness,
+  so a block dated Sunday and finished Monday is genuinely done work for that week). **A block the
+  ledger has never seen falls back to `blocks.status`** — a narrow, deliberate fallback, because
+  `task_completed` only gained a call site in Phase 1 (§2c/§2d) and every block completed before
+  that would otherwise read as permanently unfinished.
+- **`pace_ratio` is a ratio of sums** (`paced_actual_minutes / estimated_minutes`), not a mean of
+  per-task ratios. `pace_ratio_mean` is the mean, reported for display only. The classifier reads
+  the ratio of sums because a mean lets one five-minute task swing a whole week's classification.
+- **A task counts toward pace only if it is done, has a non-null `estimated_minutes`, AND has at
+  least one settled focus session.** The session requirement is not incidental: without it,
+  someone who finishes their work without ever starting a timer computes as ~0 minutes against a
+  real estimate, reads as "coasting", and gets handed 25% *more* work for not using a Pomodoro.
+  That is the most damaging false positive this engine can produce, and it is closed in the metric.
+- **`postponement_count` = `regressed_count` + `stale_open_count`**, the two shapes of
+  "postponed" the data can actually express: a `task_regressed` event inside the week, and an open
+  block dated *before* the week that is still unfinished. **Known gap, named rather than
+  discovered later:** a block silently moved forward by a cross-date `schedule_block()` leaves no
+  trace at all, so that third shape is not counted.
+- **`menu_offered_count` is the one estimate rather than a measurement.** Nothing records the
+  unlock cursor's *historical* position — `plan_categories` holds only where it is now and when it
+  last moved. The cursor advances at most once per ISO week (§3b), so walking it back one per
+  elapsed week gives a **lower bound** on what was unlocked then. The direction of that error is
+  chosen: under-counting what was offered *inflates* `pick_rate`, which makes the "avoided" signal
+  harder to trigger — and since that signal interrupts the user with a question, biasing against a
+  false accusation is the right way to be wrong. In `overall` planning mode there is no cursor and
+  nothing to reconstruct.
+- **`score` / `score_max`** port `core.py`'s `compute_daily_score()` to week granularity:
+  `sum(round(score_weight × completion_rate))` over categories that were actually picked from.
+  Categories nobody touched are skipped entirely (`if not blocks: continue`), so a user is never
+  scored against a category that was not on their board.
+- **`study_days`** is distinct days with a real completion event or a settled session, scoped to
+  this plan. A day on which the user only opened the app is not a study day. A session with a null
+  `block_id` is attributable to no plan and counts toward none.
+- **`existed_before_week`** is `category_created_at < week_start`, strictly. A category created on
+  the Wednesday of the week under review has three days of data, and three days of quiet is not
+  evidence — the rules engine excludes it rather than calling it "on track".
+
+## 3g. The weekly engine — proposals and the change-review contract (Phase 7, migrations/0022)
+
+**The rule engine is 100% deterministic. There is no AI anywhere in this path**, and
+`weekly_plans.generated_by` is `'rules_v1'` — versioned, true, and leaving room for a real
+`'ai_v1'` generator later with no schema change. `aiService.reviewWeek()` is **not built** and is
+explicitly out of scope; see `decisions.md` 2026-09-11.
+
+**Where the logic lives**, and the split is deliberate (documented in `decisions.md`):
+
+| layer | file | why there |
+|---|---|---|
+| raw metrics | `weekly_performance()`, migrations/0021 | derived data is computed in Postgres, matching `daily_rollups`' precedent — not re-derived ad hoc in app code |
+| thresholds | `web/lib/planning/thresholds.ts` | every constant in one file with its reasoning attached; a rules engine whose constants are scattered through its branches cannot be argued with or tuned |
+| classification | `web/lib/planning/classify.ts` | pure functions, unit-testable at exact boundary values |
+| proposal building | `web/lib/planning/propose.ts` | business-rule evaluation in TS, matching `plan-generation/parse.ts`'s precedent |
+| ISO-week arithmetic | `web/lib/planning/iso-week.ts` | must agree with `iso_week_start()` exactly; pinned by tests on both sides |
+| storage + rails | `save_weekly_plan()` / `apply_weekly_plan_change()`, migrations/0022 | the constraints must hold against a caller that is *not* the engine |
+
+### Classification — trailing **two** weeks, never one
+
+A person has a bad week for reasons that have nothing to do with their study plan. An engine that
+rewrites the plan every time they do is worse than no engine.
+
+| signal | fires when, in **both** trailing weeks |
+|---|---|
+| `avoided` | `pick_rate < 0.3` |
+| `struggling` | `completion_rate < 0.5`, **or** `pace_ratio > 1.3` (the same arm must fire in both weeks) |
+| `coasting` | `completion_rate >= 0.9` **and** `pace_ratio < 0.7` |
+| `on_track` | none of the above |
+| `insufficient_data` | either week is unobservable — see below |
+
+**Precedence is `avoided` → `struggling` → `coasting`, and that order is a real decision.**
+Engagement is upstream of everything else: a category someone picks 2 of 10 offered tasks from and
+then fails one of, satisfies both `avoided` and `struggling` — but "we've eased your weekly target
+from 4 to 3" answers a question they never asked. Their target was never the obstacle. Adjusting a
+number would also *look* like the engine had handled it, which is worse than doing nothing.
+
+Boundaries are exact and tested at the value and one step either side: `< 0.5`, `> 1.3`, `>= 0.9`,
+`< 0.7`, `< 0.3`. So completion of exactly 0.5 is **not** struggling, pace of exactly 0.7 is
+**not** coasting, and `pick_rate` of exactly 0.3 is **not** avoided.
+
+**`insufficient_data` — the two gaps that must not read as health.** A week is unobservable for a
+category when `existed_before_week` is false, **or** when nothing was offered *and* nothing was
+picked. Note the second is not "offered things and picked none" — that **is** behaviour, and is
+exactly what `avoided` catches. A plan's first-ever review has no prior week at all, so every
+category is `insufficient_data` and **zero changes are proposed — a normal result, not an error**.
+
+### Adjustments
+
+The lever is **`plan_categories.weekly_target_blocks`** and nothing else. It resolves as
+`coalesce(weekly_target_blocks, array_length(days,1))`, floored at 1 — that resolved value is
+`current_target`, and it is what ±25% is taken of. `struggling` proposes a decrease, `coasting` an
+increase, `avoided` a `flag_question` carrying no numbers at all.
+
+**The cap is ±30% of the current target, OR one whole block, whichever is larger.** The
+"or one whole block" half is not a loophole — it is what makes the rail implementable against
+integers. Real targets are small: at a target of 3, one extra block is a 33% move, so a flat 30%
+rail would round every proposal back to 3 and the engine would silently never adjust a 3-block
+category in either direction. One block is the smallest expressible change; the proportional rail
+binds once targets are large enough to mean something (at 10 it allows 7..13, not 9..11).
+**`proposeTarget()` and `apply_weekly_plan_change()` implement this same rule independently and
+must agree** — if the generator could propose a value the RPC rejects, every such proposal would
+fail the instant a user clicked accept.
+
+If the capped, rounded result equals the current target there is **no change to propose** — the
+category still gets an `outcome` (with `suppressed: "capped_to_no_change"`) so the Review deck can
+say "we noticed, there is nothing to adjust", but no row is written. A change set full of 4 → 4
+rows is noise the user has to read and dismiss.
+
+### The hard constraints, and where each one actually lives
+
+| constraint | enforced |
+|---|---|
+| never modifies `plans.goal_line` | **structural** — no code path in any of these functions writes it. Pinned by test. |
+| never increases `plan_categories.days` | **structural**, same way. `days` is what the user told us about their availability; inventing more of it would be fabricating hours in someone's week. |
+| never stacks load after a bad week | `propose.ts` — if the plan's overall `completion_rate` for the reviewed week is `< 0.40` (or `null`, meaning nothing was picked at all), **every increase is withheld, in every category**. Decreases are unaffected: easing off after a bad week is always allowed. Deliberately **not** re-checked at apply time — re-deriving it on every click could flip a proposal while the user is looking at it. |
+| ±30%-or-one-block cap | `thresholds.ts` **and independently** `save_weekly_plan()` (so an out-of-rail proposal cannot even be *stored*) **and** `apply_weekly_plan_change()` (so a value the user hand-edits is bounded by the same rail — otherwise every rail would be bypassable by clicking "edit" before "accept"). |
+| a weekly target is never below 1 | both RPCs. A target of 0 means "stop doing this category", which is a choice a user makes by answering a flagged question, never something a pace nudge arrives at by arithmetic. |
+
+The suppression of an increase in an **unrelated** category is intentional, not collateral: the
+category that looks like it has spare capacity is very often the one the user retreated into while
+avoiding the hard one.
+
+### `POST /api/plan/weekly-review` — generate a proposal
+
+`web/app/api/plan/weekly-review/route.ts`. Auth-gated (401 without a session).
+
+**Request:** body optional. `{ "isoWeek": "2026-W36" }` reviews a specific week; omitted, it
+defaults to the **most recently completed** week in the caller's own timezone
+(`coalesce(profiles.timezone, 'UTC')`). Reviewing a week still in progress would classify on
+partial data and call every category struggling by Tuesday. A malformed `isoWeek` is a `400`.
+
+**Response 200** — `{ generated: true, weeklyPlanId, isoWeek, effectiveIsoWeek, changeCount,
+changes[], outcomes[], increasesSuppressed, metrics }`.
+
+- `changes[]` — exactly the rows written to `weekly_plan_changes`:
+  `{ change_type: "weekly_target_blocks" | "flag_question", target_category_id, old_value,
+  new_value, reason, signal }`. `old_value`/`new_value` are `null` for a `flag_question`.
+- `outcomes[]` — **one entry per category, whether or not it produced a change**:
+  `{ category_id, label, classification, suppressed? }` where `classification` is one of
+  `struggling` / `coasting` / `avoided` / `on_track` / `insufficient_data`, and `suppressed` is
+  `"low_completion_week"` or `"capped_to_no_change"` when a signal fired but no change was
+  proposed. **Render these** — a category the engine looked at and deliberately left alone is
+  information, and a Review deck that shows only `changes[]` silently drops it.
+- `metrics` — `{ schema_version: "mtdo.weekly_review.v1", current, previous }`, both full
+  `weekly_performance()` bodies. `previous` is the prior week, so the deck can show a
+  this-week-vs-last-week comparison without a second round trip.
+
+**Response 200, `{ generated: false, reason, weeklyPlanId? }`** — an honest no-op: no active plan,
+or this week's review already has decisions recorded against it. Regenerating over a decided
+review would destroy the user's decisions *and* re-propose relative to a target they just
+accepted, so it is refused in the route and again in `save_weekly_plan()` (`22023`) as a backstop.
+A review whose changes are all still `pending` **is** regenerated, replacing them.
+
+**A review that proposes nothing is stored anyway**, with status `accepted` — there is nothing
+outstanding, and leaving it `proposed` would make it look like it is waiting on the user.
+
+### Accepting, rejecting, editing — direct RPCs, no Route Handler
+
+These hold no secret and need no server-side logic, so they are called straight from the client
+with the anon key, the same way the Time deck calls `schedule_block()` (§3d).
+
+```ts
+// one change
+rpc('apply_weekly_plan_change', { p_change_id, p_decision: 'accepted' | 'rejected' })
+rpc('apply_weekly_plan_change', { p_change_id, p_decision: 'accepted', p_new_value: 5 })  // edit
+// the "Accept all" button, one round trip
+rpc('accept_all_weekly_plan_changes', { p_weekly_plan_id })  // → { applied, skipped_questions }
+```
+
+- **Accepting is what *applies* the change**, not just what records it: it writes
+  `plan_categories.weekly_target_blocks` in the same transaction, under the
+  `mtdo.curriculum_menu:<uid>` advisory lock the other four board/curriculum writers share.
+  Rejecting writes nothing.
+- **Passing `p_new_value` makes the status `edited`, not `accepted`**, and `new_value` is rewritten
+  to what was actually applied — history must say what happened, not what was suggested.
+- **A decision is final.** Re-deciding raises `22023`: accept the same +25% twice and the category
+  has quietly gained 56%.
+- ⚠️ **`accept_all_weekly_plan_changes()` deliberately SKIPS `flag_question` rows** and returns
+  them in `skipped_questions`. "Accept all" means "yes to everything you suggested"; a question's
+  honest answer might be no. Those rows stay `pending`, which also keeps the parent review
+  `proposed` until they are answered individually. **The UI must surface them** — otherwise a user
+  clicks Accept All, sees nothing happen to that category, and has no idea a question is waiting.
+- `weekly_plans.status` is **recomputed** from its children after every decision (`proposed` while
+  anything is pending → `accepted` / `rejected` / `partial`), so it cannot drift.
+
+**Errors.** `42501` — not yours, or no session (never distinguished from "no such row").
+`22023` — an invalid decision word, a re-decision, a value outside the cap or below 1, a
+`flag_question` given a value, or a regeneration over a decided review.
 
 ## 4. The EmberMorph component contract
 
