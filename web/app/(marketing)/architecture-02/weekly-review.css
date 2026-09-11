@@ -1,0 +1,72 @@
+/* The weekly engine's Review-deck surface (Phase 7 frontend). Matches the
+   already-established .a02-* "Signal Deck" vocabulary (signal-deck.css,
+   product-deck.css, calendar-deck.css) rather than DESIGN.md's raw Graphite
+   tokens -- same precedent the Phase 6 frontend entry in PROGRESS.md records
+   for this route. */
+
+.a02-weekly-review { margin-top:44px; padding-top:36px; border-top:1px solid var(--line); }
+.a02-weekly-review .a02-view-head { align-items:start; }
+.a02-weekly-review h2,.a02-weekly-review h3 { margin:10px 0 4px; font:900 clamp(28px,3.2vw,42px)/.95 "Archivo Black",sans-serif; letter-spacing:-.04em; text-transform:none; }
+.a02-weekly-review h3 { font-size:clamp(19px,2vw,24px); margin-top:4px; }
+
+.a02-weekly-skeleton { height:160px; margin-top:24px; border:1px solid var(--line); border-radius:11px; background:linear-gradient(100deg,#171a42 20%,#252a57 50%,#171a42 80%); background-size:200% 100%; animation:a02-product-shimmer 1.3s ease-in-out infinite; }
+
+.a02-weekly-stats { display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:10px; margin-top:22px; }
+.a02-weekly-stat { padding:16px; border:1px solid var(--line); border-radius:10px; background:rgba(15,18,49,.72); }
+.a02-weekly-stat span { color:var(--dim); font:9px "DM Mono",monospace; letter-spacing:.08em; }
+.a02-weekly-stat strong { display:block; margin:10px 0 6px; font:900 30px/.9 "Archivo Black",sans-serif; letter-spacing:-.04em; color:var(--ink); }
+.a02-weekly-stat strong small { margin-left:2px; color:var(--dim); font:600 13px "Space Grotesk",sans-serif; }
+.a02-weekly-stat p { margin:0; color:var(--dim); font-size:10.5px; line-height:1.4; }
+
+.a02-weekly-categories { display:grid; grid-template-columns:repeat(auto-fit,minmax(260px,1fr)); gap:10px; margin-top:14px; }
+.a02-weekly-category { padding:15px 16px; border:1px solid var(--line); border-radius:10px; background:rgba(13,16,43,.68); }
+.a02-weekly-category-head { display:flex; align-items:center; justify-content:space-between; gap:10px; }
+.a02-weekly-category-head b { font-size:14px; }
+.a02-weekly-category p { margin:8px 0 0; color:var(--dim); font-size:10.5px; line-height:1.5; }
+.a02-weekly-suppressed { display:block; margin-top:7px; color:#c4c9f2; font-size:10px; font-style:normal; line-height:1.4; }
+
+.a02-signal-badge { flex-shrink:0; padding:4px 9px; border-radius:999px; border:1px solid var(--line); font:9px "DM Mono",monospace; letter-spacing:.06em; text-transform:uppercase; white-space:nowrap; }
+.a02-signal-badge.is-struggling { border-color:rgba(255,128,113,.6); color:var(--coral); background:rgba(255,128,113,.1); }
+.a02-signal-badge.is-coasting { border-color:rgba(215,255,82,.55); color:var(--acid); background:rgba(215,255,82,.09); }
+.a02-signal-badge.is-avoided { border-color:rgba(137,117,255,.6); color:var(--ultra); background:rgba(137,117,255,.12); }
+.a02-signal-badge.is-on-track { border-color:rgba(87,231,255,.55); color:var(--aqua); background:rgba(87,231,255,.09); }
+.a02-signal-badge.is-unknown { color:var(--dim); }
+
+.a02-weekly-changeset { margin-top:38px; }
+.a02-weekly-changeset .a02-view-head { margin-bottom:4px; }
+
+.a02-weekly-questions { display:grid; gap:10px; margin-top:14px; }
+.a02-weekly-question-card { padding:18px; border:1px solid rgba(137,117,255,.5); border-radius:11px; background:linear-gradient(145deg,rgba(137,117,255,.12),rgba(24,28,72,.6)); }
+.a02-weekly-question-card > p { margin:9px 0 6px; font-size:14px; line-height:1.45; }
+.a02-weekly-question-card small { display:block; color:var(--dim); font-size:10.5px; line-height:1.5; }
+.a02-weekly-question-actions { display:flex; gap:8px; margin-top:14px; }
+
+.a02-weekly-changes-toolbar { display:flex; align-items:center; gap:12px; margin:14px 0 12px; }
+.a02-weekly-changes-toolbar small { color:var(--dim); font-size:10.5px; }
+.a02-weekly-changes { display:grid; grid-template-columns:repeat(auto-fit,minmax(280px,1fr)); gap:10px; }
+.a02-weekly-change-card { padding:16px; border:1px solid var(--line); border-radius:10px; background:rgba(15,18,49,.72); border-left:3px solid var(--dim); }
+.a02-weekly-change-card.is-struggling { border-left-color:var(--coral); }
+.a02-weekly-change-card.is-coasting { border-left-color:var(--acid); }
+.a02-weekly-change-card.is-avoided { border-left-color:var(--ultra); }
+.a02-weekly-change-head { display:flex; align-items:center; justify-content:space-between; gap:10px; }
+.a02-weekly-change-head b { font-size:14px; }
+.a02-weekly-change-card > p { margin:9px 0; color:#c4c9f2; font-size:11.5px; line-height:1.5; }
+.a02-weekly-change-values { display:flex; align-items:baseline; gap:8px; margin:12px 0; font:900 22px/.9 "Archivo Black",sans-serif; }
+.a02-weekly-change-values i { color:var(--dim); font-style:normal; font-size:14px; }
+.a02-weekly-change-values span { color:var(--dim); }
+.a02-weekly-new-value { color:var(--ink)!important; }
+.a02-weekly-change-values small { margin-left:2px; color:var(--dim); font:9px "DM Mono",monospace; letter-spacing:.04em; }
+.a02-weekly-change-values input { width:64px; border:1px solid var(--line); border-radius:5px; padding:6px 8px; background:#101332; color:var(--ink); font:900 18px "Archivo Black",sans-serif; }
+.a02-weekly-change-actions { display:flex; gap:7px; margin-top:4px; }
+.a02-weekly-change-actions button,.a02-weekly-question-actions button { border:1px solid var(--line); border-radius:5px; padding:9px 12px; background:transparent; color:var(--dim); font-size:11px; }
+.a02-weekly-change-actions button:disabled,.a02-weekly-question-actions button:disabled { opacity:.55; cursor:wait; }
+
+.a02-weekly-decided { margin-top:16px; color:var(--dim); font-size:11px; }
+.a02-weekly-decided summary { cursor:pointer; color:var(--aqua); }
+.a02-weekly-decided ul { margin:8px 0 0; padding-left:16px; }
+.a02-weekly-decided li { margin:4px 0; line-height:1.4; }
+
+@media(max-width:560px){
+  .a02-weekly-stats,.a02-weekly-categories,.a02-weekly-changes { grid-template-columns:1fr; }
+  .a02-weekly-review { margin-top:32px; padding-top:26px; }
+}

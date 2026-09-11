@@ -9,6 +9,107 @@ Add each session's PROGRESS.md entry to the same branch as the code it describes
 
 ---
 
+## [web] 2026-09-11 (PR pending) — Operating-engine plan, Phase 7 frontend (Review deck: real weekly metrics + the change-review screen)
+
+Built directly against PR #153's merged backend contract (`cf5cb6f`, docs/architecture/api.md
+§3f/§3g + schema.md) in a separate worktree from the backend session -- no schema/RLS/RPC
+touched, this is purely the Review deck's client. Sonnet throughout, no design work: same
+judgment call Phase 6 frontend recorded -- this route's actual established look (`.a02-*`, the
+"Signal Deck" retro-monospace treatment every other deck already uses) is what was matched,
+not `DESIGN.md`'s raw Graphite token names, since that's the consistent choice on this route.
+
+- **`weekly-review.tsx` + `weekly-review.css`** (new), mounted inside the existing
+  `progress-deck.tsx` (the 6-week heatmap stays exactly as Phase 1 built it; this is added
+  below it, not a replacement). Fetches `weekly_performance()` directly for the summary panel
+  (completion, pace, avg session length, streak via the existing `computeStreaks`/
+  `daily_rollups`, weekly score, per-category breakdown) and separately reads/writes
+  `weekly_plans`/`weekly_plan_changes` for the change-review screen, per api.md §3g's documented
+  call forms (`POST /api/plan/weekly-review` to generate, direct RPCs to decide).
+- **outcomes[] is re-derived, not read off the generate response.** Only actual
+  `weekly_plan_changes` rows persist -- the "on track" / "insufficient data" categories that
+  produced no row aren't stored anywhere. Rather than duplicating classification logic,
+  `buildWeeklyProposal()` (`web/lib/planning/propose.ts`, untouched, imported read-only) is
+  called again against the exact frozen `weekly_plans.metrics` snapshot on every load -- it's
+  pure and deterministic by its own docs, so this reconstructs the full outcome list for free
+  and a reload never loses the "we looked, it's fine" categories the brief requires rendering.
+- **The `flag_question`/avoided special case is a structurally distinct card, never a numeric
+  change.** Branches on `change_type` per api.md's own instruction; an avoided category renders
+  as a QUESTION with its own "Still a priority" / "Not right now" buttons and explicit copy
+  that answering it doesn't auto-apply anything (the DB constrains both values to null for this
+  type, so there is nothing numeric an accept/reject on it *could* apply). After "Accept all",
+  the panel deliberately does **not** parse `accept_all_weekly_plan_changes()`'s own `{ applied,
+  skipped_questions }` return shape -- api.md documents it loosely and doesn't pin
+  `skipped_questions`'s element shape. Instead it refetches and looks at which `flag_question`
+  rows are still `status = 'pending'` (which the RPC is documented to guarantee), surfacing
+  those with their own banner. Equally correct, and doesn't depend on guessing an unpinned
+  shape -- flagged here as the judgment call it is.
+- **A real gap in the contract, worked around rather than silently assumed.** `POST
+  /api/plan/weekly-review`'s `changes[]` array (per api.md §3g) is the raw `ProposedChange[]`
+  from `propose.ts` -- `{ change_type, target_category_id, old_value, new_value, reason,
+  signal }`, no row `id`. Every accept/reject/edit action here needs a real `weekly_plan_changes`
+  row id, so `generate()` never trusts that array directly: it re-reads the persisted row by the
+  response's own `weeklyPlanId` (nested `weekly_plan_changes(*)`) immediately after generating.
+  This also uniformly handles the "already reviewed" `generated:false` response, which still
+  returns a usable `weeklyPlanId`. Worth flagging back if a future phase wants a lighter
+  generate-then-act round trip.
+- **Empty states are two distinct, honest messages, not one.** `isBrandNewRoute`
+  (`every category !existed_before_week`) drives both: the summary panel says the route is too
+  new for real numbers rather than showing a fake/zeroed chart, and -- reusing the same flag --
+  the change-review screen's "nothing to change" message reads "not enough history yet" for a
+  first review versus "everything's on track, that's a good outcome" for a genuinely quiet
+  week with real history. Collapsing these into one string would have misdescribed a brand-new
+  route as a deliberate on-track week.
+- Numeric change cards show old → new plainly (with an inline edit control bounded by
+  `apply_weekly_plan_change()`'s own ±30%-or-one-block rail server-side, surfaced as a real
+  error message on `22023` rather than validated client-side and risking drift from the rail),
+  and every category's real numbers (completion/pace/pick-rate/target) render next to its
+  classification badge and reason string -- this phase's whole point is "trust the number, not
+  a vibe," so the math sits beside the sentence rather than behind it.
+
+**Verification, and a genuine, reproducible environmental failure worth recording precisely
+rather than glossed over.** `tsc`/`eslint` clean, `next build` clean, the full pre-existing
+192/192 vitest suite unaffected (no new unit-testable logic -- this is UI against an
+already-locked, already-unit-tested RPC/route contract, same category Phase 6 frontend was
+in). Seeded `supabase/seeds/weekly_engine_demo.sql` against the real linked dev project
+(`supabase db query --linked`, no `SUPABASE_SERVICE_ROLE_KEY` needed) and verified the UI
+against real threshold-crossing data, not just empty states: `dsa` genuinely renders
+Struggling, `sql` Coasting, `system_design` Avoided (as a question, never silently
+auto-accepted by "Accept all"), `behavioral` On track -- individual accept/reject/decline
+confirmed to actually persist across a reload, not just update local state.
+
+New `e2e/phase7-weekly-review.spec.ts`, 3 tests, split deliberately: two need no seeding (a
+fresh user's honest "no active route" state; a real-onboarding brand-new route's honest
+"not enough history" state on both the summary and the change-review screen) and run anywhere
+including CI; the third seeds the real fixture via the `supabase` CLI, which needs local
+credentials CI's `web-e2e` job doesn't have (only the public URL/anon key are injected there,
+confirmed by reading `.github/workflows/ci.yml` rather than assuming), so it detects that and
+skips cleanly rather than failing on missing infra. All 3 passed cleanly, individually and
+together, in the first several runs of this session.
+
+Then, running the **full** 29-spec suite (both parallel and serial) repeatedly surfaced
+failures in specs I never touched -- `phase5-kanban-metadata.spec.ts`, `phase6-calendar.spec.ts`
+-- at the exact same step: "Create my route" in Manual Setup never navigates away. Root-caused
+rather than assumed: the failure screenshot's own accessibility tree showed `alert: "No
+authenticated session. Refresh and try again."` on a run of `phase5-kanban-metadata.spec.ts`
+**by itself, completely unmodified, with zero interference from any file this session
+touched** -- proof this is Supabase anonymous sign-in genuinely rate-limited right now, the
+same `429 over_request_rate_limit` signature the 2026-09-08 entry already documented and this
+session's own cumulative seeding/testing volume today plausibly exhausted further. My own new
+error-state handling fired correctly under the same real failure in one run (the pre-existing,
+untouched `ProgressDeck` heatmap's own "Progress is unavailable" alert appeared *alongside*
+mine, both tracing to the same real Supabase calls failing together) -- the honest-failure
+contract held, it didn't fabricate data. Per this project's own established practice for
+exactly this signature: relying on the clean isolated passes already obtained for the
+genuinely new logic rather than re-running further against a rate limit that isn't a code
+issue, and treating CI (a separate, unburdened environment) as the tiebreaker for the combined
+run.
+
+Docs: none changed. The frontend consumed api.md §3f/§3g and schema.md as merged; the two
+judgment calls above (re-deriving outcomes rather than trusting a stored list that doesn't
+exist, and re-reading by id rather than trusting `changes[]`) were real gaps worked around in
+this file, not blocking bugs worth a contract amendment -- flagged here for whoever reads this
+next rather than silently patched.
+
 ## [backend] 2026-09-11 (PR pending) — Operating-engine plan, Phase 7 backend (the deterministic weekly engine)
 
 The product's core differentiator, and the first phase where the *algorithm* was the deliverable
