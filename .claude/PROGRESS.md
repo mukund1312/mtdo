@@ -4934,3 +4934,25 @@ Written up as a brief for J rather than built here.
 - Browser coverage verifies the inline onboarding selector, keyboard mode
   change, and the Settings selector. It keeps the frontend ready for a future
   persisted field without inventing an API or changing product state today.
+
+## 2026-09-11 [frontend] Architecture 02 Google / GitHub OAuth account access
+
+- Added Signal Deck-native **Continue with Google** and **Continue with
+  GitHub** controls to both account creation and login. They reuse the
+  existing account dialog's submitting, disabled, status, and error states.
+- Account creation deliberately calls `linkIdentity()` through
+  `upgradeWithOAuth()`, rather than `signInWithOAuth()`: this is Supabase's
+  identity-link flow and preserves the current anonymous `auth.uid()` with its
+  existing route, blocks, sessions, and records. Explicit returning-account
+  login uses `signInWithOAuth()` as expected.
+- The existing `/auth/callback` code exchange now forwards `sb_flow_id` when
+  present, keeping PKCE callback handling correct for both provider login and
+  anonymous identity linking.
+- Added provider-disabled and rate-limit error messaging plus browser coverage
+  for both OAuth intents without requiring Google/GitHub dashboard credentials.
+
+Verification: TypeScript, ESLint, Vitest (119 tests), production Webpack build,
+and the full Playwright production regression suite (23 tests) pass. Provider
+credentials remain an external setup step: enable Google and GitHub in Supabase
+Authentication → Providers and register `/auth/callback` with the provider and
+Supabase redirect allow-list.

@@ -47,12 +47,16 @@ function classifyUpdateUserError(error: AuthError): string {
   return error.message || "Couldn't save that. Try again.";
 }
 
-function classifyLinkIdentityError(error: AuthError): string {
+function classifyLinkIdentityError(error: AuthError, provider: OAuthProvider): string {
   const code = (error as { code?: string }).code;
   const msg = error.message ?? "";
+  const providerName = provider === "google" ? "Google" : "GitHub";
 
   if (code ? IDENTITY_TAKEN_CODES.has(code) : /already.*linked|already exists/i.test(msg)) {
     return "That account is already linked to a different mtdo login. Log in with it directly instead.";
+  }
+  if (/provider.*(not enabled|disabled)|unsupported provider/i.test(msg)) {
+    return `${providerName} sign-in is not available yet. Use email and password, or try again after it has been enabled.`;
   }
   if (/rate limit/i.test(msg)) {
     return "Too many attempts. Wait a moment and try again.";
@@ -144,6 +148,19 @@ export async function upgradeWithEmailPassword(
 
 export type OAuthProvider = "google" | "github";
 
+function classifyOAuthSignInError(error: AuthError, provider: OAuthProvider): string {
+  const msg = error.message ?? "";
+  const providerName = provider === "google" ? "Google" : "GitHub";
+
+  if (/provider.*(not enabled|disabled)|unsupported provider/i.test(msg)) {
+    return `${providerName} sign-in is not available yet. Use email and password, or try again after it has been enabled.`;
+  }
+  if (/rate limit/i.test(msg)) {
+    return "Too many attempts. Wait a moment and try again.";
+  }
+  return msg || `We couldn't continue with ${providerName}. Try again.`;
+}
+
 /**
  * OAuth upgrade path. linkIdentity() attaches the provider identity to the
  * CURRENT session and redirects the browser there and back -- it does not
@@ -162,10 +179,33 @@ export async function upgradeWithOAuth(
   });
 
   if (error) {
-    return { ok: false, message: classifyLinkIdentityError(error), error };
+    return { ok: false, message: classifyLinkIdentityError(error, provider), error };
   }
 
   // On success the browser is already navigating away; this return value is
   // reachable only if the redirect is somehow suppressed (e.g. a test env).
+  return { ok: true, message: null };
+}
+
+/**
+ * Existing-account OAuth sign-in. This is intentionally separate from
+ * upgradeWithOAuth(): an account creation must link an identity to the guest
+ * session it already owns, while an explicit "Log in" is choosing to leave
+ * the guest route separate and restore an account that already exists.
+ */
+export async function signInWithOAuth(
+  supabase: SupabaseClient,
+  provider: OAuthProvider,
+  redirectTo: string,
+): Promise<UpgradeOutcome> {
+  const { error } = await supabase.auth.signInWithOAuth({
+    provider,
+    options: { redirectTo },
+  });
+
+  if (error) {
+    return { ok: false, message: classifyOAuthSignInError(error, provider), error };
+  }
+
   return { ok: true, message: null };
 }
