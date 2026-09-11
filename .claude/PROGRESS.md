@@ -9,6 +9,167 @@ Add each session's PROGRESS.md entry to the same branch as the code it describes
 
 ---
 
+## [backend] 2026-09-11 (PR pending) — Operating-engine plan, Phase 7 backend (the deterministic weekly engine)
+
+The product's core differentiator, and the first phase where the *algorithm* was the deliverable
+rather than the plumbing around one -- so Opus, per the plan's own token-discipline rule. Backend
+only: this is a contract lock for a separate frontend agent building the Review deck and the
+change-review screen next, which is why api.md gains two full sections rather than a paragraph.
+
+**The founder's override was written into `decisions.md` before any SQL was.** The merged plan's
+Phase 7 text describes `generateWeeklyPlanRecommendation()` as an LLM call producing a candidate
+schema validated after the fact, plus an `aiService.reviewWeek()` summary. That is reversed: **zero
+AI anywhere in the metrics path or the recommendation path**, not as a stopgap while the Anthropic
+key is out of credits but as the product's shape. The founder's framing, recorded verbatim in the
+reasoning: a user who wants a model's opinion on their study week can go and ask one, and that is
+worth nothing as a product -- what nobody else can do is run deterministic rules over *this* user's
+real behavioural history. `reviewWeek()` is descoped entirely, not stubbed. Worth noting the plan
+already agreed in spirit ("the metrics must exist and be trusted before AI is allowed near them",
+"AI never computes these") -- that sentence was written about the raw metrics, and this extends it
+to the recommendations, which are the part that actually changes someone's plan.
+
+- **Migration 0021**: `iso_week_start()` and `weekly_performance(p_plan_id, p_iso_week) -> jsonb`.
+  `security definer`, `stable`, `authenticated`-only, derives the user from `auth.uid()` --
+  **called with the user's own anon client, never the service client** (a service-role caller has a
+  null `auth.uid()` and is rejected, same call-site rule as §3e). Read-computed, not
+  trigger-maintained, on `daily_rollups`' precedent, and it deliberately does **not read**
+  `daily_rollups` despite that being the free option for study-days and focus time: that table is
+  a pg_cron job's output and a review generated inside the ten-minute gap would quietly
+  under-report work the user did minutes earlier. It reads the same two source tables instead, so
+  the two agree by construction.
+  Ports `core.py`'s `compute_week_progress` (per-category done/total counted **by date key** --
+  which is why "picked that week" means a block whose board date falls in the week, not a creation
+  timestamp `blocks` doesn't have), `compute_daily_score` (`score`/`score_max` at week
+  granularity, skipping categories nobody picked from exactly as `if not blocks: continue` does),
+  and `compute_day_streaks`' notion of a day-with-activity (`study_days`).
+- **`jsonb` rather than a `returns table`, deliberately.** `weekly_plans.metrics` snapshots this
+  output for audit, and returning the same value that gets stored means the snapshot and what the
+  engine saw are byte-identical rather than a re-serialization that can drift. The ergonomic cost
+  (the generator types it `Json`) is paid once in `web/lib/planning/types.ts`, which exports the
+  full mirror plus an `asWeeklyPerformance()` narrower for the frontend agent to import.
+- **The single most important property, and it is a `null` discipline:** every rate is `NULL` when
+  its denominator is zero, never `0.0`. "Picked nothing" and "picked everything and finished none
+  of it" are different facts about a person, and collapsing both to 0% makes the engine propose
+  cutting the load of a category the user simply never opened. Six assertions pin it directly, and
+  the TS types make it `number | null` so a `?? 0` has to be written on purpose.
+- **Done-ness is the ledger's verdict, not `blocks.status`** -- last `task_completed`/
+  `task_regressed` event wins, the same rule §3a uses per day, applied across a block's whole
+  history (`compute_week_progress` reads *current* done-ness, so a block dated Sunday and finished
+  Monday is genuinely done work for that week). **A block the ledger has never seen falls back to
+  `blocks.status`**: a narrow, deliberate fallback, because `task_completed` only gained a call
+  site in Phase 1, and without it every pre-instrumentation block would read as permanently
+  unfinished and drag a real user's completion rate down forever.
+- **The false positive this engine could most easily have shipped, closed in the metric.** A task
+  counts toward `pace_ratio` only if it is done, has a non-null estimate, **and** has at least one
+  settled focus session. Without the session requirement, someone who finishes their work without
+  ever starting a timer computes as ~0 minutes against a real estimate, classifies as *coasting*,
+  and gets handed 25% **more** work for not using a Pomodoro. Also deviated from the brief on
+  `pace_ratio` itself: it is a ratio of sums, not the brief's mean of per-task ratios, because a
+  mean lets one five-minute task done in fifteen swing a whole week. The mean is still computed
+  and exposed as `pace_ratio_mean` for display. Both deviations are flagged in decisions.md rather
+  than made quietly.
+- **The lever is a new column, and finding that out changed the design.** The brief said to adjust
+  `plan_categories.min_blocks`. Checked rather than assumed: `min_blocks` is a per-*day* floor
+  (what `prompt.ts` tells every model to write, what `core.py`'s `category_own_complete()` means),
+  it is **read by nothing in the web product**, and its real values are 0 or 1 -- so ±25% of it
+  rounds to no change at all. That would have shipped a recommendation engine whose accepted
+  changes do nothing, which is theatre. 0021 adds `plan_categories.weekly_target_blocks` instead
+  (nullable, resolving to `array_length(days,1)`), plus `created_at` (backfilled from
+  `plans.created_at` -- exact, since nothing adds a category post-creation today) so a just-added
+  category can be *excluded* rather than misread as "on track". `days`, `goal_line` and the unlock
+  cursor are untouched and structurally untouchable.
+- **Migration 0022**: `weekly_plans` / `weekly_plan_changes`, plus `save_weekly_plan()`,
+  `apply_weekly_plan_change()`, `accept_all_weekly_plan_changes()` and an internal
+  `refresh_weekly_plan_status()`. SELECT-own to clients, every write behind an RPC.
+  **Deliberately `authenticated` RPCs and not the service-role client** -- unlike the calendar
+  tables there is nothing here a client may not own; routing through `save_weekly_plan()` gets the
+  review and all its changes into one transaction, proves ownership via `auth.uid()` rather than a
+  handler remembering to scope each query, and keeps the engine working in a deployment with no
+  `SUPABASE_SERVICE_ROLE_KEY`, which this one is. `generated_by` is `'rules_v1'` -- true, versioned,
+  and leaves room for a real `'ai_v1'` later with no schema change.
+- **A real consistency bug caught before it shipped, because the TS and the SQL were written
+  against each other.** A flat ±30% cap is unimplementable against small integers: at a target of
+  3, one block is a 33% move, so every proposal rounds back to 3 and the engine silently never
+  adjusts a 3-block category in either direction -- a dead zone indistinguishable from "the rules
+  are broken", and one that would have looked correct in review. The generator would have proposed
+  3 → 4 and `apply_weekly_plan_change()` would have rejected it *at the moment a user clicked
+  accept*. The cap is now **±30% or one whole block, whichever is larger**, implemented
+  independently in both places and asserted in both suites.
+- **`flag_question` applies nothing, structurally.** An avoided category produces a question, not a
+  number; it carries no values (CHECK-enforced), and `accept_all_weekly_plan_changes()` **skips**
+  those rows and leaves them pending, which also keeps the parent review open. "Accept all" means
+  "yes to everything you suggested", and a question's honest answer might be no -- so that promise
+  is a code path rather than a UI convention. Flagged for the frontend agent in api.md: the UI must
+  surface skipped questions, or a user clicks Accept All, sees nothing happen, and never learns one
+  is waiting.
+- **Precedence is `avoided` → `struggling` → `coasting`**, which the brief left open. A category
+  someone picks 2 of 10 offered tasks from and then fails one of is both avoided and struggling,
+  but "we've eased your target from 4 to 3" answers a question they never asked -- their target was
+  never the obstacle. Adjusting a number would also *look* like the engine had handled it.
+- **`menu_offered_count` is the one estimate rather than a measurement**, and its error direction
+  is chosen. Nothing records the unlock cursor's historical position, so it is walked back one
+  week_index per elapsed ISO week -- a lower bound. Under-counting what was offered *inflates*
+  `pick_rate`, making `avoided` harder to trigger; since that signal interrupts someone with a
+  question about their own priorities, biasing against a false accusation is the right way to be
+  wrong. Named as an estimate in api.md rather than presented as fact.
+- **Known gap, named not discovered later**: `postponement_count` is `regressed_count` +
+  `stale_open_count`, the two shapes the ledger can express. A block silently moved forward by a
+  cross-date `schedule_block()` leaves no trace -- `blocks.date` is mutable and nothing records the
+  move -- so that third, arguably most common shape isn't counted. It would need a move history the
+  schema doesn't have.
+
+**The seed fixture, and how to run it** -- required, not optional, because neither pgTAP nor a
+later manual walkthrough can wait three real calendar weeks:
+
+```
+psql -f supabase/seeds/weekly_engine_demo.sql          # defines the function, runs nothing
+select public.seed_weekly_engine_demo('<auth-user-uuid>');
+```
+
+`supabase/tests/run.sh` sources it automatically before the test files. It builds three backdated
+weeks for one plan with four categories engineered to cross **each** classification -- `dsa`
+struggling (.50 → .33 → .25, pace 1.5), `sql` coasting (1.0 completion, pace .60), `system_design`
+avoided (pick_rate .20/.17 **while completing everything it does pick**, which is what proves
+avoided is about engagement and not failure), `behavioral` on track. Overall completion is held
+deliberately *above* the 40% low-week floor, because if it dipped the engine would correctly
+suppress `sql`'s increase and the fixture would silently stop exercising the coasting path at all
+-- a fixture bug that looks exactly like a passing test. Two non-obvious things it has to do, both
+documented in its header: focus time is seeded as real 25-minute pomodoros rather than one long
+session (`least(elapsed, planned_duration_s)` would otherwise cap a 45-minute actual straight back
+to its 30-minute estimate and the pace signal would read 1.0 instead of 1.5), and category
+`created_at` is backdated (otherwise `existed_before_week` is false for every seeded week, all four
+categories are excluded as too new, and the fixture proves nothing -- caught when the new column
+made it visible).
+
+Verification: `supabase/tests/run.sh` **306/306** (103 new across `13_weekly_performance.sql` and
+`14_weekly_plan_changes.sql`), `tsc`/`eslint`/`vitest` (**192/192**, 73 new across `classify`,
+`propose`, `iso-week` and the route's tests) and `next build` all clean, both migrations pushed
+live via `supabase db push`, types regenerated from the live catalog. Boundary coverage is split
+on purpose and worth knowing where to look: the classification thresholds are pure functions so
+they are tested in vitest **at** each value and one step either side (0.5, 1.3, 0.7, 0.3, the 0.40
+floor); pgTAP covers the metric boundaries, the hard constraints, and the status transitions
+against a caller that is actively trying to get around them.
+
+**Playwright: a clean 25/25 first run, which is itself worth recording** given the last two
+sessions. The port trap the 2026-09-11 frontend entry describes is still live -- stray
+`next-server` processes were squatting on **both** 3000 and 3100 before this session started
+anything (`lsof` confirmed before any build). Served this worktree's own production build on 3212,
+verified by `lsof`/`curl` which PID was answering before trusting a single result, and killed it
+cleanly at the end rather than leaving a third stray. None of the rate-limit flakiness the
+2026-09-08 and 2026-09-11 entries documented appeared this time.
+
+Docs closed: `decisions.md` (the deterministic-by-design reversal with the founder's reasoning, the
+SQL/TS split, the `min_blocks` rejection, every threshold with its justification, both metric
+deviations, the estimate and the known gap), `api.md` (new §3f for `weekly_performance()`'s full
+return shape and the null-not-zero rule, new §3g for the whole change-review contract -- exact
+`changes[]`/`outcomes[]` shapes, the RPC call forms, and the accept-all-skips-questions trap the
+frontend must handle; §3's "Eight are not" count and write-path table updated), `schema.md` (both
+new tables, both new `plan_categories` columns, §6's privilege table and two new rules).
+
+**Not built, deliberately:** `aiService.reviewWeek()` or any natural-language summary (descoped by
+the founder, and moot besides -- the Anthropic key is out of credits), and the Review deck / change
+-review UI, which is the frontend agent's job against this locked contract.
+
 ## [web] 2026-09-11 (PR pending) — Operating-engine plan, Phase 6 frontend (Time deck: real calendar + Google Calendar opt-in)
 
 Built directly against PR #151's merged backend contract (`d10f318`, docs/architecture/
