@@ -507,7 +507,14 @@ function EventChip({ block, moving, onDragEnd, onDragStart, onOpen }: {
   const start = block.scheduled_start_at ? new Date(block.scheduled_start_at) : null;
   const end = block.scheduled_end_at ? new Date(block.scheduled_end_at) : null;
   const geometry = start && end ? eventGeometry(start, end) : null;
-  const style = geometry ? { top: `${geometry.top}px`, height: `${Math.max(22, geometry.height)}px` } : undefined;
+  // 40px is the real floor, not a stylistic choice: task name + time (the
+  // two lines that must never disappear) need ~26px of content height
+  // once padding is subtracted, and anything smaller reintroduces the
+  // "block only shows its time, not what it is" bug -- any block under
+  // ~50min hits this floor, which is most of them. A short block visually
+  // overlapping its true time-proportional height is the accepted
+  // tradeoff, same one most calendar UIs make for legibility.
+  const style = geometry ? { top: `${geometry.top}px`, height: `${Math.max(40, geometry.height)}px` } : undefined;
   return (
     <button
       type="button"
@@ -519,8 +526,12 @@ function EventChip({ block, moving, onDragEnd, onDragStart, onOpen }: {
       onDragEnd={onDragEnd}
       onClick={onOpen}
     >
-      {start && end && <small>{formatTimeRange(start, end)}</small>}
+      {/* Task name first: overflow:hidden clips from the bottom on a short
+          (e.g. 20-30min) block, and knowing WHAT this is matters more than
+          precisely when -- the block's position on the grid already shows
+          when, this text is the only place that says what. */}
       <b>{block.text}</b>
+      {start && end && <small>{formatTimeRange(start, end)}</small>}
       {block.category_label && <span>{block.category_label}</span>}
     </button>
   );

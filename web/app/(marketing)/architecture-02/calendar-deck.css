@@ -17,7 +17,16 @@
 /* Day/week grid */
 .a02-time-map { display:grid; grid-template-columns:44px 1fr; gap:8px; }
 .a02-time-map--week { grid-template-columns:44px repeat(7,minmax(0,1fr)); }
-.a02-time-map > aside { display:grid; grid-template-rows:repeat(16,48px); color:var(--dim); font:9px "DM Mono",monospace; text-align:right; padding-top:30px; }
+/* Day view renders no .a02-time-column-head above .a02-time-lines, so the
+   label column needs no offset to match it -- only the grid's own 1px
+   border-top. Week view DOES render that header (see calendar-deck.tsx),
+   so its label column gets the matching --week override below. A stray
+   30px here (copied from the week value without accounting for Day view
+   having no header at all) previously pushed every hour label about
+   two-thirds of a row below the grid line it names -- e.g. a block
+   scheduled for 9am rendered correctly at the 9am row, but the "9a" label
+   itself sat low enough to read as "10a" to the eye. */
+.a02-time-map > aside { display:grid; grid-template-rows:repeat(16,48px); color:var(--dim); font:9px "DM Mono",monospace; text-align:right; padding-top:1px; }
 .a02-time-map--week > aside { padding-top:44px; }
 .a02-time-map > aside span { transform:translateY(-6px); }
 .a02-time-column { min-width:0; }
@@ -32,9 +41,17 @@
 .a02-calendar-event:hover,.a02-calendar-event:focus-visible { transform:translateY(-1px); box-shadow:0 6px 18px rgba(0,0,0,.4); outline:none; }
 .a02-calendar-event:active { cursor:grabbing; opacity:.75; }
 .a02-calendar-event.is-moving { opacity:.5; cursor:wait; }
-.a02-calendar-event small { color:inherit; font:8px "DM Mono",monospace; opacity:.85; }
-.a02-calendar-event b { font-size:11px; line-height:1.25; letter-spacing:-.01em; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-.a02-calendar-event span { font-size:9px; opacity:.75; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+/* flex-shrink:0 on every line -- without it, a column flex with less room
+   than its children's combined natural height (any block under ~45min,
+   common here) shrinks them proportionally rather than letting the
+   container's own overflow:hidden clip whole lines. That shrinking hit `b`
+   (the task name) hardest and could squash it to 0 height while `small`
+   (the time) stayed legible -- exactly backwards from what matters on a
+   short block. Fixed height + shrink:0 means the container clips lines
+   from the bottom in DOM order instead, and `b` is ordered first. */
+.a02-calendar-event small { flex-shrink:0; color:inherit; font:8px "DM Mono",monospace; opacity:.85; }
+.a02-calendar-event b { flex-shrink:0; font-size:11px; line-height:1.25; letter-spacing:-.01em; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.a02-calendar-event span { flex-shrink:0; font-size:9px; opacity:.75; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
 .a02-calendar-event--high { border-color:var(--coral); background:rgba(255,128,113,.18); color:#ffcfc8; }
 .a02-calendar-event--medium { border-color:var(--acid); background:rgba(215,255,82,.14); color:#eaffb0; }
 .a02-calendar-event--low { border-color:var(--ultra); background:rgba(137,117,255,.22); color:#d3ceff; }
