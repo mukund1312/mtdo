@@ -151,6 +151,47 @@ simply a caller that stops ticking.
 
 ---
 
+## [frontend] 2026-09-12 (PR pending) — Calendar: real root cause of the hour-label/gridline misalignment found, PR #158's earlier fix was a symptom patch
+
+PR #158 (previous entry) fixed the Day-view header-offset issue and the task-name-clipping
+issue, and both were real. But the user re-reported the same class of symptom afterward with a
+1:00 PM block that rendered at the 12:00 PM gridline -- worth investigating rather than assuming
+the earlier fix was simply incomplete, since the number (off by nearly a full row, growing with
+the hour) didn't match a small residual.
+
+**Root cause: `signal-deck.css` still carried the entire original static-mockup stylesheet for
+`.a02-time-map` / `.a02-time-lines` / `.a02-calendar-event`, never removed when Phase 6 replaced
+it with a real, data-driven component in `calendar-deck.tsx`/`.css`.** Two of its rules used a
+`.a02-time-map > aside:first-child` selector -- `:first-child` counts as a pseudo-class for CSS
+specificity purposes, giving those old rules *higher* specificity than calendar-deck.css's plain
+`.a02-time-map > aside`, regardless of stylesheet load order. They silently won the cascade,
+setting `grid-template-rows` to `repeat(9,64px)` (the original mockup) and, from a later patch in
+the same file, `repeat(13,56px)` -- neither matching calendar-deck.css's real `repeat(16,48px)`.
+
+The scheduled block's own position was **never actually wrong** -- confirmed by comparing its
+inline `style.top` (computed in JS from a hardcoded `ROW_HEIGHT=48`) against the real grid cell's
+own bounding box: 1px apart, i.e. correct. What was wrong was the *background gridlines and hour
+labels themselves*, rendered against a row height that didn't match the 48px the JS math assumed.
+The mismatch is invisible near the top of the day (a few rows in, the accumulated 8-16px/row
+error is small) and grows into a near-full-row visual gap by early afternoon -- which is exactly
+why the 9am case in PR #158 looked fixed while 1pm didn't, without either check being wrong about
+what it measured.
+
+Fix: removed the two conflicting `grid-template-rows` declarations (and their mobile media-query
+variant) from `signal-deck.css`, leaving calendar-deck.css's `repeat(16,48px)` as the only such
+rule for these selectors. Left the rest of that legacy block alone rather than deleting
+wholesale -- `.a02-unscheduled`'s base panel styling (padding/border/background) turned out to be
+intentionally still relied on by the real component (its own CSS only adds interactive states on
+top), and the dead `.event-dsa`/`.event-review`/`.event-room` mockup-only classes are harmless
+since nothing in the real DOM ever matches them.
+
+Verified: a scheduled 1:00 PM block now measures within 1px of its label's row in a real browser
+(previously ~50px off); `e2e/phase6-calendar.spec.ts` (3/3), `signal-deck-home-session.spec.ts`
+(3/3) and `fixed-layer-safety.spec.ts` (2/2) all still pass; `tsc`/`eslint` clean. No component
+logic changed, CSS only.
+
+---
+
 ## [frontend] 2026-09-11 (PR pending) — Home deck: Active Vector tile becomes a shuffleable card stack (iMessage-style), new `framer-motion` dependency
 
 User asked, with a full technical spec, for the "Active Vector" hero tile (Home deck, top
