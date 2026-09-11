@@ -9,6 +9,140 @@ Add each session's PROGRESS.md entry to the same branch as the code it describes
 
 ---
 
+## [backend] 2026-09-11 (PR pending) — Operating-engine plan, Phase 6 backend (Time + Google Calendar)
+
+The largest phase so far, and the first since Phase 4 to need real schema/RLS *design* rather than
+a column add -- so Opus, per the plan's own token-discipline rule. Backend only: this is a contract
+lock for a separate frontend agent building the Time deck's scheduling UI next, which is why the
+docs half of this entry is as large as the code half.
+
+**The reversal was written before any SQL was.** The plan's own words say to record it first, and
+that ordering mattered here: writing it forced the scoping to be narrow rather than convenient.
+`decisions.md`'s new 2026-09-11 entry narrows -- explicitly does **not** undo -- 2026-09-07's "the
+curriculum → blocks bridge" decision. Curriculum is still an unlocking, carry-forward weekly menu
+with no dates in it; `ensure_curriculum_menu()`, the unlock cursor, `days`-as-a-count and
+`week_index`-as-a-sequence-position are all byte-for-byte untouched. What is new is strictly
+*downstream of an explicit pick*: once a human has pulled an item onto the board and a real
+`blocks` row exists, that block may optionally also carry a date and time. Scheduling deliberately
+lives on `blocks` and not on `curriculum_items` -- had it gone on the latter, generation would have
+had to invent dates and the whole weekly-menu model would have collapsed back into the day-by-day
+schedule the product walked away from. Cited Phase 6 of the merged plan as the reason, not a
+design doc, after Phase 3's lesson about a never-merged file being quoted as settled authority.
+
+- **Migration 0019**: `blocks.scheduled_start_at` / `scheduled_end_at timestamptz`, both nullable
+  with no default (genuinely-unset is the correct state for the overwhelming majority of blocks --
+  same load-bearing NULL as `estimated_minutes` and `profiles.timezone`), paired and ordered by two
+  CHECK constraints, plus a partial index on the scheduled minority only.
+  `schedule_block(p_block_id, p_date, p_start_at, p_end_at)` -- `security definer`, on the same
+  `mtdo.curriculum_menu:<uid>` advisory lock the other three board writers share. **The NULL
+  semantics were the real design decision, and they are documented rather than left inferable:**
+  the RPC *replaces* a schedule, it does not patch one, so passing no timestamps is the un-schedule
+  call and there is no separate `unschedule_block()`. `p_date` is the one asymmetry -- `blocks.date`
+  is NOT NULL, so a null `p_date` means "keep it where it is" because there is nothing to clear it
+  to. Also deliberately *not* constrained: the board date and the calendar window need not agree, or
+  a legitimate 23:30-00:30 session becomes a rejected write.
+- **The subtlety this RPC exists for, proven rather than asserted.** A cross-date move changes
+  `(user_id, date, category_id, position)` -- `blocks_slot_key` itself -- and that constraint is
+  DEFERRABLE INITIALLY DEFERRED, so a naive client-side move does not fail at UPDATE. It succeeds,
+  the transaction looks healthy, and it fails at COMMIT with a `23505` the UI can't attribute to
+  anything. Test 3 in the new SQL file forces that: it asserts the naive UPDATE *succeeds*, then
+  runs `SET CONSTRAINTS ... IMMEDIATE` (retroactive, so it runs the check COMMIT would have) and
+  catches the `23505`, then does the same move through the RPC and proves position reallocates
+  0 → 1 past the occupied slot. A test that only checked the RPC's happy path would have passed
+  against an implementation that never needed to exist.
+  One non-obvious branch worth recording: a **same-date** call must leave `position` alone, because
+  `max(position)` includes the row being moved -- recomputing would push a block to the end of its
+  own lane on every no-op re-schedule and leave a gap behind it. Same-day reordering stays an
+  ordinary client UPDATE; the DEFERRABLE constraint exists precisely so a two-row swap works.
+- **`pick_curriculum_item()` gains `p_target_date date default null`** (null = today in the caller's
+  zone, so every existing one-argument call site is unchanged). This is a **drop-and-recreate, not
+  a `create or replace`** -- a defaulted second parameter would have created an *overload*, and
+  every existing one-argument call would then have failed with `42725` "function is not unique"
+  rather than resolving. That was the single highest-regression-risk line in the migration and it
+  has its own assertion. The idempotent re-pick branch deliberately does **not** honour
+  `p_target_date` for an existing block: same rule 0018 established for a manual re-prioritization
+  surviving a repeat pick -- a block the user has since moved must not silently jump back.
+- **Migration 0020**: `calendar_connections` and `calendar_event_links`. The former is the
+  strictest posture in this schema -- RLS enabled with **no policies at all** *and* `revoke all`
+  from `anon`/`authenticated`, because schema.md §6's own opening says either mechanism alone is
+  only an incidental denial. A browser cannot read it even for its own row; a Google refresh token
+  is a long-lived credential to a third-party account. `calendar_event_links` is
+  `unique (block_id, provider)` (what makes sync idempotent), SELECT-own via the composite
+  ownership-chain FK, service-role write.
+- **A deliberate departure from the brief, flagged for review rather than done quietly.** The brief
+  said to use `pgcrypto`'s `pgp_sym_encrypt` if no precedent existed. There *is* a precedent, and it
+  points the other way: `0001_seam.sql`'s own header records that pgcrypto is **deliberately not
+  installed** (it trips Supabase's `extension_in_public` advisor -- the same paragraph is why
+  `set_updated_at()` was hand-written instead of using `moddatetime`). Reaching for it here would
+  have reversed a recorded decision as a side effect of an unrelated one. Decisively, though:
+  without Vault the symmetric key would have to be passed *into* SQL as an RPC argument on every
+  read and write, crossing PostgREST and the wire each time. So the token is encrypted in the Route
+  Handler instead (AES-256-GCM, `web/lib/calendar/crypto.ts`, self-describing `v1:<iv>:<tag>:<ct>`
+  envelope so a later key rotation needs no schema change) and the database never holds or sees the
+  key -- which means a database dump is not a token compromise, the actual threat this column is
+  encrypted against. Full reasoning in decisions.md; this is the judgment call most worth a second
+  opinion.
+- **`web/lib/supabase/service.ts`** -- the first service-role client in this app, which `server.ts`'s
+  own comment has been reserving for exactly this since W1 ("a Route Handler that legitimately needs
+  to bypass that must build a separate service-role client; do not add the service key here"). It
+  returns `null` rather than throwing when the key is absent, so a deployment without one degrades
+  instead of 500-ing, and its header carries the three rules that matter (Route Handlers only; no
+  session means RLS is not filtering, so scope every query by a `user_id` the *anon* client proved).
+- **Five Route Handlers** under `web/app/api/calendar/`: `status`, `connect`, `callback`, `sync`,
+  `disconnect`. **There are no Google credentials in this environment and none in CI**, so
+  "unconfigured" is not a speculative branch -- it is the path every one of these was actually
+  exercised on. `resolveCalendarConfig()` is modelled directly on `resolveProvider()` (Phase 2):
+  `status` returns a **200** naming exactly which env vars are absent, `connect`/`sync` return a
+  clean 503, and a present-but-wrong-length encryption key counts as *not configured* rather than
+  being accepted and then failing at the moment a real user finishes Google's consent screen.
+  Nothing in the core loop touches any of it -- `schedule_block()` works identically with or without
+  a calendar, which is the whole point of the seam.
+  Security details that are load-bearing rather than ceremonial: an httpOnly `SameSite=Lax` state
+  cookie (without it an attacker completes the callback with *their* code and binds *their* calendar
+  to the victim's account), a redirect target always built from this app's own origin and a constant
+  path (`app/auth/callback/route.ts` already has the open-redirect write-up), `prompt=consent` so
+  Google actually returns a refresh token on re-authorisation, the narrowest possible scope
+  (`calendar.events` -- no read scope, because one-way sync never reads the user's calendar), and
+  `disconnect` deleting the events **before** the connection, since the reverse order destroys the
+  only token that could have removed them.
+- **Per-block opt-in is derived, not stored** -- no `blocks.calendar_sync_enabled` column. A block
+  is synced iff a `calendar_event_links` row exists, exactly the way "picked" means "a block exists
+  with this `curriculum_item_id`". A second mutable copy of "is this on the calendar" can disagree
+  with the calendar, invisibly.
+- **Known gap, named rather than discovered later**: `calendar_event_links` cascades on block
+  delete, so deleting a *synced* block orphans the Google event -- Postgres cannot make an HTTP call
+  from a cascade. The call-site contract is "unsync before deleting" (api.md §3e) and no reaper
+  exists. RESTRICT was rejected outright: a user must always be able to delete their own block.
+- **Settings → Calendar**: a deliberately small read-only panel plus Connect/Disconnect, the same
+  scope discipline Phase 2's Settings → AI panel took. The Time deck's real scheduling UI is the
+  frontend agent's job; this exists so "is Google Calendar even set up here?" has an honest answer
+  instead of a control that looks live and isn't.
+
+**A real verification trap worth recording, because it very nearly produced a false green.** The
+first full local Playwright run reported 12 failures including tests my change couldn't touch. Two
+distinct causes, and separating them took longer than fixing anything: (1) Supabase anonymous
+sign-in was returning a hard `429 over_request_rate_limit` -- confirmed by probing the signup
+endpoint directly rather than inferring it, the same diagnosis the 2026-09-08 entry describes, and
+it cleared on its own; (2) more insidiously, a stale `next-server` from the **shared checkout** was
+squatting on port 3000, and `playwright.config.ts`'s `reuseExistingServer: !CI` happily reused it --
+so the entire suite had been running against a build that did not contain any of this work. That is
+why the calendar routes "404'd": they genuinely did not exist in what was being tested. Re-run
+against a server started from this worktree on a free port, the new calendar tests pass. Worth
+knowing for anyone else working in a worktree while another agent has the shared checkout's dev
+server up: a green local e2e run proves nothing until you have checked *which* server answered.
+
+Verification: `supabase/tests/run.sh` **203/203** (42 new assertions in
+`12_block_scheduling_calendar.sql`), `tsc`/`eslint`/`vitest` (**117/117**, 39 new across
+`crypto.test.ts`, `config.test.ts` and three route test files) and `next build` all clean, both
+migrations pushed live via `supabase db push`, types regenerated. Playwright run against a
+production build started from this worktree.
+
+Docs closed: `decisions.md` (the narrowed reversal, the pgcrypto departure, the orphaned-event
+debt), `api.md` (new §3d for `schedule_block()` including the generated-types `null`-vs-omit trap
+that will bite the frontend agent, new §3e for the whole calendar surface, §3b's now-stale "there
+is no target-date parameter" claim corrected, §3's write-path table and its stale "Five are not"
+count), `schema.md` (both new columns, both new tables, §6's privilege table and its notes).
+
 ## [backend+web] 2026-09-08 (PR #148, merged) — Operating-engine plan, Phase 5 complete (Kanban + task metadata)
 
 Both sides done in one session (Janhwi not actively coordinating in real time on this piece;
