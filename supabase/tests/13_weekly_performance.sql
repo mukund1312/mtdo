@@ -127,6 +127,33 @@ begin
     (select c->>'completion_rate' from jsonb_array_elements(v_cur->'categories') c
       where c->>'name' = 'system_design'), '1.0000');
 
+  -- 7d-7g pin the OBSERVABILITY GATE, not the rates. classifyCategory()
+  -- (web/lib/planning/classify.ts) refuses to classify a week at all unless
+  -- existed_before_week is true AND something was offered or picked -- so if
+  -- either of those silently flipped for this category, `avoided` would
+  -- become `insufficient_data`, the engine would emit NO weekly_plan_changes
+  -- row for it, and every rate assertion above would still pass. That is a
+  -- signal disappearing with nothing going red, which is the worst shape a
+  -- rules-engine regression can take. Both trailing weeks are checked
+  -- because the classifier requires both.
+  --
+  -- system_design is the category most exposed to this: it is the smallest
+  -- (days=2, so the fewest curriculum items per unlocked week_index) and the
+  -- only one whose signal depends on the menu-reconstruction estimate rather
+  -- than on completion or pace.
+  perform t.eq('7d system_design existed before the week under review',
+    (select c->>'existed_before_week' from jsonb_array_elements(v_cur->'categories') c
+      where c->>'name' = 'system_design'), 'true');
+  perform t.eq('7e ...and before the week before it, which the classifier also reads',
+    (select c->>'existed_before_week' from jsonb_array_elements(v_prev->'categories') c
+      where c->>'name' = 'system_design'), 'true');
+  perform t.eq('7f the menu really did offer it this week (a zero here reads as silence, not avoidance)',
+    (select c->>'menu_offered_count' from jsonb_array_elements(v_cur->'categories') c
+      where c->>'name' = 'system_design'), '6');
+  perform t.eq('7g ...and last week too',
+    (select c->>'menu_offered_count' from jsonb_array_elements(v_prev->'categories') c
+      where c->>'name' = 'system_design'), '5');
+
   -- ----- ON TRACK ---------------------------------------------------------
   perform t.eq('8 behavioral completion is 3 of 4',
     (select c->>'completion_rate' from jsonb_array_elements(v_cur->'categories') c

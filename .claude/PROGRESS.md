@@ -9,6 +9,79 @@ Add each session's PROGRESS.md entry to the same branch as the code it describes
 
 ---
 
+## [backend] 2026-09-11 (PR pending) — Phase 7 weekly engine: reported `avoided` bug NOT REPRODUCIBLE; the real gap was test coverage, not the rules
+
+Handed a bug reported as confirmed by direct database inspection: the weekly engine was said
+to emit only 2 `weekly_plan_changes` rows for `weekly_engine_demo.sql`'s plan (`sql`/coasting
+and `dsa`/struggling) and **zero** rows for `system_design`, which the fixture is explicitly
+built to classify `avoided`. **It does not reproduce on main (`e3c4b95`). Every layer is
+correct, and the expected row is produced.** Writing this up rather than shipping a
+speculative "fix" for a defect that isn't there, because a patch to correct code would have
+been worse than nothing.
+
+**What was actually run, twice, the second time on a from-`initdb` cluster to rule out my own
+state contamination.** `supabase/tests/run.sh`'s harness is the clean reproduction path the
+brief guessed it might be -- no Docker, no browser, no cookie-scraping for an anon user.
+Booted that same cluster, applied all 22 migrations, sourced the seed, called
+`seed_weekly_engine_demo()` for a real `auth.users` row, then drove the whole chain as the
+`authenticated` role with `request.jwt.claim.sub` set the way the app's own client would:
+`weekly_performance()` for both trailing weeks -> the real `buildWeeklyProposal()` over that
+exact JSON -> the real `save_weekly_plan()` RPC -> select the table back.
+
+- **The SQL layer is right.** `system_design` computes `pick_rate` 0.2000 in w2 (1 of 5
+  offered) and 0.1667 in w3 (1 of 6), both well under the 0.3 `avoided` threshold, with
+  `completion_rate` 1.0 -- exactly the fixture's documented intent. No off-by-something
+  specific to the smaller (days=2) category: I checked its whole computed history, W33-W37.
+- **The TS layer is right.** Fed that unmodified JSON, `classifyCategory()` returns `avoided`
+  for `system_design` (and struggling/coasting/on_track for the other three), and
+  `buildWeeklyProposal()` emits the `flag_question` change with `signal: 'avoided'` and both
+  values null. The `avoided` branch is reached, the precedence chain does not short-circuit
+  past it, and `flag_question` generation is fully implemented.
+- **The persistence layer is right.** `save_weekly_plan()` stores all three, `system_design`
+  included. Worth noting for whoever triages the next one of these: this RPC **cannot**
+  silently drop a change -- every branch either inserts or `raise`s 22023. A missing row can
+  therefore never be a persistence bug; it is always either classification or a caller that
+  never proposed it. That narrows the search a lot.
+- **Where the report's "25%" almost certainly came from, since it is a real number this
+  fixture produces.** `system_design`'s `pick_rate` is 0.2500 in **2026-W34** (1 of 4 offered)
+  -- w1, the week deliberately outside the trailing classification window. It is not 25% in
+  either week the engine actually reads. That points at a review generated over, or a summary
+  panel displaying, a different week pair than the classifier used, which is worth a look at
+  `weekly-review.tsx`'s summary panel if the symptom recurs. Even so, every adjacent pair I
+  checked ((W33,W34) through (W36,W37)) still classifies `system_design` as `avoided` or
+  `insufficient_data` -- there is no window in this fixture where it reads as on_track.
+
+**The one genuine defect found, and fixed: the suites could not have caught this symptom.**
+Not a rules bug -- a seam. `13_weekly_performance.sql` stops at the metrics, `14` exercises
+the change RPCs against *hand-built* change JSON, and the vitest suite runs on synthetic
+fixtures. Nothing asserted that the fixture's own numbers survive the trip into a row, so the
+reported failure -- had it been real -- would have gone green everywhere.
+
+Worse, the assertions that did exist could not see the failure mode that produces *exactly*
+the reported symptom. `classifyCategory()` gates on `existed_before_week` and "something was
+offered or picked" before any threshold is evaluated; if either silently flipped for this
+category, `avoided` becomes `insufficient_data`, the row vanishes, the other three categories
+keep working -- and every rate assertion in the file still passes. A signal disappearing with
+nothing going red. Neither field was asserted for any seeded category (the two existing
+`existed_before_week` checks are against a separate isolated fixture).
+
+- **`13_weekly_performance.sql` 7d-7g** (new): pins `existed_before_week` true and
+  `menu_offered_count` (6 this week, 5 last) for `system_design` in **both** trailing weeks,
+  since the classifier requires both. `system_design` is the right category to guard: the
+  smallest (fewest curriculum items per unlocked `week_index`) and the only one whose signal
+  rides on the menu-reconstruction *estimate* rather than on completion or pace.
+- **`propose.test.ts`** (new test): takes `system_design`'s real fixture numbers -- low but
+  non-zero pick rate both weeks, completion 1.0, pace 1.0, target 2 -- and asserts they reach
+  a `flag_question` change carrying no values, with the reason quoting the real counts.
+  Together with 7d-7g this closes the seam from both sides: the SQL suite pins the numbers,
+  the TS suite pins what those numbers must become.
+
+Verification: full `supabase/tests/run.sh` green (all assertions, 7d-7g included), 193/193
+vitest (was 192), `tsc`/`eslint`/`next build` clean. No production code changed -- tests and
+this entry only, which is the honest diff for a non-reproduction. No `decisions.md` entry: no
+decision was made or reversed, and the precedence/threshold reasoning already recorded there
+turned out to be exactly what the code does.
+
 ## [web] 2026-09-11 (PR pending) — Operating-engine plan, Phase 7 frontend (Review deck: real weekly metrics + the change-review screen)
 
 Built directly against PR #153's merged backend contract (`cf5cb6f`, docs/architecture/api.md
