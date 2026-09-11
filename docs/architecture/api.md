@@ -311,8 +311,11 @@ policy or a grant. `schema.md` §6 has the full privilege table.
 | Instead of | Call |
 |---|---|
 | `from('focus_sessions').insert(...)` | `rpc('start_session', { p_planned_duration_s })` — omit `p_block_id` entirely for an unscheduled session; see §3's note below on why passing `null` there won't typecheck |
-| `from('focus_sessions').update({ state: 'completed' })` | `rpc('complete_session', { p_id })` |
+| `from('focus_sessions').update({ state: 'completed' })` | `rpc('complete_session', { p_id })` — plus `p_block_outcome` to transition the linked block in the same transaction (§3h) |
 | `from('focus_sessions').update({ state: 'abandoned' })` | `rpc('abandon_session', { p_id })` |
+| pausing/resuming a timer in client state | `rpc('pause_session', { p_id, p_reason })` / `rpc('resume_session', { p_id })` — paused time must not count as focus time, and the client is not the authority on how long it lasted (§3h) |
+| `from('focus_sessions').update({ planned_duration_s })` | `rpc('extend_session', { p_id, p_additional_s })` (§3h) |
+| `from('blocks').update({ status })` **after a focus session** | `rpc('settle_block_outcome', { p_session_id, p_outcome, p_leftover_note })` — a bare status write is invisible to `weekly_performance()` for any block the ledger has already seen (§3h) |
 | `from('activity_events').insert({ kind, occurred_at, payload })` | `rpc('record_event', { p_kind, p_payload })` |
 | `from('tutor_messages').select(...)` | `rpc('tutor_context', { p_conversation_id, p_recent_limit })` |
 | `from('tutor_messages').insert(...)` | *not available to clients* — the W3b Route Handler (service role) only |
@@ -1035,6 +1038,175 @@ rpc('accept_all_weekly_plan_changes', { p_weekly_plan_id })  // → { applied, s
 **Errors.** `42501` — not yours, or no session (never distinguished from "no such row").
 `22023` — an invalid decision word, a re-decision, a value outside the cap or below 1, a
 `flag_question` given a value, or a regeneration over a decided review.
+
+## 3h. Focus Mode: pause, breaks, extension, and the block outcome (migrations/0023)
+
+Everything the Session screen needs beyond start/complete/abandon. **This section is the locked
+contract** — the Session UI is built against it, not against the migration.
+
+### What was already there
+
+**Editable duration needed no backend work.** `start_session`'s `p_planned_duration_s` has always
+taken any value from 1 to 86400; the Session screen simply hardcodes `DEFAULT_DURATION_S = 50*60`
+and ships no time picker. Adding one is a pure frontend change against the existing parameter.
+
+### The new columns on `focus_sessions`
+
+All four are SELECT-able by the owner and writable only through the RPCs below.
+
+| Column | Meaning |
+|---|---|
+| `paused_at timestamptz` | Non-null = the clock is stopped, and *when* it stopped. **A paused session is still `state = 'running'`** (schema.md §5) — do not look for a `'paused'` state, there isn't one. |
+| `total_paused_s integer` | Accumulated closed paused intervals. Always 0 on a pre-0023 row, so historical numbers are unchanged. |
+| `extended_s integer` | How much of `planned_duration_s` arrived via `extend_session()` rather than being committed to up front. |
+| `break_plan jsonb` | The frozen-at-start break schedule, or null. |
+
+**The client's stale-session recovery query must select the new columns.** `session/page.tsx`
+currently reads `id, started_at, planned_duration_s`; a session restored after a tab close now also
+needs `paused_at, total_paused_s, break_plan` or the restored timer will over-count every pause the
+user took before the reload. The `.eq('state','running')` filter itself is still correct and still
+finds a paused session — that is exactly why pause is a sub-state.
+
+**Computing the display clock.** The server owns time; the client renders it:
+
+```ts
+const focusElapsedS =
+  (Date.now() - Date.parse(started_at)) / 1000
+  - total_paused_s
+  - (paused_at ? (Date.now() - Date.parse(paused_at)) / 1000 : 0);
+```
+
+While paused, stop ticking — `focusElapsedS` is already frozen by construction, so EmberMorph's
+`elapsedS` simply stops advancing. **EmberMorph needs no change**: its contract (§4.1) is plain
+caller-ticked numbers, and a paused session is a caller that stops ticking.
+
+### `pause_session(p_id uuid, p_reason text default 'manual') → focus_sessions`
+
+Stops the clock. `p_reason` is `'manual'` or `'break'`; anything else is `22023`. Refuses with
+`42501` if the session is not the caller's, not running, **or already paused** — a double-pause is
+an error rather than a silent restamp, because restamping would erase however long the user had
+already been away and hand back focus time they didn't earn. Mints `session_paused`.
+
+### `resume_session(p_id uuid) → focus_sessions`
+
+Banks `now() - paused_at` into `total_paused_s` and clears `paused_at`. `42501` if not the
+caller's, not running, or not currently paused. Mints `session_resumed`.
+
+### Breaks are scheduled pauses — one mechanic, not two
+
+A break and a pause do the same thing to the only thing the server owns: they stop the clock. The
+difference is *who decided when*, which is a property of the reason, not the mechanism. So there is
+no `start_break`/`end_break` pair — a scheduled break is `pause_session(id, 'break')` fired by the
+client when the plan says one is due, and `resume_session(id)` when it ends.
+
+The **schedule** is persisted on the session, because a session's break points are as much "what
+this session is" as `planned_duration_s` is, and the client is not trusted to remember either
+across a reload (D12):
+
+```jsonc
+// p_break_plan, frozen at start_session() and never mutable afterwards
+{ "breaks": [ { "at_s": 900, "duration_s": 300 },
+              { "at_s": 1800, "duration_s": 300 } ] }   // 45min work + 2x5min
+```
+
+**`at_s` is FOCUS seconds elapsed, not wall clock** — so a manual pause slides the remaining breaks
+along with the user instead of consuming one. A break is due when `focusElapsedS >= at_s` for the
+first entry not yet taken. The client tracks which breaks it has already fired; the server does not
+(it has no opinion about the schedule beyond storing it, and a re-fired break is just a second
+pause, which is harmless).
+
+`start_session` validates the plan and rejects with `22023`: a non-object or a missing `breaks`
+array, more than 24 breaks, a break missing numeric `at_s`/`duration_s`, an `at_s` outside
+`1..planned_duration_s - 1` (which would never fire — almost always a minutes/seconds mix-up),
+non-increasing `at_s` values, a non-positive `duration_s`, or work-plus-breaks exceeding 86400.
+
+### `extend_session(p_id uuid, p_additional_s int) → focus_sessions`
+
+Applying an accepted "do you need more time?" answer. **The prompt's timing is entirely a frontend
+concern** — the client watches remaining time and decides when to ask; this RPC is only what
+"yes, add 10 minutes" calls.
+
+Adds to `planned_duration_s` (the cap every consumer already reads — an accepted extension is real
+time the user really committed to) **and** accumulates `extended_s`, so reporting can still tell
+"planned 25, then asked for 10 more" from "planned 35". Allowed while paused, deliberately.
+`22023` for a non-positive `p_additional_s` or one that would push `planned_duration_s` past 86400
+(a readable error rather than the table CHECK surfacing as an opaque `23514`); `42501` if not the
+caller's or not running. Mints `session_extended`.
+
+### `settle_block_outcome(p_session_id uuid, p_outcome text, p_leftover_note text default null) → blocks`
+
+The linked block's fate after a session. `p_outcome` is `'done'` or `'in_progress'`.
+
+**Why this is an RPC even though `blocks` is client-writable.** Checked, not assumed:
+`blocks_owner_all` is a `for all` policy and `blocks` keeps full CRUD grants — `session/page.tsx`
+already does a direct `.update({ claimed, status })` at session start. So this is not an RLS
+workaround. It exists because **`blocks.status` is not what decides whether a task counts as done**:
+`weekly_performance()` (§3f) reads the *ledger's* last `task_completed`/`task_regressed` verdict and
+only falls back to `blocks.status` for a block the ledger has never seen. A client that set
+`status = 'done'` without minting `task_completed` would be visible on the Kanban board and
+invisible to the weekly engine. The status write and the ledger event are one fact and belong in one
+transaction.
+
+**`task_regressed` is minted only on a genuine walk-back.** `weekly_performance()` computes
+`postponement_count` as `regressed_count + stale_open_count`. Minting a regression on every
+"something's left" answer would permanently inflate that signal for anyone who works steadily on
+hard tasks — the engine would read them as a chronic postponer and act on it. So the event fires
+only when the block was actually done before (ledger first, `blocks.status` as fallback — 0021's
+exact rule) and is now being walked back.
+
+**The leftover note is appended to `blocks.notes`, never overwritten.** `blocks.notes` is an
+ordinary user-editable column that the Session screen already renders as the task's description;
+clobbering it would destroy text written elsewhere with no undo. Appends are separated by a blank
+line and prefixed with the date in the user's own `profiles.timezone`. A note on the `'done'` path
+is rejected with `22023` rather than silently dropped (a note saying what's left only makes sense
+where something is left); over 2000 characters is also `22023`.
+
+Returns **NULL for an unlinked session** (Home's generic "Start focus") rather than raising, so the
+client can run the same outcome flow for every session without branching first. `42501` if the
+session is not the caller's or **is still running** — "what happened to the task" is not a question
+about a live session.
+
+**No advisory lock, deliberately.** The per-user lock (`activate_plan`, 0005) exists where one
+statement must be consistent against a *set* of a user's rows. This writes one block row and appends
+one event; Postgres' own row lock already serializes concurrent calls, and both orderings end with a
+status and a last-ledger-verdict that agree — the only property any reader depends on. Taking
+`hashtext(uid)` would queue a one-row status update behind plan activation and curriculum picks for
+no correctness gain.
+
+### The decision table — what the Session UI calls for each of the three outcomes
+
+| User action | Call | Block ends up | Note |
+|---|---|---|---|
+| **"End session"** (explicit, mid-session or otherwise) | `rpc('complete_session', { p_id, p_block_outcome: 'done' })` | `'done'` | No further prompt. One atomic call. |
+| **"Leave early"** | `rpc('abandon_session', { p_id, p_block_outcome: 'in_progress' })` | `'in_progress'` | No note. Reuses `abandon_session` — "left early" is exactly what abandoning already means, and the ledger event is already `session_abandoned`. |
+| **Timer expires** → then "I finished" | `rpc('complete_session', { p_id })`, then `rpc('settle_block_outcome', { p_session_id: p_id, p_outcome: 'done' })` | `'done'` | Two calls **on purpose**: the session closes when time runs out, and the question is asked afterwards. |
+| **Timer expires** → then "something's left" | `rpc('complete_session', { p_id })`, then `rpc('settle_block_outcome', { p_session_id: p_id, p_outcome: 'in_progress', p_leftover_note: '…' })` | `'in_progress'` | The note is required by the product flow, optional to the RPC. |
+
+Natural expiry is a **`complete_session`, never an `abandon_session`** — the time was legitimately
+spent, and the block's fate is a separate question from the session's.
+
+The two immediate paths fold the block transition into the settle call so there is no window where
+the session is over and the board still says in-progress. The expiry paths cannot: the answer does
+not exist yet when the session closes. Both routes run the identical function body — the
+`p_block_outcome` parameter is a passthrough to `settle_block_outcome()`, not a second
+implementation.
+
+### Ledger additions
+
+`session_paused`, `session_resumed`, `session_extended` join the `session_*` family: **server-minted
+only**, and deliberately *not* added to `record_event()`'s client-appendable whitelist. Pause is what
+makes focus time honest, so a client that could self-report "I resumed" could farm it.
+
+`session_completed`/`session_abandoned` payloads gain three fields. `elapsed_s` keeps its original
+wall-clock meaning so a reader is never silently comparing two different quantities under one name;
+**`focus_s` is the new pause-aware number and is the one to use.**
+
+```jsonc
+{ "block_id": "…", "planned_duration_s": 2100,
+  "elapsed_s": 1800,        // wall clock, unchanged meaning
+  "focus_s": 1200,          // pause-aware, capped at planned — USE THIS
+  "total_paused_s": 600, "extended_s": 600 }
+```
 
 ## 4. The EmberMorph component contract
 
