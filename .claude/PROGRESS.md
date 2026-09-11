@@ -116,6 +116,32 @@ uses today still resolve. It deliberately does not touch the Session UI, which d
 pause/end/leave-early controls yet; asserting on it would make the spec fail for the wrong reason
 the moment the next agent builds them. Existing `signal-deck-home-session.spec.ts` 3/3 still green.
 
+**CI's `web-e2e` went red, and the diagnosis changed the spec.** Two failures, neither mine:
+`settings.spec.ts:104` (`/api/calendar/status` returned **401**, not 200) and
+`signal-deck-home-session.spec.ts:11` (the Time deck's "nothing waiting" empty state never
+rendered). Both are auth-dependent, and the 401 is the tell — no authenticated session in CI.
+Every other `main` run this week is green, so "pre-existing flake" was not available as an excuse:
+**every one of those green runs predates this migration landing in the live shared project that CI
+also tests against**, so the baseline was stale and the migration was a live suspect.
+
+Settled it with evidence rather than argument: ran both failing specs locally **against that same
+migrated database** — 8/8 pass. Local and CI hit an identical schema, so the schema is exonerated
+and the difference is the CI environment (no auth session → 401), which matches the
+`429 over_request_rate_limit` pattern the 2026-09-08 and 2026-09-11 entries already document. No
+explicit 429 appears in this job's log, so that last step is inference, not proof — recorded as
+inference.
+
+**That verdict did not let my spec off the hook, and this is the part worth keeping.** It minted a
+fresh anonymous user *per test* — four sign-ins added to every CI run, forever, against a
+project-wide rate-limited resource this repo has already exhausted twice. I can't prove it was the
+marginal straw on this run, but it plausibly contributed, and it is a bad citizen either way. Now
+one shared sign-in for all four tests, which forced a second decision: `playwright.config.ts` sets
+`fullyParallel: true`, so tests within a file can run concurrently, and four tests sharing one user
+would collide on `focus_sessions_one_running`. Hence `test.describe.serial` — sharing the user and
+serializing are one decision, not two, and the file says so. A rate-limited sign-in is now recorded
+in `beforeAll` and turned into an honest skip by `beforeEach`, rather than failing four tests and
+reporting an environment problem as a code regression. Still 4/4 locally.
+
 One thing the frontend agent must not miss, flagged in §3h: **the stale-session recovery query needs
 the new columns.** `session/page.tsx` reads `id, started_at, planned_duration_s`; a session restored
 after a tab close now also needs `paused_at, total_paused_s, break_plan` or the restored timer will

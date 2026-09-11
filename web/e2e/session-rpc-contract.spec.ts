@@ -46,20 +46,50 @@ const ENV = loadEnvLocal();
 const url = ENV.NEXT_PUBLIC_SUPABASE_URL ?? process.env.NEXT_PUBLIC_SUPABASE_URL;
 const anonKey = ENV.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
 
-test.describe("session RPC contract (migrations/0023)", () => {
+// SERIAL, and ONE anonymous sign-in shared by all four tests -- both halves
+// of that are deliberate and load-bearing.
+//
+// Anonymous sign-in is a rate-limited, project-wide resource, and this repo
+// has already been bitten by exhausting it twice (PROGRESS.md, 2026-09-08 and
+// 2026-09-11: a `429 over_request_rate_limit` that surfaces downstream as
+// "No authenticated session" and unrelated-looking failures in whatever spec
+// happens to run next). A spec that mints a fresh anonymous user per test
+// adds four sign-ins to every CI run forever, which is a bad trade for what
+// is really one user's worth of work.
+//
+// Sharing one user REQUIRES serial mode: playwright.config.ts sets
+// `fullyParallel: true`, so tests inside a file can otherwise run
+// concurrently -- and these four all start focus sessions, which
+// focus_sessions_one_running would reject for a shared user. Serial mode is
+// what makes one sign-in safe; the two decisions cannot be separated.
+test.describe.serial("session RPC contract (migrations/0023)", () => {
   test.skip(!url || !anonKey, "needs NEXT_PUBLIC_SUPABASE_URL / _ANON_KEY");
 
-  function client() {
-    return createClient<Database>(url!, anonKey!, {
+  type Db = ReturnType<typeof createClient<Database>>;
+  let supabase: Db;
+  let authFailure: string | null = null;
+
+  test.beforeAll(async () => {
+    if (!url || !anonKey) return;
+    const c = createClient<Database>(url, anonKey, {
       auth: { persistSession: false, autoRefreshToken: false },
     });
-  }
+    const { error } = await c.auth.signInAnonymously();
+    if (error) {
+      // Recorded rather than thrown: a rate-limited sign-in is an
+      // environment problem, and failing every test here would report it as
+      // a code regression. beforeEach turns it into an honest skip.
+      authFailure = error.message;
+      return;
+    }
+    supabase = c;
+  });
+
+  test.beforeEach(() => {
+    test.skip(!!authFailure, `anonymous sign-in unavailable: ${authFailure}`);
+  });
 
   test("the pre-0023 flows still work end to end: start -> complete, start -> abandon", async () => {
-    const supabase = client();
-    const { error: authError } = await supabase.auth.signInAnonymously();
-    test.skip(!!authError, `anonymous sign-in unavailable: ${authError?.message}`);
-
     // Exactly the call the shipped Session screen makes today -- p_block_id
     // omitted rather than passed as null (api.md §3's note on why null does
     // not typecheck), p_break_plan not mentioned at all.
@@ -84,10 +114,6 @@ test.describe("session RPC contract (migrations/0023)", () => {
   });
 
   test("55006 recovery still branches correctly, and now covers a PAUSED session", async () => {
-    const supabase = client();
-    const { error: authError } = await supabase.auth.signInAnonymously();
-    test.skip(!!authError, `anonymous sign-in unavailable: ${authError?.message}`);
-
     const started = await supabase.rpc("start_session", { p_planned_duration_s: 1500 });
     expect(started.error).toBeNull();
     const id = (started.data as unknown as { id: string }).id;
@@ -116,10 +142,6 @@ test.describe("session RPC contract (migrations/0023)", () => {
   });
 
   test("the full new lifecycle over PostgREST: breaks, extend, and the block outcome", async () => {
-    const supabase = client();
-    const { error: authError } = await supabase.auth.signInAnonymously();
-    test.skip(!!authError, `anonymous sign-in unavailable: ${authError?.message}`);
-
     const { data: userData } = await supabase.auth.getUser();
     const userId = userData.user!.id;
 
@@ -226,10 +248,6 @@ test.describe("session RPC contract (migrations/0023)", () => {
   });
 
   test("focus_sessions is still SELECT-only, including the new columns", async () => {
-    const supabase = client();
-    const { error: authError } = await supabase.auth.signInAnonymously();
-    test.skip(!!authError, `anonymous sign-in unavailable: ${authError?.message}`);
-
     const started = await supabase.rpc("start_session", { p_planned_duration_s: 1500 });
     expect(started.error).toBeNull();
     const id = (started.data as unknown as { id: string }).id;
