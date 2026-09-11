@@ -15,11 +15,13 @@ import { SignalDeckConfirmedWelcome } from "./signal-deck-confirmed-welcome";
 import { SignalDeckWalkthrough } from "./signal-deck-walkthrough";
 import { computeStreaks } from "./streak";
 import { isBlockStatus, TodayDeck, type BlockStatus, type TodayBlock } from "./today-deck";
+import { CardStack } from "./todo-card-stack";
 import { SIGNAL_DECK_WALKTHROUGH_STORAGE_KEY } from "./walkthrough-data";
 import "./signal-deck.css";
 import "./route-entry.css";
 import "./product-deck.css";
 import "./signal-deck-walkthrough.css";
+import "./todo-card-stack.css";
 import "./account-control.css";
 import "./listen-deck.css";
 import "./listen-deck-polish.css";
@@ -322,12 +324,27 @@ function HomeDeck({
   const doneCount = useMemo(() => blocksToday.filter((block) => block.status === "done").length, [blocksToday]);
   const remaining = blocksToday.length - doneCount;
 
+  // The shuffleable stack: in_progress first (there's usually at most one),
+  // then todo, each internally by position -- same priority nextHomeBlock
+  // already used for the single-card version, just not stopping at one.
+  const todoStack = useMemo(
+    () =>
+      [...blocksToday]
+        .filter((block) => block.status === "in_progress" || block.status === "todo")
+        .sort((a, b) => (a.status === b.status ? a.position - b.position : a.status === "in_progress" ? -1 : 1)),
+    [blocksToday],
+  );
+  // Tracks whichever card the stack currently has on top, so "Start Focus"
+  // acts on what the user is actually looking at, not a fixed pick.
+  const [topBlock, setTopBlock] = useState<HomeBlock | null>(null);
+  const focusTarget = topBlock ?? next;
+
   const beginFocus = () => {
     if (running) {
       router.push("/session");
       return;
     }
-    router.push(next ? `/session?blockId=${encodeURIComponent(next.id)}` : "/session");
+    router.push(focusTarget ? `/session?blockId=${encodeURIComponent(focusTarget.id)}` : "/session");
   };
 
   const openNextInLens = () => {
@@ -342,11 +359,10 @@ function HomeDeck({
   };
 
   const loading = state === "loading";
-  const heroLabel = running ? "IN MOTION" : next ? "ACTIVE VECTOR" : "NO TASK QUEUED";
-  const heroTitle = running ? "Resume session" : next ? next.text : "Nothing queued";
+  const heroLabel = running ? "IN MOTION" : focusTarget ? "ACTIVE VECTOR" : "NO TASK QUEUED";
   const heroDetail = running
     ? `${formatClock(secondsSince(running.startedAt))} elapsed`
-    : next
+    : focusTarget
       ? `${HOME_SESSION_MINUTES}:00 / ready to launch`
       : "Add a task from Today to begin.";
 
@@ -364,21 +380,64 @@ function HomeDeck({
           Set up your route <i>↗</i>
         </a>
       </section>
-      <button className="a02-focus-node" onClick={beginFocus} disabled={loading}>
-        <span className="a02-node-orbit a02-o1" />
-        <span className="a02-node-orbit a02-o2" />
-        <span className="a02-node-core">▶</span>
-        <div>
-          <small>{heroLabel}</small>
-          <strong>{loading ? "…" : heroTitle}</strong>
-          <em>{loading ? "" : heroDetail}</em>
-        </div>
-        <b>
-          {running ? "RESUME" : "START"}
-          <br />
-          FOCUS ↗
-        </b>
-      </button>
+      {!loading && !running && todoStack.length > 0 ? (
+        <CardStack
+          className="a02-hero-stack"
+          items={todoStack}
+          getKey={(block) => block.id}
+          onTopChange={setTopBlock}
+          onCardClick={beginFocus}
+          renderCard={(block, isTop) => (
+            // Card content only -- the click-to-start-focus handler lives
+            // on CardStack's own motion.div (via onCardClick above), not
+            // here, so Framer Motion's click-after-drag suppression
+            // actually applies. The nested button is a real, separately
+            // focusable/keyboard-reachable target for the same action;
+            // event.stopPropagation() keeps a click on it from also
+            // bubbling up to the card's own onClick and double-firing.
+            <div className="a02-focus-node" aria-hidden={!isTop}>
+              <span className="a02-node-orbit a02-o1" />
+              <span className="a02-node-orbit a02-o2" />
+              <span className="a02-node-core">▶</span>
+              <div>
+                <small>ACTIVE VECTOR</small>
+                <strong>{block.text}</strong>
+                <em>{HOME_SESSION_MINUTES}:00 / ready to launch</em>
+              </div>
+              {isTop && (
+                <button
+                  type="button"
+                  className="a02-hero-stack-start"
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    beginFocus();
+                  }}
+                >
+                  START
+                  <br />
+                  FOCUS ↗
+                </button>
+              )}
+            </div>
+          )}
+        />
+      ) : (
+        <button className="a02-focus-node" onClick={beginFocus} disabled={loading}>
+          <span className="a02-node-orbit a02-o1" />
+          <span className="a02-node-orbit a02-o2" />
+          <span className="a02-node-core">▶</span>
+          <div>
+            <small>{heroLabel}</small>
+            <strong>{loading ? "…" : running ? "Resume session" : "Nothing queued"}</strong>
+            <em>{loading ? "" : heroDetail}</em>
+          </div>
+          <b>
+            {running ? "RESUME" : "START"}
+            <br />
+            FOCUS ↗
+          </b>
+        </button>
+      )}
       <section className="a02-signal-stack">
         <button className="a02-signal-card a02-card-route" onClick={openNextInLens} disabled={loading}>
           <span>01 / TASK SIGNAL</span>

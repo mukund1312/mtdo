@@ -9,6 +9,57 @@ Add each session's PROGRESS.md entry to the same branch as the code it describes
 
 ---
 
+## [frontend] 2026-09-11 (PR pending) — Home deck: Active Vector tile becomes a shuffleable card stack (iMessage-style), new `framer-motion` dependency
+
+User asked, with a full technical spec, for the "Active Vector" hero tile (Home deck, top
+right) to become a swipeable stack over the day's todo items -- browse through them with an
+iMessage-stacked-photo shuffle, not a full Home redesign (everything else on the deck stays
+untouched). New reusable component: `web/app/(marketing)/architecture-02/todo-card-stack.tsx`
+(+ `.css`), generic over any array/render-function, not Signal-Deck-specific.
+
+**Built to the spec, with one necessary translation.** Scale factor `1 - index*0.05`, Y-offset
+`-index*12px`, drag bound to the top card only, 150px dismiss threshold -- all literal. The
+spec's spring numbers (damping ratio 0.7, response 0.4s) are SwiftUI's own parameterization;
+Framer Motion takes `stiffness`/`damping`/`mass` instead, so the component converts via the
+standard formula (angular frequency = 2π/response, stiffness = mass·frequency², damping =
+2·dampingRatio·mass·frequency) rather than picking arbitrary-feeling constants.
+
+**One deliberate deviation from the literal iMessage behavior:** dismissal here is
+non-destructive. Dragging a card past the threshold advances the stack to the next todo and
+rotates the dismissed one to the back -- "see all the todos," a genuine shuffle -- not
+iMessage's permanent delete. Confirmed explicitly with the user before building, since
+guessing wrong on that point would have meant reworking the whole interaction model.
+
+**A real bug found only by testing the actual gesture, not by reading the code:** the first
+version put the "start focus" click handler on a nested div inside the draggable card,
+assuming Framer Motion's built-in click-after-drag suppression would prevent a drag from also
+firing a click. It didn't -- confirmed by a failing Playwright drag simulation that
+unexpectedly navigated to `/session` mid-drag, twice, under two different fix attempts (moving
+the handler onto the actual `motion.div` with the `drag` prop didn't fix it either -- Framer's
+suppression proved unreliable under these conditions, not just misplaced). Fixed with an
+explicit `didDrag` ref set in `onDragStart` and checked/reset in the click handler -- a
+manually-owned disambiguation that doesn't depend on Framer's internal heuristic at all.
+Verified: a real drag now shuffles without navigating, and a separate plain click still starts
+focus and lands on `/session?blockId=<real id>`.
+
+Also restored one thing the first attempt broke and an existing test caught:
+`signal-deck-home-session.spec.ts` expected the whole card to be clickable (it was a real
+`<button>` before this change) -- the fix above (click on the motion.div, not a corner button)
+recovers that, plus keeps a real nested "START FOCUS" button for keyboard/screen-reader
+reachability (`stopPropagation` so it doesn't double-fire through the card's own handler).
+
+Verified: `tsc`/`eslint` clean, targeted Playwright checks (depth renders correctly -- two
+card edges visible behind the top card at the spec'd scale/offset; drag-shuffle changes the
+top card; click-to-focus still navigates) all pass individually and serially. A 2-worker full
+suite run showed 16 failures spanning nearly every spec file including ones untouched by this
+change, matching this project's own documented Supabase-rate-limit-under-parallel-workers
+pattern (not a real regression) -- CI, which runs isolated rather than contending with local
+parallel runs, is the authoritative signal here per this project's established practice.
+
+New dependency: `framer-motion@13.2.0`.
+
+---
+
 ## [frontend] 2026-09-11 (PR pending) — Calendar deck: two real rendering bugs found via manual click-through, both fixed
 
 User did a manual pass on Phase 6's calendar right after it shipped and reported it looked
