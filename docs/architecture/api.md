@@ -1161,6 +1161,12 @@ line and prefixed with the date in the user's own `profiles.timezone`. A note on
 is rejected with `22023` rather than silently dropped (a note saying what's left only makes sense
 where something is left); over 2000 characters is also `22023`.
 
+**One consequence for the Session screen.** `session/page.tsx` currently renders the whole of
+`blocks.notes` as the task's one-line `detail`. After a few sessions on the same task that field
+holds several dated paragraphs, which will read badly in a one-liner. Rendering only the **last**
+paragraph (split on the blank line) is the intended shape — the earlier ones are history, available
+if the UI wants to show them. Nothing in the RPC assumes either choice.
+
 Returns **NULL for an unlinked session** (Home's generic "Start focus") rather than raising, so the
 client can run the same outcome flow for every session without branching first. `42501` if the
 session is not the caller's or **is still running** — "what happened to the task" is not a question
