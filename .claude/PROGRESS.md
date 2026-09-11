@@ -9,6 +9,52 @@ Add each session's PROGRESS.md entry to the same branch as the code it describes
 
 ---
 
+## [frontend] 2026-09-11 (PR pending) — Calendar deck: two real rendering bugs found via manual click-through, both fixed
+
+User did a manual pass on Phase 6's calendar right after it shipped and reported it looked
+wrong in two ways: hour labels didn't line up with where a scheduled block actually rendered
+("says 9am, shows at 10am"), and a scheduled block sometimes showed only its time, not what
+the task actually was. Both reproduced and are fixed -- neither was a data/backend problem,
+both were CSS.
+
+- **Label misalignment.** `.a02-time-column-head` (the day-name header above the hour grid)
+  only renders in Week view (`{days.length > 1 && ...}` in `calendar-deck.tsx`) -- Day view has
+  no header at all. But `.a02-time-map > aside`'s hour-label column had a flat `padding-top:30px`
+  applied unconditionally, clearly meant to compensate for that header's height. In Week view
+  there's a header to offset against (plus its own correct `--week` override at 44px). In Day
+  view there's nothing above the grid, so the labels sat ~30px below the hour lines they name --
+  enough to visually read as roughly one row off. Fixed: base padding-top is now `1px` (just
+  clearing the grid's own border), Week view keeps its 44px override unchanged.
+- **Task name disappearing on short blocks.** `.a02-calendar-event` is a column flex
+  (task name / time / category, `overflow:hidden`) with height proportional to the block's real
+  duration, floored at 22px. Any block under ~45min (most of them, given typical estimates)
+  needs more combined line-height than that floor provides, and column flex's default
+  `flex-shrink:1` doesn't clip whole lines the way `overflow:hidden` on block content would --
+  it shrinks every child to fit, and shrunk the task name (`<b>`, the tallest line) to a
+  measured **0px height** while the time (`<small>`) stayed legible. Confirmed by reading the
+  live boxes back in a real browser (`B_BOX height: 0`), not guessed from CSS alone. Two-part
+  fix: `flex-shrink:0` on every line so the flex algorithm can't collapse one to zero, and the
+  height floor raised from 22px to **40px** -- the real minimum needed to fit task name + time
+  once padding is subtracted. A short block now visually overlaps its true time-proportional
+  height slightly; same tradeoff most calendar UIs make for legibility over precision.
+
+Verified: re-ran the full existing `e2e/phase6-calendar.spec.ts` suite (3/3 still pass --
+neither fix touched scheduling logic, only rendering), plus a fresh manual drag-to-9am check
+in a real browser confirming both the row alignment and the task name are now correct.
+`tsc`/`eslint` clean. No migration, no RPC, no schema change -- `calendar-deck.tsx` and
+`calendar-deck.css` only.
+
+Also investigated (read-only, changed nothing): the user pointed at
+`~/mtdo-worktrees/feature-mu-onboarding-ai-hint`, hoping it had something useful. It doesn't --
+that worktree forked before Phases 2/4/5/6/7 existed (172 files differ from `main`, almost all
+*missing* rather than added) and its one net-new file is just a pre-Phase-5 copy of
+`today-deck.tsx` under an abandoned `web/features/` reorganization, already fully superseded.
+It does contain `de9b943` ("curriculum-exhaustion... decided, not built"), the same commit
+flagged earlier this session as an unmerged phantom doc -- confirmed still sitting there,
+untouched, not merged into this fix.
+
+---
+
 ## [backend] 2026-09-11 (PR pending) — Phase 7 weekly engine: reported `avoided` bug NOT REPRODUCIBLE; the real gap was test coverage, not the rules
 
 Handed a bug reported as confirmed by direct database inspection: the weekly engine was said
