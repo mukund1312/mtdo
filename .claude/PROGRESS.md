@@ -9,6 +9,112 @@ Add each session's PROGRESS.md entry to the same branch as the code it describes
 
 ---
 
+## [web] 2026-09-11 (PR pending) — Operating-engine plan, Phase 6 frontend (Time deck: real calendar + Google Calendar opt-in)
+
+Built directly against PR #151's merged backend contract (`d10f318`, docs/architecture/
+api.md §3d/§3e + schema.md) in a separate worktree from the backend session -- no schema/RLS/RPC
+touched, this is purely the Time deck's client. Sonnet throughout, no design work: `DESIGN.md`
+governs colors/spacing/motion but this route's actual established look (`.a02-*`, the "Signal
+Deck" retro-monospace treatment already shipped in every other deck) is what every existing
+screen here already follows, so matching it rather than re-deriving from `DESIGN.md`'s raw token
+names was the consistent choice, not a deviation.
+
+- **`calendar-deck.tsx` + `calendar-deck.css`** (new) replace the inline `CalendarDeck` placeholder
+  that lived in `page.tsx` since Phase 1 ("Scheduling isn't built yet"). All three views shipped,
+  no scope cut: **Day** and **Week** share one hour-grid component (6a-10p, 48px/hour, blocks
+  positioned by real minute offsets, not snapped to a slot visually); **Month** is a 6-week cell
+  grid with up to 3 chips per day and an overflow count, clicking a day jumps into Day view for
+  it. A view switcher plus prev/next/"Today" navigation sits in the existing `.a02-view-head`
+  scaffolding. The pre-existing but never-wired `.a02-time-map`/`.a02-calendar-event`/
+  `.a02-unscheduled` CSS (a static mockup leftover) is what this actually renders against now,
+  extended with the week/month layouts and drop-target states it didn't have.
+- **Only `blocks` with a real `scheduled_start_at` render on the grid** -- an **Unscheduled** rail
+  (the pre-existing `.a02-unscheduled` aside) lists up to 30 active (non-`done`) blocks with no
+  schedule, independent of which board date they're on, so anything pending is reachable to drag
+  onto a day regardless of Kanban lane.
+- **Drag-to-reschedule** is native HTML5 DnD, the same `draggable`/`onDragStart`/`onDrop`/
+  `dataTransfer` pattern `today-deck.tsx`'s Kanban lanes already use (confirmed working against
+  real DnD via `onboarding.spec.ts`'s existing `.dragTo()` coverage, so this wasn't a new
+  mechanism to validate). Dropping calls `schedule_block()` and reloads on success; duration is
+  preserved from the block's prior window (or `estimated_minutes`, default 30 min, for a
+  first-time schedule) and re-anchored to the new slot's hour. **Read api.md §3d's
+  generated-types trap before touching this file**: `p_start_at`/`p_end_at`/`p_date` are typed
+  optional but not unioned with `null` -- every call here omits keys rather than passing `null`.
+- **Judgment call, flagged for review rather than guessed silently**: every reschedule call omits
+  `p_date` entirely, so dragging a block on the calendar never moves its Kanban board date --
+  only its calendar window. `schema.md`'s own language for `scheduled_start_at`/`scheduled_end_at`
+  ("related concepts, not redundant ones... deliberately not constrained to agree") reads as
+  exactly this decoupling being intentional; wiring calendar drags to also silently relocate a
+  card between Kanban lanes felt like the wrong default given that framing, but it was a judgment
+  call, not something api.md states outright either way. A user who wants both moved still moves
+  the Kanban card separately.
+- **Unscheduling** exists both ways the brief allowed: dragging a scheduled block onto the
+  Unscheduled rail, and a "Remove from calendar" button in the block detail popover. Both call
+  `schedule_block(p_block_id)` with every optional argument omitted, per api.md §3d's documented
+  un-schedule call, and both fire a **best-effort, non-blocking** `POST /api/calendar/sync
+  { enabled: false }` alongside it if the block was synced -- errors from that call are logged,
+  never surfaced, since the authoritative local action (clearing the schedule) has already
+  succeeded regardless of how Google responds. Worth recording precisely: in *this* environment
+  (no Google credentials at all) that call actually 503s every time rather than hitting the
+  409-avoidance no-op path api.md §3e's "safe to call unconditionally" language is centered on --
+  still correctly non-blocking either way, but the two are different code paths inside the route
+  and only the 409 one was exercised here.
+- **Per-block Google Calendar toggle**: the block detail popover (click any scheduled event or
+  Unscheduled-rail item) fetches `GET /api/calendar/status` once per deck load and renders the
+  same three-state honesty Settings → Calendar already established -- not configured (this
+  environment's real state: "Google Calendar isn't connected yet... scheduling here still works,
+  it just doesn't leave the app"), configured-but-not-connected ("Connect Google Calendar in
+  Settings"), or configured-and-connected (a real checkbox backed by `calendar_event_links`
+  existence, one batched `select ... in (ids)` query per visible range rather than a per-card
+  fetch). Toggling calls `POST /api/calendar/sync` and reflects its real `synced` response.
+  **Settings → Calendar itself was already built by the backend session** (same PR #151) -- not
+  rebuilt here, per the brief's own "optional, don't force it in" framing for that piece.
+- Other judgment calls worth a second look: an hour-slot drop snaps the start time to the top of
+  that hour (sub-hour precision isn't reachable by drag in Day/Week -- a finer-grained detail-view
+  time editor wasn't built); a first-time schedule from Month view (no prior time to re-anchor to)
+  defaults to 9:00am local; the grid reasons in the **browser's local timezone** throughout
+  (matching how every other calendar UI works and how a `timestamptz` instant is naturally read
+  on-screen) rather than `profiles.timezone` the way `today-deck.tsx`/`progress-deck.tsx` do --
+  those two exist to reconcile with server-computed board dates (`utcToday()`), which nothing
+  here touches since reschedules never send `p_date`.
+
+**A real verification trap hit again, same class the backend session's own report flagged.** Two
+stray `next-server` processes (PIDs still live from other worktrees) were squatting on ports 3000
+*and* 3100 before this session touched anything -- `lsof` confirmed both before starting any
+build. Built and served this worktree's own production build from port 3211 instead, verified by
+`lsof`/`curl` before trusting any Playwright run against it, and killed that instance cleanly at
+the end rather than leaving a third stray behind for the next worktree.
+
+**Real Supabase/Anthropic rate-limit flakiness, same documented class as the 2026-09-08 and
+2026-09-11-backend entries.** After several full-suite passes in this one session, two different,
+unrelated pre-existing tests failed across two consecutive full runs (a Guided AI onboarding
+route-generation timeout, then separately a Manual Setup navigation timeout) -- never the same
+test twice, never anything calendar-related, and both passed cleanly the moment they were re-run
+in isolation. Treated as environmental per this project's own established practice for exactly
+this signature (non-deterministic, shifts identity between runs, clears on isolation) rather than
+re-running the whole suite further against a rate limit that isn't a code problem; every
+calendar-specific test and every individual spec file passed cleanly on its own, and CI is the
+tiebreaker for the combined run.
+
+- **`e2e/phase6-calendar.spec.ts`** (new, 3 tests): a real block dragged from Unscheduled onto a
+  specific hour renders positioned correctly (asserts the actual computed `top` CSS pixel value,
+  not just visibility) and is visible in Week and Month too; the drag-then-detail-popover-then-
+  unschedule round trip actually clears the block off the grid and returns it to Unscheduled, not
+  just closes a dialog; the Google-not-connected popover state renders its honest copy with zero
+  browser console errors. `e2e/signal-deck-home-session.spec.ts`'s existing empty-state assertion
+  (still checking the literal old placeholder string) updated to assert the real new empty state
+  instead -- a deliberate UX change, not a broken regression gate, same category as Phase 3's
+  onboarding-flow test update.
+
+Verification: `tsc`/`eslint`/`vitest` (119/119, unchanged -- no new unit-testable logic, this is
+UI wired to an already-locked, already-unit-tested RPC/route contract), `next build` clean, real
+Playwright run against a production build started from this worktree (all 25 specs including the
+3 new ones passing individually and in every combination tried; see rate-limit note above for why
+no single combined 25/25 run was captured this session).
+
+No docs changes -- the frontend consumed api.md §3d/§3e and schema.md as merged, found no gap
+worth flagging back to the backend session.
+
 ## [backend] 2026-09-11 (PR pending) — Operating-engine plan, Phase 6 backend (Time + Google Calendar)
 
 The largest phase so far, and the first since Phase 4 to need real schema/RLS *design* rather than

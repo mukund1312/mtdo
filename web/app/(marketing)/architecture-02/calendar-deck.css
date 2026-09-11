@@ -1,0 +1,90 @@
+/* Time deck (Phase 6 frontend). Extends the pre-existing .a02-calendar /
+   .a02-time-map / .a02-unscheduled scaffolding (originally a static mockup,
+   never wired to real data) with the real day/week/month grid, drag state,
+   and the block detail popover. Colors and type follow the same tokens
+   every other Signal Deck panel uses (--aqua/--acid/--coral/--ultra/--dim/
+   --line/--ink), defined once on .a02-shell in signal-deck.css. */
+
+.a02-view-switch { display:flex; gap:4px; padding:4px; border:1px solid var(--line); border-radius:8px; background:rgba(255,255,255,.02); }
+.a02-view-switch button { border:0; border-radius:5px; padding:8px 13px; background:transparent; color:var(--dim); font:10px "DM Mono",monospace; letter-spacing:.05em; }
+.a02-view-switch button.is-active { background:var(--ultra); color:#fff; }
+.a02-view-switch button:hover:not(.is-active),.a02-view-switch button:focus-visible { color:var(--ink); outline:none; }
+
+.a02-calendar-body { display:grid; grid-template-columns:1fr 220px; gap:14px; margin-top:40px; align-items:start; }
+.a02-calendar-body.is-loading { opacity:.6; }
+.a02-calendar-main { min-width:0; }
+
+/* Day/week grid */
+.a02-time-map { display:grid; grid-template-columns:44px 1fr; gap:8px; }
+.a02-time-map--week { grid-template-columns:44px repeat(7,minmax(0,1fr)); }
+.a02-time-map > aside { display:grid; grid-template-rows:repeat(16,48px); color:var(--dim); font:9px "DM Mono",monospace; text-align:right; padding-top:30px; }
+.a02-time-map--week > aside { padding-top:44px; }
+.a02-time-map > aside span { transform:translateY(-6px); }
+.a02-time-column { min-width:0; }
+.a02-time-column-head { display:flex; align-items:baseline; gap:6px; padding-bottom:8px; border-bottom:1px solid var(--line); margin-bottom:6px; color:var(--dim); font:9px "DM Mono",monospace; }
+.a02-time-column-head b { color:var(--ink); font-size:13px; }
+.a02-time-column.is-today .a02-time-column-head b { color:var(--acid); }
+.a02-time-lines { position:relative; display:grid; grid-template-rows:repeat(16,48px); border-top:1px solid var(--line); border-left:1px solid var(--line); border-radius:4px; background:rgba(13,16,43,.5); }
+.a02-time-lines > i { border-bottom:1px solid var(--line); transition:background .12s ease,box-shadow .12s ease; }
+.a02-time-lines > i.is-drop-target { background:rgba(87,231,255,.1); box-shadow:inset 0 0 0 1px var(--aqua); }
+
+.a02-calendar-event { position:absolute; left:3px; right:3px; display:flex; flex-direction:column; gap:2px; text-align:left; padding:6px 8px; border:1px solid; border-radius:5px; background:rgba(137,117,255,.22); overflow:hidden; cursor:grab; transition:transform .14s ease,box-shadow .14s ease; }
+.a02-calendar-event:hover,.a02-calendar-event:focus-visible { transform:translateY(-1px); box-shadow:0 6px 18px rgba(0,0,0,.4); outline:none; }
+.a02-calendar-event:active { cursor:grabbing; opacity:.75; }
+.a02-calendar-event.is-moving { opacity:.5; cursor:wait; }
+.a02-calendar-event small { color:inherit; font:8px "DM Mono",monospace; opacity:.85; }
+.a02-calendar-event b { font-size:11px; line-height:1.25; letter-spacing:-.01em; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.a02-calendar-event span { font-size:9px; opacity:.75; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.a02-calendar-event--high { border-color:var(--coral); background:rgba(255,128,113,.18); color:#ffcfc8; }
+.a02-calendar-event--medium { border-color:var(--acid); background:rgba(215,255,82,.14); color:#eaffb0; }
+.a02-calendar-event--low { border-color:var(--ultra); background:rgba(137,117,255,.22); color:#d3ceff; }
+
+/* Month grid */
+.a02-month-grid { border:1px solid var(--line); border-radius:8px; overflow:hidden; background:rgba(13,16,43,.5); }
+.a02-month-weekdays { display:grid; grid-template-columns:repeat(7,1fr); border-bottom:1px solid var(--line); }
+.a02-month-weekdays span { padding:10px; color:var(--dim); font:9px "DM Mono",monospace; text-align:center; }
+.a02-month-cells { display:grid; grid-template-columns:repeat(7,1fr); grid-auto-rows:minmax(96px,1fr); }
+.a02-month-cell { min-width:0; display:flex; flex-direction:column; gap:3px; padding:6px; border-right:1px solid var(--line); border-bottom:1px solid var(--line); transition:background .12s ease,box-shadow .12s ease; }
+.a02-month-cell.is-outside { opacity:.4; }
+.a02-month-cell.is-drop-target { background:rgba(87,231,255,.08); box-shadow:inset 0 0 0 1px var(--aqua); }
+.a02-month-cell-date { align-self:flex-start; border:0; background:none; padding:2px 5px; border-radius:4px; color:var(--dim); font:10px "DM Mono",monospace; }
+.a02-month-cell.is-today .a02-month-cell-date { background:var(--acid); color:#151729; font-weight:700; }
+.a02-month-chip { width:100%; border:1px solid; border-radius:4px; padding:2px 5px; text-align:left; font-size:9px; line-height:1.3; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; cursor:grab; }
+.a02-month-chip:active { cursor:grabbing; opacity:.75; }
+.a02-month-chip.is-moving { opacity:.5; cursor:wait; }
+.a02-month-chip--high { border-color:var(--coral); background:rgba(255,128,113,.16); color:#ffcfc8; }
+.a02-month-chip--medium { border-color:var(--acid); background:rgba(215,255,82,.12); color:#eaffb0; }
+.a02-month-chip--low { border-color:var(--ultra); background:rgba(137,117,255,.18); color:#d3ceff; }
+.a02-month-overflow { padding:0 5px; color:var(--dim); font:8px "DM Mono",monospace; }
+
+/* Unscheduled panel (aside, right rail) */
+.a02-unscheduled { transition:background .12s ease,box-shadow .12s ease; }
+.a02-unscheduled.is-drop-target { background:rgba(87,231,255,.12); box-shadow:inset 0 0 0 1px var(--aqua); }
+.a02-unscheduled button[draggable="true"] { cursor:grab; }
+.a02-unscheduled button[draggable="true"]:active { cursor:grabbing; opacity:.72; }
+
+/* Block detail popover -- reuses .a02-record-overlay/.a02-composer */
+.a02-calendar-detail-time { margin:-14px 0 6px; color:var(--dim); font:11px "DM Mono",monospace; }
+.a02-calendar-sync { margin-top:18px; padding-top:14px; border-top:1px solid var(--line); }
+.a02-calendar-sync p { color:var(--dim); font-size:12px; line-height:1.5; }
+.a02-calendar-sync-toggle { display:flex; align-items:center; gap:9px; color:var(--ink); font-size:12px; }
+.a02-calendar-sync-toggle input { width:16px; height:16px; accent-color:var(--aqua); }
+.a02-calendar-unschedule { border-color:var(--coral) !important; color:var(--coral) !important; }
+.a02-calendar-unschedule:disabled { opacity:.6; cursor:wait; }
+
+@media (max-width:900px) {
+  .a02-calendar-body { grid-template-columns:1fr; }
+  .a02-unscheduled { order:-1; }
+  .a02-time-map--week { grid-template-columns:38px repeat(7,minmax(110px,1fr)); overflow-x:auto; }
+}
+
+@media (max-width:560px) {
+  .a02-view-controls { width:100%; }
+  .a02-view-switch,.a02-date-switch { width:100%; justify-content:center; }
+  .a02-month-cells { grid-auto-rows:minmax(64px,1fr); }
+  .a02-month-chip { display:none; }
+}
+
+@media (prefers-reduced-motion:reduce) {
+  .a02-calendar-event,.a02-month-chip,.a02-time-lines > i,.a02-month-cell,.a02-unscheduled { transition:none; }
+}
