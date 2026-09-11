@@ -5,6 +5,7 @@ import { EmberMorph, type EmberMorphTrigger } from "@/components/EmberMorph";
 import { createClient } from "@/lib/supabase/client";
 import { recordEvent } from "@/lib/analytics/record-event";
 import { buildCoachingContent, type CategoryMeta, type CoachingFields } from "@/lib/coaching/build-coaching-content";
+import "../(marketing)/architecture-02/signal-deck.css";
 import styles from "./session.module.css";
 
 type FocusSession = {
@@ -328,7 +329,7 @@ export default function SessionPage() {
         : { phase: "idle" };
 
   return (
-    <main className={styles.page}>
+    <main className={`${styles.page} a02-signal-theme`}>
       <section className={styles.readyShell} aria-labelledby="session-title">
         <p className={styles.kicker}>Focus session</p>
         <h1 id="session-title">One thing. A little further.</h1>
@@ -394,7 +395,7 @@ export default function SessionPage() {
         )}
       </section>
 
-      <EmberMorph trigger={trigger} onExitComplete={finishExit}>
+      <EmberMorph trigger={trigger} onExitComplete={finishExit} className={styles.signalFocus}>
         <div className={styles.focusLayout}>
           <section className={styles.taskPanel} aria-labelledby="focus-task-title">
             <p className={styles.cardEyebrow}>{task.eyebrow}</p>

@@ -25,3 +25,21 @@
 .a02-guide-trigger { padding:8px 11px; border:1px solid var(--line); border-radius:5px; background:rgba(255,255,255,.04); color:var(--aqua); font:9px "DM Mono",monospace!important; letter-spacing:.04em; }
 .a02-guide-trigger:hover { border-color:var(--aqua); background:rgba(87,231,255,.08); }
 @media(max-width:560px){.a02-top-actions{gap:4px}.a02-guide-trigger{padding:9px;font-size:0!important}.a02-guide-trigger::before{content:"?";font:13px "DM Mono",monospace}.a02-time-map > aside:first-child,.a02-time-lines{grid-template-rows:repeat(13,50px)}.event-dsa{top:75px}.event-review{top:162px}.event-room{top:550px}}
+
+/* Reusable Signal Deck theme seam for product routes that sit outside the
+   Architecture 02 directory. It deliberately contains tokens only, so a
+   surface can adopt this visual language without inheriting deck layout. */
+.a02-signal-theme {
+  --void:#090a20;
+  --void2:#101332;
+  --ink:#e9ebff;
+  --dim:#8e93bd;
+  --line:rgba(216,221,255,.18);
+  --ultra:#8975ff;
+  --acid:#d7ff52;
+  --coral:#ff8071;
+  --aqua:#57e7ff;
+  color:var(--ink);
+  background:var(--void);
+  font-family:"Space Grotesk",Arial,sans-serif;
+}
