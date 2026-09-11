@@ -104,6 +104,33 @@ export async function POST(request: Request) {
     return Response.json({ error: "Couldn't read this task's calendar link." }, { status: 500 });
   }
 
+  // Nothing to remove, so nothing to ask Google for. This branch is what
+  // makes the documented "safe to call unconditionally" promise actually
+  // true: the client fires `enabled: false` alongside every un-schedule, and
+  // a user who has never connected a calendar -- or who just disconnected,
+  // which already deleted their links -- must get a clean no-op here rather
+  // than a 409 telling them to connect a calendar they don't want.
+  if (!parsed.enabled && !existingLink) {
+    return Response.json({ synced: false });
+  }
+
+  // Checked before spending a token round trip, and before any Google call:
+  // the fix is entirely local (schedule_block()), so there is no reason to
+  // involve Google to discover it. Destructured into locals rather than
+  // re-read later so the narrowing survives into the sync branch below --
+  // `block.scheduled_start_at` alone doesn't, because this guard is also
+  // conditioned on `parsed.enabled`.
+  const { scheduled_end_at: endAt, scheduled_start_at: startAt } = block;
+  if (parsed.enabled && (!startAt || !endAt)) {
+    // Scheduling is the prerequisite, and it is a separate, purely local
+    // action. Saying so plainly beats inventing a default hour for a task
+    // the user never put on a clock.
+    return Response.json(
+      { error: "Give this task a date and time before adding it to your calendar." },
+      { status: 400 },
+    );
+  }
+
   const connection = await acquireAccessToken(service, user.id, resolved.config).catch((err: unknown) => {
     console.error("[calendar/sync] couldn't acquire an access token:", err);
     return undefined;
@@ -118,43 +145,29 @@ export async function POST(request: Request) {
   try {
     // ---- unsync -----------------------------------------------------------
     if (!parsed.enabled) {
-      if (existingLink) {
-        // Deleting the Google event FIRST, then the row: if the row went
-        // first and the API call then failed, the event would be orphaned
-        // with nothing left pointing at it. This order can leave a stale row
-        // instead, which a retry cleans up (deleteEvent treats 404/410 as
-        // success, so the retry is safe).
-        await deleteEvent(connection.accessToken, existingLink.external_calendar_id, existingLink.external_event_id);
-        const { error } = await service
-          .from("calendar_event_links")
-          .delete()
-          .eq("user_id", user.id)
-          .eq("block_id", block.id)
-          .eq("provider", CALENDAR_PROVIDER);
-        if (error) throw error;
-      }
-      // Already absent is success, not a 404 -- this is the call the client
-      // makes when un-scheduling a block, and it must be safe to make
-      // unconditionally.
+      // existingLink is non-null here -- the no-link case returned above.
+      // Deleting the Google event FIRST, then the row: if the row went first
+      // and the API call then failed, the event would be orphaned with
+      // nothing left pointing at it. This order can leave a stale row
+      // instead, which a retry cleans up (deleteEvent treats 404/410 as
+      // success, so the retry is safe).
+      await deleteEvent(connection.accessToken, existingLink!.external_calendar_id, existingLink!.external_event_id);
+      const { error } = await service
+        .from("calendar_event_links")
+        .delete()
+        .eq("user_id", user.id)
+        .eq("block_id", block.id)
+        .eq("provider", CALENDAR_PROVIDER);
+      if (error) throw error;
       return Response.json({ synced: false });
     }
 
     // ---- sync -------------------------------------------------------------
-    if (!block.scheduled_start_at || !block.scheduled_end_at) {
-      // Scheduling is the prerequisite, and it is a separate, purely local
-      // action (schedule_block()). Saying so plainly beats inventing a
-      // default hour for a task the user never put on a clock.
-      return Response.json(
-        { error: "Give this task a date and time before adding it to your calendar." },
-        { status: 400 },
-      );
-    }
-
     const timeZone = await fetchProfileTimezone(supabase, user.id);
     const event = {
       description: block.notes ?? undefined,
-      endAt: block.scheduled_end_at,
-      startAt: block.scheduled_start_at,
+      endAt: endAt!,
+      startAt: startAt!,
       summary: block.text,
       timeZone,
     };

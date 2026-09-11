@@ -211,6 +211,30 @@ describe("POST /api/calendar/sync -- syncing", () => {
     expect(response.status).toBe(200);
     await expect(response.json()).resolves.toEqual({ synced: false });
     expect(mockDeleteEvent).not.toHaveBeenCalled();
+    // Nothing to remove means nothing to ask Google for -- no token round
+    // trip at all.
+    expect(mockAcquireAccessToken).not.toHaveBeenCalled();
+  });
+
+  it("unsyncs cleanly for a user with no calendar connected at all", async () => {
+    // The client fires enabled:false alongside every un-schedule. A user who
+    // never connected a calendar -- or who just disconnected, which already
+    // deleted their links -- must get a clean no-op, not a 409 telling them
+    // to connect a calendar they don't want. This is the documented
+    // "safe to call unconditionally" promise (api.md §3e).
+    mockAcquireAccessToken.mockResolvedValue(null);
+    const response = await POST(post({ blockId: "block-1", enabled: false }));
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({ synced: false });
+  });
+
+  it("rejects an unscheduled block before spending a Google token round trip", async () => {
+    wire({ block: { ...BLOCK, scheduled_end_at: null as never, scheduled_start_at: null as never } });
+    const response = await POST(post({ blockId: "block-1", enabled: true }));
+    expect(response.status).toBe(400);
+    // The fix is entirely local (schedule_block()), so there is no reason to
+    // have involved Google to discover it.
+    expect(mockAcquireAccessToken).not.toHaveBeenCalled();
   });
 
   it("502s when Google rejects the call, without leaking Google's message to the user", async () => {

@@ -747,8 +747,12 @@ alternative is discovering it at the moment a real user finishes Google's consen
    client only for `calendar_*`. A `user_id` from a request body is never trusted.
 2. **Un-scheduling a block does not remove its Google event by itself.** Call
    `POST /api/calendar/sync { blockId, enabled: false }` alongside the `schedule_block()` call that
-   clears the window. It is safe to call unconditionally — an already-unsynced block returns
-   `{ synced: false }`, not a 404.
+   clears the window. **It is safe to call unconditionally**, and that is a deliberate property of
+   the route rather than a happy accident: an already-unsynced block, *and* a user who has no
+   calendar connected at all (including one who just disconnected, which already deleted their
+   links), both return a plain `{ synced: false }`. No 404, and no 409 telling someone to connect a
+   calendar they don't want. `409` is reserved for `enabled: true`, where a connection is genuinely
+   required. Neither no-op spends a Google token round trip.
 3. **Unsync before deleting a block.** `calendar_event_links` cascades on block delete, so deleting
    a synced block drops the link row and **orphans the Google event** — Postgres cannot make an
    HTTP call from a cascade. There is no reaper for events orphaned by a client that skipped this;
