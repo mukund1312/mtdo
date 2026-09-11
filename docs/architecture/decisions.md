@@ -391,6 +391,101 @@ exactly what it always did (atomic single-active-plan swap) — extension is add
 active plan, not a new activation event, so this reversal adds a second entry point into
 `curriculum_items`/`plan_categories` rather than replacing anything already built.
 
+## 2026-09-11 — A picked block may carry a calendar time; curriculum still isn't scheduled
+
+**Narrows — does not undo — the 2026-09-07 "The curriculum → blocks bridge" entry above.** Read
+that entry first. Its load-bearing claim is that *curriculum* reaches the board as an unlocking,
+carry-forward weekly **menu the user picks from**, never placed onto calendar dates by a scheduler.
+That claim stands, untouched, and the mechanism it protects is byte-for-byte unchanged by this
+work: `ensure_curriculum_menu()` still returns a cursor-gated (or `overall`-mode ungated) menu,
+`plan_categories.days` is still a *count* and not a weekday filter, `week_index` is still a
+sequence position rather than a date, "picked" is still derived from a block's existence, and
+**nothing is auto-placed**. No code added here derives a date from `today - plan_start`, and none
+ever should.
+
+**What changes is strictly downstream of the pick.** Once the user has explicitly pulled an item
+onto the board — once a real `blocks` row exists — that block may *optionally* also be given a
+calendar date and a start/end time. The reversal is therefore narrow and one-directional:
+
+| Still true (unchanged) | New as of Phase 6 |
+|---|---|
+| `curriculum_items` are never scheduled | `blocks` may be scheduled |
+| The menu is week-gated, not date-gated | A block's date is user-chosen, never derived |
+| Picking is an explicit user action | Scheduling is a second, separate explicit user action |
+| A block lands on today by default | …and can be moved to another day afterwards |
+
+The reason is **Phase 6 of the operating-engine plan** ("Time + Google Calendar") — the actual
+merged plan phase, cited deliberately rather than a phantom doc, after the Phase 3 experience of
+a never-merged design file being cited as settled authority (2026-09-08's entry). Phase 1 already
+shipped the Time deck as an honest empty state explicitly pending this phase; this is that.
+
+**The deliberate seam: scheduling is a property of a block, not of curriculum.** Had
+`scheduled_start_at` gone on `curriculum_items` instead, generation would have had to invent
+dates, and the weekly-menu model would have collapsed into the day-by-day schedule the product
+walked away from. On `blocks` it cannot: a block only exists because a human put it there.
+
+**`schedule_block()` exists for the same reason `pick_curriculum_item()` does, not for access
+control.** `blocks` stays an ordinary client-writable table. But moving a block to another date
+changes `(user_id, date, category_id, position)` — and `blocks_slot_key` is DEFERRABLE, so a
+naive client-side move **succeeds at INSERT/UPDATE and fails at COMMIT**, after the transaction
+looked fine. Position has to be reallocated inside the RPC under the same per-user advisory lock
+key (`mtdo.curriculum_menu:<uid>`) that `ensure_curriculum_menu()`, `pick_curriculum_item()` and
+`extend_plan()` already share, so none of the four can interleave for one user.
+
+**`schedule_block()` replaces a schedule, it does not patch one.** Passing NULLs is the
+un-schedule call, not "leave it alone" — decided explicitly because the alternative (NULL means
+no-op) leaves no way to clear a time at all without a second RPC. `p_date` is the one exception:
+`blocks.date` is `NOT NULL`, so there is nothing to clear it *to*, and a NULL `p_date` therefore
+means "keep the block on whatever board date it already sits on". Documented in full in api.md §3d
+rather than left to be inferred from the function body.
+
+**A block's board date and its calendar window are deliberately not constrained to agree.** A
+23:30–00:30 study session is a real thing a user will book, and rejecting it would be a bug, not
+a safety rail. Enforcing agreement would also require reading the user's zone at write time, which
+turns a cheap constraint into a join. The two fields are related, not redundant.
+
+**Google Calendar is one-way, MTDO → Google, in V1.** Removing a block's schedule deletes the
+corresponding Google event; Google-side edits do not flow back. Polling or webhook-receiving is
+deferred, and MTDO stays the source of truth — a user's task list and their calendar are allowed
+to be separate things. **AI may only ever *suggest* a slot, never create an event unattended.** No
+suggestion logic is built in this phase; nothing here blocks a later Route Handler from adding it,
+because every write path is an explicit, user-initiated call.
+
+**Refresh tokens are encrypted by the application, not by the database.** This is the one place
+this phase departs from the brief it was given, and it is deliberate. The obvious option was
+`pgcrypto`'s `pgp_sym_encrypt`/`pgp_sym_decrypt`, but:
+
+1. `0001_seam.sql` states, in its own header, that pgcrypto is *deliberately not installed* —
+   installing into `public` trips Supabase's `extension_in_public` advisor. The same paragraph is
+   why `set_updated_at()` was hand-written rather than pulled from `moddatetime`. Reaching for the
+   extension here would quietly reverse a recorded decision as a side effect of an unrelated one.
+2. There is no pgsodium/Vault precedent in this project to be consistent with, and Supabase itself
+   has moved away from in-database TCE.
+3. Decisively: with no Vault, the symmetric key would have to be passed **into** SQL as an RPC
+   argument on every read and write. It would cross the PostgREST boundary and the wire on every
+   call, and land wherever request bodies land. AES-256-GCM in the Route Handler
+   (`web/lib/calendar/crypto.ts`, Node's built-in `crypto`, `CALENDAR_TOKEN_ENCRYPTION_KEY`) means
+   the database never holds or sees the key, so a database dump is not a token compromise — which
+   is the actual threat encrypting this column is for.
+
+The column is therefore opaque `text` holding a self-describing `v1:<iv>:<tag>:<ciphertext>`
+envelope; the version prefix is what makes key rotation possible later without a schema change.
+`calendar_connections` additionally has **no RLS policies at all and `revoke all` from `anon` and
+`authenticated`** — the token never reaches a browser, not even its owner's, which is a stronger
+posture than any table in this schema has needed before (`tutor_messages`' "nothing" row in
+schema.md §6 is the closest precedent).
+
+**Per-block opt-in is derived, not stored.** There is no `blocks.calendar_sync_enabled` column: a
+block is synced iff a `calendar_event_links` row exists for it, exactly the way "picked" means "a
+block exists with this `curriculum_item_id`" (2026-09-07's entry). A second mutable copy of "is
+this on the calendar" can disagree with the calendar, and that failure is invisible.
+
+**Known gap, recorded rather than papered over:** `calendar_event_links` cascades on block delete,
+so deleting a *scheduled, synced* block drops the link row and orphans the Google event — Postgres
+cannot make an HTTP call from a cascade. The call-site contract (api.md §3e) is therefore "unsync
+before deleting"; a real reaper for events orphaned by a client that didn't is not built, and is
+named here as debt rather than discovered later.
+
 ## Open, not yet decided
 
 - Whether the founder-facing analytics need anything beyond PostHog (deferred until W2 has real
