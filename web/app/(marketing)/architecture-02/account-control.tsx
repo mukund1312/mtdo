@@ -4,7 +4,7 @@ import { useCallback, useEffect, useRef, useState, type FormEvent } from "react"
 import { useRouter, useSearchParams } from "next/navigation";
 import type { User } from "@supabase/supabase-js";
 
-import { upgradeWithEmailPassword } from "@/lib/auth/upgradeAccount";
+import { signInWithOAuth, upgradeWithEmailPassword, upgradeWithOAuth, type OAuthProvider } from "@/lib/auth/upgradeAccount";
 import { createClient } from "@/lib/supabase/client";
 
 type AccountView = "forgot" | "login" | "logout" | "profile" | "reset" | "settings" | "signup" | null;
@@ -133,7 +133,7 @@ export function SignalDeckAccountControl() {
     router.push("/architecture-02/onboarding");
   };
 
-  return <div className="a02-account-control">
+  return <div className={`a02-account-control ${view ? "is-dialog-open" : ""}`}>
     <button
       type="button"
       className={`a02-account-trigger ${viewer?.isAnonymous || !viewer ? "is-guest" : ""}`}
@@ -253,6 +253,36 @@ function AccountDialog({
     router.refresh();
   };
 
+  const continueWithOAuth = async (provider: OAuthProvider, intent: "login" | "signup") => {
+    if (submitting) return;
+    setSubmitting(true);
+    resetMessages();
+
+    // Account creation is an identity link on the current anonymous user,
+    // preserving its plan, blocks, sessions and activity under the same id.
+    // Login deliberately restores an existing account and follows the same
+    // guest-route-separate behavior as the email/password login above.
+    const next = intent === "signup"
+      ? "/architecture-02?auth=confirmed"
+      : "/architecture-02?deck=work";
+    const redirectTo = `${window.location.origin}/auth/callback?next=${encodeURIComponent(next)}`;
+    const result = intent === "signup"
+      ? await upgradeWithOAuth(createClient(), provider, redirectTo)
+      : await signInWithOAuth(createClient(), provider, redirectTo);
+
+    if (!result.ok) {
+      setSubmitting(false);
+      setError(result.message);
+      return;
+    }
+
+    // Supabase redirects the browser after a successful OAuth request. Keep
+    // the form intentionally locked in the short interval before navigation;
+    // this also makes a suppressed redirect unambiguous rather than allowing
+    // a second identity request.
+    setStatus(`Opening ${provider === "google" ? "Google" : "GitHub"}…`);
+  };
+
   const sendReset = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (submitting) return;
@@ -329,6 +359,7 @@ function AccountDialog({
         <AccountFields email={email} password={password} onEmail={setEmail} onPassword={setPassword} submitting={submitting} passwordHint="At least 6 characters" passwordAutoComplete="new-password" />
         <Status status={status} error={error} />
         <button className="a02-account-primary" type="submit" disabled={submitting}>{submitting ? "Saving route…" : "Create account ↗"}</button>
+        <OAuthActions intent="signup" submitting={submitting} onContinue={continueWithOAuth} />
         <button className="a02-account-switch" type="button" onClick={() => onOpen("login")} disabled={submitting}>Already have an account? Log in</button>
       </form>}
 
@@ -338,6 +369,7 @@ function AccountDialog({
         <AccountFields email={email} password={password} onEmail={setEmail} onPassword={setPassword} submitting={submitting} />
         <Status status={status} error={error} />
         <button className="a02-account-primary" type="submit" disabled={submitting}>{submitting ? "Restoring…" : "Log in →"}</button>
+        <OAuthActions intent="login" submitting={submitting} onContinue={continueWithOAuth} />
         <button className="a02-account-switch" type="button" onClick={() => onOpen("forgot")} disabled={submitting}>Forgot password?</button>
         {isGuest && <button className="a02-account-switch" type="button" onClick={() => onOpen("signup")} disabled={submitting}>Create an account for this route</button>}
       </form>}
@@ -387,6 +419,26 @@ function AccountDialog({
 
 function AccountFields({ email, password, onEmail, onPassword, passwordAutoComplete = "current-password", submitting, passwordHint }: { email: string; password: string; onEmail: (value: string) => void; onPassword: (value: string) => void; passwordAutoComplete?: "current-password" | "new-password"; passwordHint?: string; submitting: boolean }) {
   return <><label>Email<input autoFocus type="email" autoComplete="email" value={email} onChange={(event) => onEmail(event.target.value)} required disabled={submitting} /></label><label>Password {passwordHint && <small>{passwordHint}</small>}<input type="password" autoComplete={passwordAutoComplete} minLength={6} value={password} onChange={(event) => onPassword(event.target.value)} required disabled={submitting} /></label></>;
+}
+
+function OAuthActions({ intent, submitting, onContinue }: {
+  intent: "login" | "signup";
+  submitting: boolean;
+  onContinue: (provider: OAuthProvider, intent: "login" | "signup") => void;
+}) {
+  return <div className="a02-account-oauth" aria-label="Continue with a provider">
+    <span>OR CONTINUE WITH</span>
+    <div>
+      <button type="button" onClick={() => void onContinue("google", intent)} disabled={submitting}>
+        <i aria-hidden="true">G</i>
+        Continue with Google
+      </button>
+      <button type="button" onClick={() => void onContinue("github", intent)} disabled={submitting}>
+        <i aria-hidden="true">GH</i>
+        Continue with GitHub
+      </button>
+    </div>
+  </div>;
 }
 
 function Status({ status, error }: { status: string | null; error: string | null }) {

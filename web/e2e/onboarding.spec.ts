@@ -212,3 +212,51 @@ test("an invalid confirmation callback stays in Signal Deck with account recover
   await expect(page.getByRole("heading", { name: /keep the route/i })).toBeVisible();
   await expect(page.getByText(/you’re in/i)).toHaveCount(0);
 });
+
+// Providers are deliberately not configured in CI/local development. This is
+// still a production-build browser test of the OAuth controls: it intercepts
+// only the provider endpoints, never manufactures an auth session. Signup
+// uses the anonymous-user identity-linking endpoint; login must hand off to
+// Supabase's normal authorize endpoint (which deliberately navigates away).
+test("OAuth account controls preserve the guest route on signup and begin returning login", async ({ page }) => {
+  await page.goto("/architecture-02");
+  await page.getByRole("button", { name: /close walkthrough/i }).click();
+  await page.getByRole("button", { name: /open guest account menu/i }).click();
+  await page.getByRole("button", { name: /^create account/i }).click();
+
+  const panel = page.getByRole("dialog", { name: /keep the route/i });
+  const google = panel.getByRole("button", { name: "Continue with Google" });
+  const github = panel.getByRole("button", { name: "Continue with GitHub" });
+  await expect(google).toBeVisible();
+  await expect(github).toBeVisible();
+
+  let linkRequest = "";
+  await page.route("**/auth/v1/user/identities/authorize?**", async (route) => {
+    linkRequest = route.request().url();
+    await route.fulfill({
+      status: 400,
+      contentType: "application/json",
+      body: JSON.stringify({ message: "Provider not enabled", code: "provider_disabled" }),
+    });
+  });
+  await google.click();
+  await expect(panel.getByRole("alert")).toContainText(/google sign-in is not available yet/i);
+  expect(linkRequest).toContain("provider=google");
+  await expect(google).toBeEnabled();
+
+  await page.getByRole("button", { name: /already have an account/i }).click();
+  const loginPanel = page.getByRole("dialog", { name: /welcome back/i });
+  await expect(loginPanel.getByRole("button", { name: "Continue with Google" })).toBeVisible();
+
+  let loginRequest = "";
+  await page.route("**/auth/v1/authorize?**", async (route) => {
+    loginRequest = route.request().url();
+    await route.fulfill({
+      status: 400,
+      contentType: "application/json",
+      body: JSON.stringify({ message: "Provider not enabled", code: "provider_disabled" }),
+    });
+  });
+  await loginPanel.getByRole("button", { name: "Continue with GitHub" }).click();
+  expect(loginRequest).toContain("provider=github");
+});

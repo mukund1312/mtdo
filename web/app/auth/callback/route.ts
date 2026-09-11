@@ -45,13 +45,17 @@ function callbackFailurePath(next: string, origin: string): string {
 export async function GET(request: NextRequest) {
   const { searchParams, origin } = new URL(request.url);
   const code = searchParams.get("code");
+  const flowId = searchParams.get("sb_flow_id");
   // Where the trigger UI wants the user back; defaults to home. Set via
   // upgradeWithOAuth's redirectTo (?next=<path> appended by the caller).
   const next = safeNextPath(searchParams.get("next"), origin);
 
   if (code) {
     const supabase = await createClient();
-    const { error } = await supabase.auth.exchangeCodeForSession(code);
+    // OAuth flows can carry a PKCE flow id. Passing it through is required
+    // when more than one secure auth flow is in flight, and keeps the callback
+    // compatible with both signInWithOAuth() and linkIdentity().
+    const { error } = await supabase.auth.exchangeCodeForSession(code, flowId ? { flowId } : undefined);
     if (!error) {
       await syncIsAnonymousFlag(supabase);
       return NextResponse.redirect(new URL(next, origin));
