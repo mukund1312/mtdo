@@ -6,6 +6,7 @@ import { createClient } from "@/lib/supabase/client";
 
 import { fetchProfileTimezone } from "./profile-timezone";
 import { type DailyRollup, formatDuration, formatShortDate, heatLevel, utcDateRange, utcToday } from "./product-data";
+import { WeeklyReviewPanel } from "./weekly-review";
 
 const WINDOW_DAYS = 42;
 
@@ -110,6 +111,14 @@ export function ProgressDeck() {
       </div>}
 
       {recordOpen && <RecordCard rollups={rollups} totals={totals} onClose={() => setRecordOpen(false)} />}
+
+      {/* Phase 7 frontend: the deterministic weekly engine's real numbers and
+          change-review screen, built against PR #153's merged backend
+          contract (docs/architecture/api.md §3f/§3g). Self-contained --
+          fetches and manages its own state independently of the 6-week pulse
+          above, the same "each deck section owns its own load()" pattern
+          HomeDeck/ProgressDeck already use. */}
+      <WeeklyReviewPanel />
     </section>
   );
 }

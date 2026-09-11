@@ -27,6 +27,7 @@ import "./goals-deck.css";
 import "./kanban-metadata.css";
 import "./calendar-deck.css";
 import "./fixed-layer-safety.css";
+import "./weekly-review.css";
 
 type Deck = "home" | "work" | "goals" | "calendar" | "review" | "listen";
 
