@@ -26,6 +26,10 @@ plan docs (`docs/designs/*.md`). Each entry: the call, and the reason.
 | 2026-09-06 | **`EmberMorph` takes plain `sessionId`/`plannedDurationS`/`elapsedS`/`originRect` values via a `phase`-tagged `trigger` prop, never a `focus_sessions` row or a Supabase client** (`api.md` §4.1) | The marketing showcase has no auth and no real session, so the component can't assume either; a `phase` union plus an `onExitComplete` callback also means neither caller has to separately track "is the reverse animation still playing" |
 | 2026-09-06 | **`daily_rollups` is materialized by a scheduled full recompute (pg_cron), not by a trigger on the ledger** (`0009`/`0010`, api.md §3a) | A trigger would put aggregation on the user's write path, where a failure fails the session or task write for the sake of a derived number; and incremental counters cannot self-heal, so a full recompute has to exist anyway — at which point the trigger is a second, divergeable writer into a table whose whole rule is "derived, NEVER hand-written". `computed_at` ("how stale is this row") is job-shaped and meaningless under a trigger. In-database cron over an Edge Function or a Vercel cron route because the aggregation is one SQL statement over data already in Postgres: no network hop, no service-role key in a second platform's environment, no third deploy target to keep in step with the migration |
 | 2026-09-11 | **The weekly recommendation engine is 100% deterministic and rule-based — zero AI calls in the metrics OR the recommendation path** (`0021`/`0022`, api.md §3f/§3g) | The moat is a rule engine over real behavioural data nobody else has, not a wrapper around a model a user could prompt themselves. Full writeup below |
+| 2026-09-12 | **Pause is a sub-state of `running` (`paused_at is not null`), not a fourth `state` value** (`0023`, api.md §3h) | A `'paused'` state would have required changing all four invariants that make §5 trustworthy — `focus_sessions_one_running`, the `state`/`completed_at` CHECK, `settle_session()`'s guard, and `start_session()`'s 55006 probe — and would have silently broken the client's existing `.eq('state','running')` stale-session recovery query, which would stop finding a paused session and start a second timer beside it. As a sub-state, zero invariants change and a session paused two days ago is still recoverable |
+| 2026-09-12 | **A break IS a pause — one mechanic with a `reason` tag, not a parallel break-tracking system; but the break *schedule* is persisted** (`0023`, api.md §3h) | Full writeup below |
+| 2026-09-12 | **Block-status transitions after a session go through `settle_block_outcome()`, even though `blocks` is freely client-writable** | Full writeup below |
+| 2026-09-12 | **One shared `session_focus_seconds()`, replacing the formula spelled out separately in `recompute_daily_rollups()` and `weekly_performance()`** (`0023`) | Pause makes "elapsed" and "focus time" different quantities for the first time. The two existing copies of the old formula had *already* drifted before anything forced them to (different return types, different negative-clamping), which is the argument for consolidating rather than editing both — the next change to this rule cannot now reach one consumer and miss the other |
 | 2026-09-07 | **Curriculum reaches the board as an unlocking, carry-forward weekly menu the user picks from — it is never scheduled onto a calendar date** (`0012`, api.md §3b) | `prompt.ts` rule 2, `core.py`'s `categories_for_day()` and `types.ts` all already say curriculum is "not locked to a specific calendar day"; `plan_categories.days` is a COUNT for curriculum categories (`days.length` = day-lists per week), not a weekday filter. A `floor((today - plan_start)/7)` bridge would have looked right and quietly rebuilt the day-by-day schedule the product abandoned. Carry-forward rather than the terminal app's use-it-or-lose-it because a generated plan holds exactly two weeks of content, so one missed week would cost half the plan |
 
 ---
@@ -638,6 +642,138 @@ unfinished. A block **silently moved forward** by a cross-date `schedule_block()
 trace at all — `blocks.date` is mutable and nothing records the move. That third, arguably most
 common, shape is therefore not counted. Recording it would need a move history the schema does not
 have; it is named here as debt rather than discovered from a number that looks wrong later.
+
+---
+
+
+## 2026-09-12 — Focus Mode round two: pause, breaks, extension, block outcomes
+
+Migration `0023`. The founder's brief was a product description ("pause session, end session, leave
+early; a 45 minute session with 2x5 minute breaks; in the last 5 minutes ask if they need more
+time; after it closes ask if anything's left"), and most of the engineering was deciding how few
+new mechanisms that actually requires. The answer was: one new accounting concept (paused time),
+and no new state machine.
+
+### Breaks are pauses. The schedule is the only thing that's new.
+
+A break and a pause do exactly the same thing to the only quantity the server owns: they stop the
+clock. The difference between them is *who decided when* — a break was planned at start, a pause
+was chosen in the moment. That is a property of the **reason**, not of the mechanism.
+
+So there is no `start_break`/`end_break` pair. A scheduled break is `pause_session(id, 'break')`,
+fired by the client when the plan says one is due, and `resume_session(id)` when it ends. The
+alternative — a second interval-tracking system running beside pause — would have needed its own
+settle-time cleanup, its own interaction with `focus_seconds`, and its own answer to "what happens
+if a break and a manual pause overlap". All three are questions that simply don't arise when
+there's one mechanism. The reason is recorded on the ledger event (`session_paused.payload.reason`)
+so a future "you skip your breaks" or "you pause a lot" signal has the data without needing the
+schema to have guessed at it.
+
+**The break schedule itself is persisted, and this is the half that had a real argument on both
+sides.** The brief explicitly offered client-only computation as option (a), and it is genuinely
+cheaper: the server needs nothing from the plan to compute focus time correctly, so `break_plan`
+buys the *server* nothing at all.
+
+It was persisted anyway, because a session's break points are exactly as much "what this session
+is" as `planned_duration_s` is — and `planned_duration_s` is already persisted for one specific
+reason: the client is not trusted to remember it across a reload, a phone sleep, or a reconnect
+(D12). A user who configures 45min + 2x5min, reloads at minute 30, and finds their breaks silently
+gone has hit the *precise* failure this whole subsystem exists to prevent, and would hit it with
+the timer still looking perfectly correct. One nullable jsonb column is a very cheap way not to
+have that bug. Deciding otherwise would have meant the session survives a reload but the session's
+*shape* doesn't, which is a strange line to draw.
+
+**`at_s` is measured in focus seconds, not wall clock.** A break due "15 minutes in" means 15
+minutes of *work* in. Measuring from wall clock would mean a manual pause eats a break — the user
+pauses for coffee, comes back, and the break they'd planned has already silently passed. This is
+the kind of detail that is invisible in review and obvious in use.
+
+Validation lives in `start_session` with readable `22023` errors rather than leaning on the
+structural CHECK, for the same reason the block-ownership probe does: a malformed plan is rejected
+when the user can still fix it, not discovered as a break that never fires twenty minutes later.
+The `at_s >= planned_duration_s` rejection specifically catches a minutes/seconds mix-up, which is
+the mistake this shape invites most.
+
+### `settle_block_outcome()` is an RPC, and RLS is not why
+
+The brief asked me to check whether `blocks.status`/`blocks.notes` permit direct client writes
+rather than assume the project's RPC-only convention applies. **They do permit them.**
+`blocks_owner_all` (0001) is a `for all` policy and `blocks` keeps full CRUD grants;
+`session/page.tsx` already does a direct `.update({ claimed: true, status: 'in_progress' })` at
+session start. So the established pattern for authority-bearing tables genuinely does not apply
+here, and an RPC cannot be justified on access-control grounds.
+
+It is an RPC for a sharper reason found by reading `weekly_performance()` rather than the RLS
+policies: **`blocks.status` is not what decides whether a task counts as done.** 0021 reads the
+*ledger's* last `task_completed`/`task_regressed` verdict for a block, and falls back to
+`blocks.status` only for a block the ledger has never seen. A client that set `status = 'done'`
+without minting `task_completed` would therefore be visible on the Kanban board and **invisible to
+the weekly engine** for any block the ledger had already touched. The status write and the ledger
+event are one fact, and two client calls — which is exactly what `today-deck.tsx` does today — can
+half-apply. Putting both in one transaction is the whole value.
+
+**The bug this nearly shipped, and the reason to look closely at what an event *means* before
+minting one.** The obvious implementation mints `task_regressed` whenever the user answers
+"something's left". But `weekly_performance()` computes `postponement_count` as `regressed_count +
+stale_open_count` — so every ordinary, honest unfinished session would permanently inflate that
+user's postponement signal. The engine would read someone who works steadily on genuinely hard
+tasks as a chronic postponer, and would act on it. `task_regressed` is therefore minted **only on a
+real walk-back**: the block was done before (ledger first, `blocks.status` as fallback — 0021's
+exact rule, reused rather than re-derived) and is now being reopened. A task that was never done
+moving to `in_progress` is not a regression, and the ledger does not claim it is.
+
+**The leftover note appends to `blocks.notes`, it does not overwrite.** `notes` is an ordinary
+user-editable column that the Session screen already renders as the task's description — the user
+may well have typed it somewhere else entirely, and there is no undo. Appending risks an ugly
+growing blob; overwriting risks destroying text the user wrote. Between a cosmetic problem and a
+data-loss problem, that's not a close call. Appends are dated (in the user's own
+`profiles.timezone`) so a note from three sessions ago reads as history rather than as current
+state, and the frontend is free to render only the last paragraph.
+
+A note supplied on the `'done'` path is **rejected**, not silently dropped — if the user typed
+something, losing it quietly is the worst available outcome.
+
+### No advisory lock, and the reasoning rather than the omission
+
+The brief asked me to reason about this rather than skip the question. The per-user advisory lock
+(`activate_plan`, 0005; the curriculum menu, 0012) exists where one statement must be consistent
+against a *set* of the user's rows — exactly one active plan, one coherent menu. Nothing like that
+is true here: `settle_block_outcome()` writes one block row and appends one event. Postgres' own
+row lock already serializes two concurrent calls, and both orderings end with a status and a
+last-ledger-verdict that agree, which is the only property any reader depends on. Taking
+`hashtext(uid)` would queue a one-row status update behind plan activation and curriculum picks for
+no correctness gain, so it is deliberately not taken.
+
+### Two entry points, one implementation
+
+Two of the three outcomes know the block's fate at click time ("End session" → done, "Leave early" →
+in_progress) and fold it into the settle call, so there is no window where the session is over and
+the board still says in-progress. The third cannot: the founder's flow is explicit that the session
+*closes* and the question is asked afterwards, so natural expiry calls `complete_session()` and then
+`settle_block_outcome()` separately.
+
+That could have been two mechanisms. It isn't — `complete_session`'s `p_block_outcome` is a
+passthrough to the same `settle_block_outcome()` the deferred path calls. This is the project's own
+stated preference for reusing a proven mechanism over inventing a parallel one, applied to a case
+where the parallel version would have been genuinely tempting.
+
+**Natural expiry is a `complete_session`, never an `abandon_session`.** The time was legitimately
+spent. Whether the *task* is finished is a separate question from whether the *session* was, and
+conflating them would have made an honest full session look like a quit.
+
+### "Leave early" reuses `abandon_session` rather than getting its own RPC
+
+Considered and rejected. "Left early" is precisely what abandoning already means, the ledger event
+is already `session_abandoned`, and `recompute_daily_rollups()` already has a considered position on
+abandoned sessions (their real elapsed time still counts toward `focus_seconds` — the user was
+there — but they don't count as a completed session). A third settle state would have needed all of
+that re-decided for no new meaning.
+
+### Editable duration was never a backend gap
+
+Confirmed rather than built: `start_session`'s `p_planned_duration_s` has always accepted 1..86400.
+The Session screen simply hardcodes `DEFAULT_DURATION_S = 50*60` and ships no time picker. Adding
+one is a pure frontend change against a parameter that has existed since 0001.
 
 ---
 

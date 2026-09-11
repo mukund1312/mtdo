@@ -425,35 +425,47 @@ export type Database = {
       focus_sessions: {
         Row: {
           block_id: string | null
+          break_plan: Json | null
           completed_at: string | null
+          extended_s: number
           grace_expires_at: string | null
           id: string
+          paused_at: string | null
           planned_duration_s: number
           room_id: string | null
           started_at: string
           state: string
+          total_paused_s: number
           user_id: string
         }
         Insert: {
           block_id?: string | null
+          break_plan?: Json | null
           completed_at?: string | null
+          extended_s?: number
           grace_expires_at?: string | null
           id?: string
+          paused_at?: string | null
           planned_duration_s: number
           room_id?: string | null
           started_at?: string
           state?: string
+          total_paused_s?: number
           user_id: string
         }
         Update: {
           block_id?: string | null
+          break_plan?: Json | null
           completed_at?: string | null
+          extended_s?: number
           grace_expires_at?: string | null
           id?: string
+          paused_at?: string | null
           planned_duration_s?: number
           room_id?: string | null
           started_at?: string
           state?: string
+          total_paused_s?: number
           user_id?: string
         }
         Relationships: [
@@ -850,16 +862,24 @@ export type Database = {
     }
     Functions: {
       abandon_session: {
-        Args: { p_id: string }
+        Args: {
+          p_block_outcome?: string
+          p_id: string
+          p_leftover_note?: string
+        }
         Returns: {
           block_id: string | null
+          break_plan: Json | null
           completed_at: string | null
+          extended_s: number
           grace_expires_at: string | null
           id: string
+          paused_at: string | null
           planned_duration_s: number
           room_id: string | null
           started_at: string
           state: string
+          total_paused_s: number
           user_id: string
         }
         SetofOptions: {
@@ -923,16 +943,24 @@ export type Database = {
         }
       }
       complete_session: {
-        Args: { p_id: string }
+        Args: {
+          p_block_outcome?: string
+          p_id: string
+          p_leftover_note?: string
+        }
         Returns: {
           block_id: string | null
+          break_plan: Json | null
           completed_at: string | null
+          extended_s: number
           grace_expires_at: string | null
           id: string
+          paused_at: string | null
           planned_duration_s: number
           room_id: string | null
           started_at: string
           state: string
+          total_paused_s: number
           user_id: string
         }
         SetofOptions: {
@@ -975,7 +1003,55 @@ export type Database = {
           isSetofReturn: true
         }
       }
+      extend_session: {
+        Args: { p_additional_s: number; p_id: string }
+        Returns: {
+          block_id: string | null
+          break_plan: Json | null
+          completed_at: string | null
+          extended_s: number
+          grace_expires_at: string | null
+          id: string
+          paused_at: string | null
+          planned_duration_s: number
+          room_id: string | null
+          started_at: string
+          state: string
+          total_paused_s: number
+          user_id: string
+        }
+        SetofOptions: {
+          from: "*"
+          to: "focus_sessions"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
       iso_week_start: { Args: { p_iso_week: string }; Returns: string }
+      pause_session: {
+        Args: { p_id: string; p_reason?: string }
+        Returns: {
+          block_id: string | null
+          break_plan: Json | null
+          completed_at: string | null
+          extended_s: number
+          grace_expires_at: string | null
+          id: string
+          paused_at: string | null
+          planned_duration_s: number
+          room_id: string | null
+          started_at: string
+          state: string
+          total_paused_s: number
+          user_id: string
+        }
+        SetofOptions: {
+          from: "*"
+          to: "focus_sessions"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
       pick_curriculum_item: {
         Args: { p_item_id: string; p_target_date?: string }
         Returns: {
@@ -1032,6 +1108,30 @@ export type Database = {
         Args: { p_weekly_plan_id: string }
         Returns: undefined
       }
+      resume_session: {
+        Args: { p_id: string }
+        Returns: {
+          block_id: string | null
+          break_plan: Json | null
+          completed_at: string | null
+          extended_s: number
+          grace_expires_at: string | null
+          id: string
+          paused_at: string | null
+          planned_duration_s: number
+          room_id: string | null
+          started_at: string
+          state: string
+          total_paused_s: number
+          user_id: string
+        }
+        SetofOptions: {
+          from: "*"
+          to: "focus_sessions"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
       save_weekly_plan: {
         Args: {
           p_changes: Json
@@ -1077,17 +1177,77 @@ export type Database = {
           isSetofReturn: false
         }
       }
+      seed_weekly_engine_demo: {
+        Args: {
+          p_activate?: boolean
+          p_anchor_iso_week?: string
+          p_user_id: string
+        }
+        Returns: Json
+      }
+      session_focus_seconds: {
+        Args: {
+          p_completed_at: string
+          p_planned_duration_s: number
+          p_started_at: string
+          p_total_paused_s: number
+        }
+        Returns: number
+      }
+      settle_block_outcome: {
+        Args: {
+          p_leftover_note?: string
+          p_outcome: string
+          p_session_id: string
+        }
+        Returns: {
+          category_id: string
+          claimed: boolean
+          coaching: Json | null
+          completed_at: string | null
+          curriculum_item_id: string | null
+          date: string
+          elapsed_seconds: number
+          estimated_minutes: number | null
+          id: string
+          notes: string | null
+          plan_id: string
+          position: number
+          priority: string
+          scheduled_end_at: string | null
+          scheduled_start_at: string | null
+          started_at: string | null
+          status: string
+          text: string
+          user_id: string
+        }
+        SetofOptions: {
+          from: "*"
+          to: "blocks"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
       settle_session: {
-        Args: { p_id: string; p_state: string }
+        Args: {
+          p_block_outcome?: string
+          p_id: string
+          p_leftover_note?: string
+          p_state: string
+        }
         Returns: {
           block_id: string | null
+          break_plan: Json | null
           completed_at: string | null
+          extended_s: number
           grace_expires_at: string | null
           id: string
+          paused_at: string | null
           planned_duration_s: number
           room_id: string | null
           started_at: string
           state: string
+          total_paused_s: number
           user_id: string
         }
         SetofOptions: {
@@ -1098,16 +1258,24 @@ export type Database = {
         }
       }
       start_session: {
-        Args: { p_block_id?: string; p_planned_duration_s?: number }
+        Args: {
+          p_block_id?: string
+          p_break_plan?: Json
+          p_planned_duration_s?: number
+        }
         Returns: {
           block_id: string | null
+          break_plan: Json | null
           completed_at: string | null
+          extended_s: number
           grace_expires_at: string | null
           id: string
+          paused_at: string | null
           planned_duration_s: number
           room_id: string | null
           started_at: string
           state: string
+          total_paused_s: number
           user_id: string
         }
         SetofOptions: {

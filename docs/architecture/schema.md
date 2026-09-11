@@ -204,11 +204,18 @@ focus_sessions(id, user_id, room_id null, block_id null,
                planned_duration_s check (> 0 and <= 86400),
                state check in ('running','completed','abandoned'),
                completed_at, grace_expires_at,
+               paused_at null,                          -- 0023: non-null = clock stopped
+               total_paused_s not null default 0 check (>= 0),
+               extended_s not null default 0 check (>= 0),
+               break_plan jsonb null check (jsonb_typeof = 'object'),
                check ((state = 'running') = (completed_at is null)),
+               check (paused_at is null or state = 'running'),
                unique(id, user_id),
                fk (block_id, user_id) → blocks (id, user_id) on delete set null (block_id))
   -- unique index focus_sessions_one_running (user_id) where state = 'running'
-  -- Clients get SELECT only; all writes go through start/complete/abandon_session() (§5).
+  -- Clients get SELECT only; all writes go through the RPCs in §5.
+  -- PAUSE IS NOT A STATE. A paused session is state='running' with paused_at set —
+  -- see §5's "Pause is a sub-state" note for why a fourth state was rejected.
 
 -- proof (D7) — visibility enum fixed now, only 'private' built in solo phases
 proofs(id, user_id, session_id, block_id, body NOT NULL check (btrim <> ''),
@@ -529,9 +536,28 @@ multi-hour `completed` session outright. It is now enforced: clients hold **SELE
 
 | RPC | Does |
 |---|---|
-| `start_session(p_block_id uuid, p_planned_duration_s int) → focus_sessions` | Sets `user_id := auth.uid()` and `started_at := now()` internally — neither is a parameter. Validates duration (1..86400) and that the block is the caller's. Refuses if a session is already running. Mints `session_started`. |
-| `complete_session(p_id uuid) → focus_sessions` | Owner-checked, must currently be `running`. Sets `completed_at := now()`. Mints `session_completed` with server-measured `elapsed_s`. |
-| `abandon_session(p_id uuid) → focus_sessions` | Same, mints `session_abandoned`. |
+| `start_session(p_block_id uuid, p_planned_duration_s int, p_break_plan jsonb) → focus_sessions` | Sets `user_id := auth.uid()` and `started_at := now()` internally — neither is a parameter. Validates duration (1..86400), the break plan's shape, and that the block is the caller's. Refuses if a session is already running. Mints `session_started`. |
+| `complete_session(p_id uuid, p_block_outcome text, p_leftover_note text) → focus_sessions` | Owner-checked, must currently be `running` (**including paused**). Sets `completed_at := now()`, folds any open pause into `total_paused_s`. Mints `session_completed`. With `p_block_outcome`, also applies the block transition atomically. |
+| `abandon_session(p_id uuid, p_block_outcome text, p_leftover_note text) → focus_sessions` | Same, mints `session_abandoned`. |
+| `pause_session(p_id uuid, p_reason text) → focus_sessions` | Stops the clock. `p_reason` is `'manual'` or `'break'` — a scheduled break and a user-initiated pause are the **same mechanic**, distinguished only on the ledger. Mints `session_paused`. |
+| `resume_session(p_id uuid) → focus_sessions` | Banks the closed interval into `total_paused_s`, clears `paused_at`. Mints `session_resumed`. |
+| `extend_session(p_id uuid, p_additional_s int) → focus_sessions` | "Need more time?" accepted. Raises `planned_duration_s` and accumulates `extended_s`. Mints `session_extended`. |
+| `settle_block_outcome(p_session_id uuid, p_outcome text, p_leftover_note text) → blocks` | The linked block's fate after a **settled** session: `'done'` or `'in_progress'`, with an optional leftover note appended to `blocks.notes`. Returns NULL for an unlinked session. |
+| `session_focus_seconds(started_at, completed_at, total_paused_s, planned_duration_s) → int` | Not an intent — the **one shared formula**. Wall clock minus paused time, capped at planned, floored at 0. |
+
+**Pause is a sub-state, not a fourth `state`.** A paused session is still `state = 'running'`: it
+holds the one-running slot, `settle_session()`'s guard already admits it (so a user can End
+directly from paused), `start_session()`'s `55006` probe already catches it, and the client's
+existing `.eq('state','running')` recovery query still finds it after a tab close. Adding
+`'paused'` to the enum would have meant changing all four of those invariants, and would have
+silently broken the last one — a paused session would stop being found and a second timer would
+start beside it.
+
+**Paused time is not focus time.** Every consumer of session duration —
+`recompute_daily_rollups()` (§3a), `weekly_performance()` (§3f), and `settle_session()`'s own
+ledger payload — calls `session_focus_seconds()`. The formula used to be spelled out separately in
+each, which is how the two surviving copies had already drifted in return type before 0023
+consolidated them. Do not re-spell it anywhere.
 
 Called from the app as `supabase.rpc('start_session', { p_block_id, p_planned_duration_s })` —
 the ordinary anon key is enough, no service-role client is needed for the session loop. See
@@ -565,11 +591,11 @@ erroring; where the grant itself is revoked, it errors with `42501`.
 |---|---|---|
 | `profiles` | select, insert, update | client (own row); trigger on `auth.users` insert |
 | `plans`, `plan_categories` | select, insert, update (**no delete**) | client |
-| `curriculum_items`, `blocks`, `proofs`, `notes`, `companies`, `tutor_conversations` | select, insert, update, delete | client; `blocks` also by `pick_curriculum_item()` (0012) |
+| `curriculum_items`, `blocks`, `proofs`, `notes`, `companies`, `tutor_conversations` | select, insert, update, delete | client; `blocks` also by `pick_curriculum_item()` (0012), `schedule_block()` (0019) and `settle_block_outcome()` (0023) |
 | `feedback` | select, insert (**no update/delete**) | client |
 | `ai_provider_settings` | select, insert, update (**no delete**) | client (own row) |
 | `activity_events` | **select only** | `record_event()` / `append_event()` |
-| `focus_sessions` | **select only** | `start_session()` / `complete_session()` / `abandon_session()` |
+| `focus_sessions` | **select only** | `start_session()` / `complete_session()` / `abandon_session()` / `pause_session()` / `resume_session()` / `extend_session()` (0023) |
 | `daily_rollups` | **select only** | `recompute_daily_rollups()` (0009), scheduled by pg_cron (0010) |
 | `ai_generations` | **select only** | `web/lib/ai/service.ts`'s callers, service-role (0015) |
 | `tutor_memory_summaries` | **select only** | future service-role summarization job |

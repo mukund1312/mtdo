@@ -9,6 +9,148 @@ Add each session's PROGRESS.md entry to the same branch as the code it describes
 
 ---
 
+## [backend] 2026-09-12 (PR pending) — Focus Mode round two: pause/resume, breaks, extension, and the block outcome that never existed
+
+Session-authority-tier work (`decisions.md` 2026-09-04: "client-led timers are too fragile under
+phone sleep, reconnects, and clock drift"), so this was treated as a schema/RLS change throughout.
+Backend only — a contract lock for the frontend agent building the Session UI next, which is why
+`api.md` gains a full §3h with an explicit decision table rather than a paragraph. Migration `0023`.
+
+**Most of the engineering was deciding how few new mechanisms the brief actually requires.** The
+founder described five things (editable time, breaks, pause, three exit paths, two prompts). The
+answer turned out to be one new accounting concept — paused time — and no new state machine.
+
+- **Editable duration was never a backend gap, and confirming that was part of the job.**
+  `start_session`'s `p_planned_duration_s` has accepted 1..86400 since `0001`; the Session screen
+  just hardcodes `DEFAULT_DURATION_S = 50*60` and ships no time picker. Nothing built for this
+  point, as instructed.
+- **Pause is a sub-state of `running`, not a fourth `state` value.** `paused_at is not null` on a
+  session that is still `running`. The alternative would have meant changing all four invariants
+  that make §5 trustworthy (`focus_sessions_one_running`, the `state`/`completed_at` CHECK,
+  `settle_session()`'s guard, `start_session()`'s 55006 probe) — and would have **silently broken
+  the client's existing `.eq('state','running')` stale-session recovery query**, which would stop
+  finding a paused session and cheerfully start a second timer beside it. As a sub-state, zero
+  invariants change, ending a session directly from paused needed no new code path, and a session
+  paused two days ago is still recoverable. An e2e test pins exactly that.
+- **Breaks are pauses.** A break and a pause do the same thing to the only quantity the server owns:
+  they stop the clock. The difference is *who decided when*, which is a property of the reason, not
+  the mechanism — so `pause_session(p_id, p_reason)` takes `'manual' | 'break'` and there is no
+  second interval-tracking system. **The schedule itself IS persisted** (`break_plan jsonb`), which
+  is the half that had a real argument on both sides: the server needs nothing from it, so it buys
+  the *server* nothing. It was persisted because a session's break points are as much "what this
+  session is" as `planned_duration_s` is, and that is persisted for exactly one reason — the client
+  is not trusted to remember it across a reload. A user who configures 45min + 2x5min, reloads at
+  minute 30, and finds their breaks gone has hit the precise failure this subsystem exists to
+  prevent, with the timer still looking correct. `at_s` is measured in **focus** seconds, not wall
+  clock, so a manual pause slides the remaining breaks along with the user instead of eating one.
+- **`extend_session(p_id, p_additional_s)`** raises `planned_duration_s` (the cap every consumer
+  already reads) *and* accumulates a new `extended_s`, so reporting can still tell "planned 25, then
+  asked for 10 more" from "planned 35" — a real signal about estimation that bumping the one column
+  would have destroyed irrecoverably. Allowed while paused, deliberately.
+
+**The part that didn't exist at all before: settling a session had no effect on the linked block,
+ever.** The brief told me to check rather than assume whether `blocks` writes need RPC wrapping.
+**They don't** — `blocks_owner_all` is a `for all` policy with full CRUD grants, and
+`session/page.tsx` already does a direct `.update({ claimed, status })` at session start. So the
+project's RPC-only convention for authority-bearing tables genuinely does not apply, and an RPC
+cannot be justified on access-control grounds.
+
+`settle_block_outcome()` is an RPC for a sharper reason found by reading `weekly_performance()`
+instead of the RLS policies: **`blocks.status` is not what decides whether a task counts as done.**
+`0021` reads the *ledger's* last `task_completed`/`task_regressed` verdict and falls back to
+`blocks.status` only for a block the ledger has never seen. A client setting `status = 'done'`
+without minting `task_completed` would show on the Kanban board and be **invisible to the weekly
+engine** for any block the ledger had already touched. Status write and ledger event are one fact;
+two client calls — which is what `today-deck.tsx` does today — can half-apply.
+
+**The bug this nearly shipped.** The obvious implementation mints `task_regressed` whenever the user
+answers "something's left". But `weekly_performance()` computes `postponement_count` as
+`regressed_count + stale_open_count`, so every ordinary honest unfinished session would permanently
+inflate that user's postponement signal — the engine would read someone who works steadily on hard
+tasks as a chronic postponer and act on it. `task_regressed` now fires **only on a real walk-back**
+(the block was done before, per 0021's exact ledger-first rule, and is being reopened). A task that
+was never done moving to `in_progress` is not a regression, and the ledger no longer claims it is.
+
+The leftover note **appends** to `blocks.notes`, dated in the user's own timezone, never overwrites:
+`notes` is an ordinary user-editable column the Session screen already renders as the task's
+description, and between a cosmetic problem (a growing blob) and a data-loss problem (destroying
+text the user typed elsewhere, no undo) that isn't a close call. A note supplied on the `'done'`
+path is **rejected**, not silently dropped.
+
+**No advisory lock, and the reasoning rather than the omission** (the brief asked me to reason about
+it, not skip it). The per-user lock exists where one statement must be consistent against a *set* of
+a user's rows — one active plan, one coherent menu. This writes one block row and appends one event;
+Postgres' own row lock already serializes concurrent calls, and both orderings end with a status and
+a last-ledger-verdict that agree, the only property any reader depends on. Taking `hashtext(uid)`
+would queue a one-row status update behind plan activation and curriculum picks for nothing.
+
+**The Phase 7 corruption risk was real, and is closed in the metric.** `focus_seconds` was
+`least(completed_at - started_at, planned_duration_s)` in **two** places — and those two copies had
+*already* drifted before anything forced them to (different return types, different negative
+clamping). Both now call one `session_focus_seconds()`. Tested explicitly rather than assumed: a
+60-minute estimated task worked in 90 wall-clock minutes with 30 paused reads `pace_ratio` **1.0**
+(working exactly to estimate), where the old formula gave **1.5** and would have classified the user
+*struggling* and eased a target that was never the problem.
+
+**One real bug caught by my own test, worth recording because the code looked right.** The break-plan
+validator used `jsonb_typeof(p_break_plan->'breaks') <> 'array'`. A missing key makes that
+expression SQL `NULL`, `NULL <> 'array'` is `NULL` rather than true, and the `if` never fires — so
+the guard silently accepted exactly the malformed plans it exists to reject. Test `5g` failed with
+"expected errcode 22023 but the statement succeeded". Fixed with `is distinct from` in both the
+top-level and per-break checks.
+
+**Verification.** `supabase/tests/run.sh` **390/390** (80 new in `15_session_pause_breaks_outcomes.sql`,
+prior total 310 — not the 306 the Phase 7 entry below records, since `13_weekly_performance.sql`
+gained four assertions after it), 193/193 vitest unchanged, `tsc`/`eslint`/`next build` clean,
+migration pushed live via
+`supabase db push --linked`, types regenerated from the live catalog.
+
+New `e2e/session-rpc-contract.spec.ts`, 4 tests, all passing against the real linked project. This
+exists because pgTAP structurally **cannot** see the layer this shape of change breaks: `0023` DROPs
+and recreates `start_session`/`complete_session`/`abandon_session` to add trailing defaulted
+parameters, and pgTAP calls them as SQL. A leftover overload gives PostgREST a 300 "could not choose
+the best candidate function" and a recreated function that lost its GRANT gives 42501 — neither is
+visible from inside the database. So the spec drives the real RPCs over real PostgREST as a real
+anonymous user under real RLS, confirming the one-argument call forms the shipped Session screen
+uses today still resolve. It deliberately does not touch the Session UI, which doesn't have
+pause/end/leave-early controls yet; asserting on it would make the spec fail for the wrong reason
+the moment the next agent builds them. Existing `signal-deck-home-session.spec.ts` 3/3 still green.
+
+**CI's `web-e2e` went red, and the diagnosis changed the spec.** Two failures, neither mine:
+`settings.spec.ts:104` (`/api/calendar/status` returned **401**, not 200) and
+`signal-deck-home-session.spec.ts:11` (the Time deck's "nothing waiting" empty state never
+rendered). Both are auth-dependent, and the 401 is the tell — no authenticated session in CI.
+Every other `main` run this week is green, so "pre-existing flake" was not available as an excuse:
+**every one of those green runs predates this migration landing in the live shared project that CI
+also tests against**, so the baseline was stale and the migration was a live suspect.
+
+Settled it with evidence rather than argument: ran both failing specs locally **against that same
+migrated database** — 8/8 pass. Local and CI hit an identical schema, so the schema is exonerated
+and the difference is the CI environment (no auth session → 401), which matches the
+`429 over_request_rate_limit` pattern the 2026-09-08 and 2026-09-11 entries already document. No
+explicit 429 appears in this job's log, so that last step is inference, not proof — recorded as
+inference.
+
+**That verdict did not let my spec off the hook, and this is the part worth keeping.** It minted a
+fresh anonymous user *per test* — four sign-ins added to every CI run, forever, against a
+project-wide rate-limited resource this repo has already exhausted twice. I can't prove it was the
+marginal straw on this run, but it plausibly contributed, and it is a bad citizen either way. Now
+one shared sign-in for all four tests, which forced a second decision: `playwright.config.ts` sets
+`fullyParallel: true`, so tests within a file can run concurrently, and four tests sharing one user
+would collide on `focus_sessions_one_running`. Hence `test.describe.serial` — sharing the user and
+serializing are one decision, not two, and the file says so. A rate-limited sign-in is now recorded
+in `beforeAll` and turned into an honest skip by `beforeEach`, rather than failing four tests and
+reporting an environment problem as a code regression. Still 4/4 locally.
+
+One thing the frontend agent must not miss, flagged in §3h: **the stale-session recovery query needs
+the new columns.** `session/page.tsx` reads `id, started_at, planned_duration_s`; a session restored
+after a tab close now also needs `paused_at, total_paused_s, break_plan` or the restored timer will
+over-count every pause taken before the reload. **EmberMorph needed no change** — checked before
+assuming, per the brief: its §4.1 contract is plain caller-ticked numbers, and a paused session is
+simply a caller that stops ticking.
+
+---
+
 ## [frontend] 2026-09-11 (PR pending) — Home deck: Active Vector tile becomes a shuffleable card stack (iMessage-style), new `framer-motion` dependency
 
 User asked, with a full technical spec, for the "Active Vector" hero tile (Home deck, top
