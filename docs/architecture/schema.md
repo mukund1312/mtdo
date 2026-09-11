@@ -144,6 +144,20 @@ blocks(id, user_id, plan_id, category_id, date, position, text,
        -- are all unaffected (recompute_daily_rollups() never reads
        -- blocks.status -- see 0009's "SOURCE CHOICE" comment).
        claimed, started_at, elapsed_seconds check (>= 0), completed_at,
+       scheduled_start_at timestamptz null, scheduled_end_at timestamptz null,  -- 0019, Phase 6
+       check ((scheduled_start_at is null) = (scheduled_end_at is null)),  -- both or neither
+       check (scheduled_end_at is null or scheduled_end_at > scheduled_start_at),
+       -- index (user_id, scheduled_start_at) where scheduled_start_at is not null
+       -- OPTIONAL calendar window. NULL = genuinely unscheduled (the normal,
+       -- majority case), never midnight -- same load-bearing NULL as
+       -- estimated_minutes and profiles.timezone. Set and cleared ONLY through
+       -- schedule_block() (api.md §3d), which replaces rather than patches:
+       -- passing no timestamps IS the un-schedule call.
+       -- Deliberately NOT constrained to fall on blocks.date -- a 23:30-00:30
+       -- session is legitimate, and the board date and the calendar window are
+       -- related concepts, not redundant ones.
+       -- This is the narrow reversal recorded in decisions.md 2026-09-11:
+       -- a BLOCK may be scheduled; CURRICULUM still never is.
        curriculum_item_id null,   -- provenance; added in 0012
        unique(user_id, curriculum_item_id) where curriculum_item_id is not null,
        fk (curriculum_item_id, category_id) → curriculum_items (id, category_id)
@@ -233,6 +247,57 @@ ai_generations(id uuid pk, user_id, kind, provider, model, valid,
   -- constrained enum: new AI-backed features add new kinds without a
   -- migration just to log them. Backs the future Tutor free-tier cap
   -- (Phase 8) and provider/cost visibility in Settings -> AI.
+
+-- Google Calendar, one-way MTDO -> Google (0020, Phase 6; api.md §3e,
+-- decisions.md 2026-09-11). Entirely optional: schedule_block() works with
+-- or without any of this, and a user who never connects a calendar never
+-- touches either table.
+calendar_connections(id uuid pk, user_id, provider check in ('google') default 'google',
+                     refresh_token_encrypted, calendar_id default 'primary',
+                     scopes text[] default '{}', connected_at, updated_at,
+                     unique(user_id, provider))
+  -- STRICTEST POSTURE IN THIS SCHEMA. RLS enabled with NO POLICIES AT ALL,
+  -- *and* every privilege revoked from anon/authenticated. Either alone would
+  -- be an incidental denial (see §6's opening); both together make it
+  -- structural. A browser cannot read this table even for its own row —
+  -- a Google refresh token is a long-lived credential to a third-party
+  -- account and has no business in a bundle. Closest precedent:
+  -- tutor_messages ("a client can: nothing"), plus encryption.
+  -- refresh_token_encrypted is AES-256-GCM ciphertext in a self-describing
+  -- 'v1:<iv>:<tag>:<ct>' envelope, encrypted IN THE ROUTE HANDLER
+  -- (web/lib/calendar/crypto.ts, CALENDAR_TOKEN_ENCRYPTION_KEY) — NOT by the
+  -- database. pgcrypto is deliberately not installed here (0001's header),
+  -- there is no Vault precedent, and without Vault the key would have to be
+  -- passed INTO SQL on every read/write. Encrypting in the app means the
+  -- database never holds the key, so a dump is not a token compromise.
+  -- Access tokens are never stored at all — re-minted per sync call.
+  -- `scopes` holds what Google GRANTED, not what was requested.
+
+calendar_event_links(id uuid pk, user_id, block_id,
+                     provider check in ('google') default 'google',
+                     external_event_id, external_calendar_id default 'primary',
+                     created_at, synced_at,
+                     unique(block_id, provider),
+                     fk (block_id, user_id) → blocks (id, user_id) on delete cascade)
+  -- SELECT-own to the client (an external event id is not a credential);
+  -- INSERT/UPDATE/DELETE are service_role only, via POST /api/calendar/sync —
+  -- the row is only meaningful if the matching Google call actually happened,
+  -- and only the Route Handler knows that.
+  -- unique(block_id, provider) is what makes sync idempotent: a re-sync
+  -- updates the one event this block owns, it never fans out duplicates.
+  -- THIS TABLE IS THE PER-BLOCK OPT-IN. There is deliberately no
+  -- blocks.calendar_sync_enabled column — a block is synced iff a row exists
+  -- here, exactly the way "picked" means "a block exists with this
+  -- curriculum_item_id" (api.md §3b). A second mutable copy of "is this on
+  -- the calendar" can disagree with the calendar, invisibly.
+  -- external_calendar_id is denormalised at sync time on purpose: a Google
+  -- event id is only addressable alongside its calendar, so a user who later
+  -- switches calendars must still be able to delete the old events.
+  -- KNOWN GAP, recorded not hidden: ON DELETE CASCADE means deleting a synced
+  -- block orphans the Google event (Postgres cannot make an HTTP call from a
+  -- cascade). Call sites unsync before deleting (api.md §3e); no reaper
+  -- exists. RESTRICT was rejected — a user must always be able to delete
+  -- their own block, calendar or no calendar.
 ```
 
 **The composite foreign keys are the point, not decoration.** `user_id` on a row proves only
@@ -426,7 +491,9 @@ erroring; where the grant itself is revoked, it errors with `42501`.
 | `daily_rollups` | **select only** | `recompute_daily_rollups()` (0009), scheduled by pg_cron (0010) |
 | `ai_generations` | **select only** | `web/lib/ai/service.ts`'s callers, service-role (0015) |
 | `tutor_memory_summaries` | **select only** | future service-role summarization job |
+| `calendar_event_links` | **select only** | `POST /api/calendar/sync`, service-role (0020) |
 | `tutor_messages` | **nothing** | future service-role chat backend; read via `tutor_context()` |
+| `calendar_connections` | **nothing** | `GET /api/calendar/callback`, service-role (0020) |
 
 Other rules, all enforced in the SQL:
 
@@ -468,6 +535,23 @@ Other rules, all enforced in the SQL:
   — they both succeed and one fails at COMMIT). Both are serialized on a per-user advisory lock,
   the same pattern as `activate_plan()`. Ownership is still re-checked inside each function,
   because a `security definer` function is exempt from RLS.
+- **`schedule_block()` (migrations/0019) is a correctness RPC, like the two above — not an
+  access-control one.** `blocks` stays fully client-writable, and a **same-day** reorder is still
+  an ordinary client `UPDATE` of `position` (the DEFERRABLE constraint exists precisely so a
+  two-row swap works inside one transaction). What a client cannot do safely is a **cross-date**
+  move: that changes `(user_id, date, category_id, position)` — `blocks_slot_key` itself — and
+  because that constraint is `DEFERRABLE INITIALLY DEFERRED`, a naive move does not collide at
+  UPDATE time. It succeeds, looks fine, and fails at COMMIT. The RPC reallocates `position` under
+  the same per-user advisory lock key as the three functions above, so all four serialize. Full
+  contract, including the "passing NULLs un-schedules" rule: api.md §3d.
+- **`calendar_connections` (migrations/0020) is the first table in this schema with no client
+  access of any kind by *both* mechanisms at once** — RLS on with zero policies, and `revoke all`
+  from `anon`/`authenticated`. The doubling is the point: §6's opening paragraph explains why "no
+  policy" alone is only an incidental denial, and a grant with no policy is equally incidental.
+  Its refresh token is additionally encrypted by the application, not the database, so the key
+  never crosses the PostgREST boundary — see the table's own comment in §2 and decisions.md's
+  2026-09-11 entry. `calendar_event_links` is the ordinary SELECT-own/service-role-write pattern
+  on top of it.
 - **`activate_plan(p_plan_id)` (migrations/0005, guarded by 0006/0007) is a structural
   access-control boundary, not just a convention.** `plans` stays ordinary client-writable (the
   table above) — `plans_update_own`/`plans_insert_own` still permit a direct

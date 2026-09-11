@@ -78,3 +78,45 @@ test("More dock button opens Settings, which shows real AI provider status", asy
   await page.getByRole("link", { name: /back to deck/i }).click();
   await expect(page).toHaveURL(/\/architecture-02$/);
 });
+
+// Phase 6's honesty check. There are no Google credentials in this
+// environment (and none in CI), so GET /api/calendar/status genuinely
+// returns configured:false -- this asserts the panel says so plainly, names
+// the missing variables, and does NOT render a Connect button that would
+// bounce the user off to a half-built Google URL. It also asserts the line
+// that matters most for the product: scheduling still works without it.
+test("Settings -> Calendar reports 'not configured' cleanly when Google isn't set up", async ({ page }) => {
+  await page.goto("/architecture-02/settings");
+  await expect(page.getByRole("heading", { name: /under the hood/i })).toBeVisible();
+  await expect(page.getByText("Calendar", { exact: true })).toBeVisible();
+
+  const calendarRow = page.locator(".a02-settings-row").filter({ hasText: "Google Calendar" });
+  await expect(calendarRow).toBeVisible({ timeout: 20_000 });
+  await expect(calendarRow.getByText(/not configured/i)).toBeVisible();
+
+  await expect(page.getByText(/Scheduling a task onto a date and time still works normally/i)).toBeVisible();
+  await expect(page.getByRole("link", { name: /connect google calendar/i })).toHaveCount(0);
+});
+
+// The routes themselves must degrade, not crash -- an unconfigured server
+// answers with a real status code and a machine-readable reason, never a 500
+// and never a redirect into a broken OAuth flow.
+test("Calendar routes degrade cleanly when Google isn't configured", async ({ page }) => {
+  // Establish the anonymous session the routes require, the same way every
+  // other authenticated surface in this suite does.
+  await page.goto("/architecture-02");
+
+  const status = await page.request.get("/api/calendar/status");
+  expect(status.status()).toBe(200);
+  const body = await status.json();
+  expect(body.configured).toBe(false);
+  expect(body.connected).toBe(false);
+  expect(body.missing.length).toBeGreaterThan(0);
+
+  const connect = await page.request.get("/api/calendar/connect", { maxRedirects: 0 });
+  expect(connect.status()).toBe(503);
+  expect((await connect.json()).configured).toBe(false);
+
+  const sync = await page.request.post("/api/calendar/sync", { data: { blockId: "nope", enabled: true } });
+  expect(sync.status()).toBe(503);
+});

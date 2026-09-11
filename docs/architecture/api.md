@@ -21,7 +21,10 @@ mtdo/
 │   │   │                  # ownership is by content, not directory; see split-plan §1).
 │   │   │                  # e.g. api/onboarding/plan/route.ts (§2 below).
 │   ├── components/        # primitives built from DESIGN.md
-│   ├── lib/supabase/      # typed client, generated types
+│   ├── lib/supabase/      # typed client, generated types; service.ts = the service-role
+│   │                      # client, Route Handlers ONLY (its own header has the rules)
+│   ├── lib/calendar/      # Google Calendar seam (§3e): config/crypto/google/connection.
+│   │                      # connection.ts is the only module that touches calendar_connections
 │   ├── lib/plan-generation/  # pure prompt/parse/persist helpers for onboarding plan generation (§2)
 │   ├── lib/copy.ts        # the web↔terminal vocabulary dictionary (DESIGN.md §Vocabulary)
 │   └── package.json
@@ -293,11 +296,14 @@ actually call them (7, 8), not speculatively here.
 
 ## 3. How the app talks to the database
 
-Most tables are read and written directly with the anon-key client under RLS. **Five are not**
-(`focus_sessions`, `activity_events`, `daily_rollups`, `tutor_messages`,
-`tutor_memory_summaries`), and this is the part that is easy to get wrong: they are read-only —
-or, for `tutor_messages`, no-access — to clients, and their writes go through `security definer`
-RPCs or a service-role backend. Calling `.insert()` on them does not fail
+Most tables are read and written directly with the anon-key client under RLS. **Eight are not**
+(`focus_sessions`, `activity_events`, `daily_rollups`, `ai_generations`, `tutor_messages`,
+`tutor_memory_summaries`, `calendar_connections`, `calendar_event_links`), and this is the part
+that is easy to get wrong: they are read-only — or, for `tutor_messages` and
+`calendar_connections`, **no-access** — to clients, and their writes go through
+`security definer` RPCs or a service-role backend. (This count said "five" until Phase 6 and was
+already stale by two: `ai_generations` landed in Phase 2 and `tutor_memory_summaries` predates
+both. `schema.md` §6's table has always been the authoritative list.) Calling `.insert()` on them does not fail
 silently — it returns a `42501` permission error — but the fix is to use the RPC, never to add a
 policy or a grant. `schema.md` §6 has the full privilege table.
 
@@ -310,6 +316,9 @@ policy or a grant. `schema.md` §6 has the full privilege table.
 | `from('tutor_messages').select(...)` | `rpc('tutor_context', { p_conversation_id, p_recent_limit })` |
 | `from('tutor_messages').insert(...)` | *not available to clients* — the W3b Route Handler (service role) only |
 | `from('daily_rollups').insert/update(...)` | *not available* — derived by `recompute_daily_rollups()`, service role only (D13); see §3a |
+| `from('blocks').update({ date, position })` (a **cross-date** move) | `rpc('schedule_block', { p_block_id, p_date, p_start_at, p_end_at })` — a client-side cross-date move fails at COMMIT, not at UPDATE, because `blocks_slot_key` is DEFERRABLE; see §3d. A **same-day** reorder stays an ordinary `update`. |
+| `from('calendar_connections').select(...)` | *not available to clients at all* — service-role only, the token never reaches a browser (§3e) |
+| `from('calendar_event_links').insert/update/delete(...)` | `POST /api/calendar/sync` (§3e). Reads are an ordinary RLS-filtered `select`. |
 
 Reads of `focus_sessions`, `activity_events` and `daily_rollups` are ordinary RLS-filtered
 `select`s and need no RPC.
@@ -516,11 +525,23 @@ Both are `authenticated`-callable; both derive the user from `auth.uid()` and ta
   `on delete set null`. The idempotent re-pick branch does **not** re-copy — a user's own manual
   re-prioritization of an already-picked block (`blocks.priority` is ordinary client-writable)
   survives a repeat pick of the same item, it isn't silently reset back to the item's value.
-- **Blocks land on today, in the caller's own zone (migrations/0014)** —
+- **Blocks land on today by default, in the caller's own zone (migrations/0014)** —
   `coalesce(profiles.timezone, 'UTC')`, same fallback pattern as `recompute_daily_rollups()`
-  (§3a). There is no target-date parameter; this is what keeps a freshly-picked block's date
-  agreeing with what the Today screen is querying for — Today itself reads a user's real zone
-  too as of Phase 1 (`today-deck.tsx`'s `fetchProfileTimezone()` call, wired to `utcToday(timezone)`).
+  (§3a). That default is what keeps a freshly-picked block's date agreeing with what the Today
+  screen is querying for — Today itself reads a user's real zone too as of Phase 1
+  (`today-deck.tsx`'s `fetchProfileTimezone()` call, wired to `utcToday(timezone)`).
+- **`p_target_date` (migrations/0019, Phase 6) overrides that default.** Optional, defaults to
+  NULL, and NULL means "today in the caller's zone" — so **every pre-0019 one-argument call site
+  is unchanged**. Pass it only when the user explicitly chose a day (the Time deck picking
+  straight onto a date, rather than picking onto today and then moving it). It is a destination a
+  human chose, **never** a date derived from `today - plan_start` and `plan_categories.days` —
+  that derivation is still wrong and still forbidden, see the top of this section.
+  0019 **drops and recreates** this function rather than overloading it; a defaulted second
+  parameter added by `create or replace` would have made every one-argument call ambiguous
+  (`42725`, "function is not unique") instead of resolving.
+- **A repeat pick does not move an already-picked block**, even with a different `p_target_date`.
+  Same rule as the priority copy above: the idempotent branch returns what already exists. Moving
+  a block is `schedule_block()`'s job (§3d).
 - The item's `meta` is the Learning Coach payload (`focus_points`, `questions`, `mistakes`,
   `tips`, `mental_models`, …) — read it from the menu row for a preview, or from
   `blocks.coaching` once picked.
@@ -604,6 +625,143 @@ already writes to `blocks`:
   validated by `parseGeneratedPlan` on Import — a missing `schema_version` is accepted as this
   version (compatibility with files predating the field, and the terminal app's own `goals.json`,
   which has never carried one); a present-but-different value is rejected outright.
+
+## 3d. Scheduling a block onto a date and time (Phase 6, migrations/0019)
+
+**Narrows `decisions.md` 2026-09-07's "curriculum is never scheduled onto a calendar date"** —
+read that entry and the 2026-09-11 one before building against this. The narrowing is one
+sentence wide: *curriculum* is still an unlocking, carry-forward menu with no dates in it; a
+**block**, which exists only because a human explicitly picked it, may now optionally also carry
+a date and time. §3b's mechanism is unchanged.
+
+```sql
+public.schedule_block(
+  p_block_id uuid,
+  p_date     date        default null,
+  p_start_at timestamptz default null,
+  p_end_at   timestamptz default null
+) returns blocks
+```
+
+`authenticated`-callable, `security definer`, derives the user from `auth.uid()` and takes no user
+id. New columns: `blocks.scheduled_start_at` / `blocks.scheduled_end_at` (both nullable — NULL is
+"genuinely unscheduled", the normal case, not midnight).
+
+**It REPLACES a block's schedule. It does not patch it.** This is the part a reader guesses wrong:
+
+| Call | Result |
+|---|---|
+| `schedule_block(id, '2026-09-14', start, end)` | Moves to that board date **and** sets that window |
+| `schedule_block(id, null, start, end)` | Sets the window, keeps the current board date |
+| `schedule_block(id, '2026-09-14')` | Moves to that board date, **clears** the window |
+| `schedule_block(id)` | **Clears the window**, keeps the board date — this is the un-schedule call |
+
+There is no separate `unschedule_block()`. `p_date` is the one asymmetry: `blocks.date` is
+`NOT NULL`, so there is nothing to clear it to, and a NULL `p_date` therefore means "keep it where
+it is" rather than "clear it".
+
+⚠️ **The generated-types trap (§3's last two bullets, and it bites here).** All three of
+`p_date`/`p_start_at`/`p_end_at` are typed `?:` but **not** unioned with `null`, so
+`rpc('schedule_block', { p_block_id, p_start_at: null })` will not typecheck. **Omit the keys
+instead** — hitting the SQL `DEFAULT` is runtime-identical to passing `null`. The un-schedule call
+is therefore literally `rpc('schedule_block', { p_block_id: id })`.
+
+**Errors.** `22023` for a half-window (one timestamp without the other) or an end at/before the
+start — rejected at the argument boundary so the message names the function, rather than falling
+through to the `blocks_scheduled_window_paired` / `_ordered` CHECK constraints. `42501` for a
+block that isn't yours, deliberately not distinguished from "no such block".
+
+**Why this is an RPC at all**, given `blocks` stays an ordinary client-writable table: the same
+reason `pick_curriculum_item()` is one, and it is **not** access control. Moving a block to
+another date changes `(user_id, date, category_id, position)` — which is `blocks_slot_key`, and
+that constraint is `DEFERRABLE INITIALLY DEFERRED`. A client-side `update blocks set date = ...`
+that keeps the old `position` **does not collide at UPDATE time**: it succeeds, the transaction
+looks healthy, and it fails at COMMIT with a `23505` nothing in the UI can attribute. The RPC
+reallocates `position` server-side under the **same per-user advisory lock**
+(`mtdo.curriculum_menu:<uid>`) that `ensure_curriculum_menu()`, `pick_curriculum_item()` and
+`extend_plan()` share, so none of the four can interleave for one user.
+
+Allocation rules, exactly:
+
+- **Cross-date move** → `position = max(position) + 1` within `(user_id, target_date, category_id)`,
+  or `0` if that lane is empty. `category_id` never changes — a block does not change goal category
+  by moving in time. Gaps left behind on the source date are fine; the constraint wants uniqueness,
+  not density.
+- **Same-date call** → `position` is left exactly as it is. Recomputing would be actively wrong:
+  `max()` includes this very row, so every no-op re-schedule would push the block to the end of its
+  own lane. **A same-day reorder is still an ordinary client UPDATE of `position`** — the DEFERRABLE
+  constraint exists precisely so a two-row swap works inside one transaction. This RPC is for the
+  cross-date case a client cannot do safely.
+
+**A block's board date and its calendar window are deliberately not constrained to agree.** A
+23:30–00:30 session is legitimate, and rejecting it would be a bug. They are related concepts, not
+redundant ones.
+
+## 3e. Google Calendar — one-way sync (Phase 6, migrations/0020)
+
+**Google Calendar is one-way, MTDO → Google, in V1.** Removing a block's schedule removes the
+Google event; Google-side edits do **not** flow back, and the next sync of that block overwrites
+them. No poll or webhook receiver exists — deferred deliberately, and MTDO stays the source of
+truth so a user's task list and their calendar stay separate things. **AI may only ever *suggest*
+a slot, never create an event unattended.** No suggestion logic is built yet; every route below is
+reached by an explicit user action carrying an explicit block id, which is what keeps that
+structural rather than a policy note.
+
+**It is entirely optional, and nothing in the core loop depends on it.** `schedule_block()` (§3d)
+works identically whether or not a calendar is connected.
+
+**Tables (`schema.md` has the full shape).**
+
+- `calendar_connections` — **service-role only**: RLS enabled with *no policies* **and** every
+  privilege revoked from `anon`/`authenticated`. A browser cannot read it even for its own row.
+  `refresh_token_encrypted` is AES-256-GCM ciphertext in a `v1:<iv>:<tag>:<ct>` envelope, encrypted
+  **in the Route Handler** (`web/lib/calendar/crypto.ts`, `CALENDAR_TOKEN_ENCRYPTION_KEY`), not by
+  the database — see `decisions.md` 2026-09-11 for why not pgcrypto. Access tokens are never
+  stored; each sync mints a fresh one from the refresh token.
+- `calendar_event_links` — `unique (block_id, provider)`, which is what makes sync idempotent.
+  SELECT-own to the client, service-role write. **This table IS the per-block opt-in** — there is
+  no `blocks.calendar_sync_enabled` column, the same way "picked" is derived from a block existing
+  (§3b).
+
+**Configuration, and what happens without it.** `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`,
+`CALENDAR_TOKEN_ENCRYPTION_KEY` and `SUPABASE_SERVICE_ROLE_KEY` (optionally
+`GOOGLE_OAUTH_REDIRECT_URI`) — all documented in `web/.env.example`. **None of them exist in this
+environment**; no Google Cloud project has been created for mtdo yet. That is a supported state,
+and it is the state every route below was actually exercised in. `resolveCalendarConfig()`
+(`web/lib/calendar/config.ts`) is the single check, modelled directly on `resolveProvider()`
+(§2f): a present-but-wrong-length encryption key counts as *not configured*, because the
+alternative is discovering it at the moment a real user finishes Google's consent screen.
+
+| Route | Contract |
+|---|---|
+| `GET /api/calendar/status` | Auth-gated, `no-store`. `{ configured, connected, connection, missing[], provider }`. Unconfigured is a **200** naming the absent variables, never an error. Backs Settings → Calendar. |
+| `GET /api/calendar/connect` | Auth-gated. Redirects (307) to Google's consent screen and sets an httpOnly `SameSite=Lax` state cookie. **503 `{ configured: false, missing }`** when unconfigured — never a redirect to a half-built URL. |
+| `GET /api/calendar/callback` | Verifies the state cookie (CSRF — without it an attacker binds *their* calendar to the victim's account), exchanges the code, stores the encrypted connection. Always redirects to `/architecture-02/settings?calendar=<outcome>`; the redirect target is built from this app's own origin and a constant path, never from anything Google round-tripped back (see `app/auth/callback/route.ts` for the open-redirect write-up). Outcomes: `connected`, `declined`, `state-mismatch`, `no-code`, `no-refresh-token`, `exchange-failed`, `not-configured`, `no-session`, `google-error`. |
+| `POST /api/calendar/sync` | `{ blockId, enabled }`. `200 { synced: true, eventId, calendarId }` (created or updated) / `200 { synced: false }` (removed, or already absent). `400` malformed body **or** `enabled: true` for a block with no schedule. `401` no session. `404` not your block. `409 { connected: false }`. `502` Google rejected it. `503 { configured: false, missing }`. |
+| `POST /api/calendar/disconnect` | Deletes the events mtdo created **before** deleting the connection (the reverse order destroys the only token that could have removed them), then clears the links. `{ disconnected: true, orphanedEvents }` — event deletion is best-effort and non-fatal; a user disconnecting gets disconnected. |
+
+**Call-site contract — read these three, they are where this goes wrong.**
+
+1. **Block ownership is proved with the user's own anon client, never the service client.** The
+   routes read `blocks` through the RLS-scoped client to establish ownership, then use the service
+   client only for `calendar_*`. A `user_id` from a request body is never trusted.
+2. **Un-scheduling a block does not remove its Google event by itself.** Call
+   `POST /api/calendar/sync { blockId, enabled: false }` alongside the `schedule_block()` call that
+   clears the window. **It is safe to call unconditionally**, and that is a deliberate property of
+   the route rather than a happy accident: an already-unsynced block, *and* a user who has no
+   calendar connected at all (including one who just disconnected, which already deleted their
+   links), both return a plain `{ synced: false }`. No 404, and no 409 telling someone to connect a
+   calendar they don't want. `409` is reserved for `enabled: true`, where a connection is genuinely
+   required. Neither no-op spends a Google token round trip.
+3. **Unsync before deleting a block.** `calendar_event_links` cascades on block delete, so deleting
+   a synced block drops the link row and **orphans the Google event** — Postgres cannot make an
+   HTTP call from a cascade. There is no reaper for events orphaned by a client that skipped this;
+   it is recorded as debt in `decisions.md` 2026-09-11, not a surprise to discover later.
+
+**Scopes.** `https://www.googleapis.com/auth/calendar.events` only — least privilege, and notably
+no read scope, because one-way sync never needs to read the user's calendar. The scopes Google
+actually *granted* are stored on the connection row (not the ones requested), so a later scope
+addition is detectable as missing consent rather than a 403 at event-creation time.
 
 ## 4. The EmberMorph component contract
 
