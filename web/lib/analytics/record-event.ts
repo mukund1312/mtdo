@@ -55,12 +55,20 @@ export async function recordEvent(
       p_payload: payload,
     });
     if (error) {
-      console.error(`[analytics] record_event(${kind}) failed:`, error);
+      // Browser instrumentation is explicitly best-effort. A missing grant,
+      // an expired/anonymous session, or a transient network failure must not
+      // surface as a Next.js runtime error over the product UI. Server-side
+      // callers still log the failure where it is actionable.
+      if (typeof window === "undefined") {
+        console.error(`[analytics] record_event(${kind}) failed:`, error);
+      }
       return false;
     }
     return true;
   } catch (err) {
-    console.error(`[analytics] record_event(${kind}) threw:`, err);
+    if (typeof window === "undefined") {
+      console.error(`[analytics] record_event(${kind}) threw:`, err);
+    }
     return false;
   }
 }

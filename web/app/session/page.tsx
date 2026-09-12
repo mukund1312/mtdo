@@ -25,8 +25,6 @@ type LinkedBlock = {
 };
 
 type SessionPhase = "ready" | "starting" | "active" | "exiting";
-type NoticeKind = "success" | "warning";
-
 const DEFAULT_DURATION_S = 50 * 60;
 // Shown when a session was started without a linked block (Home's generic
 // "Start focus" -- see architecture-02/page.tsx) -- honest, not a stand-in
@@ -60,23 +58,19 @@ function messageFrom(error: { code?: string; message?: string } | null) {
 }
 
 export default function SessionPage() {
-  const startButtonRef = useRef<HTMLButtonElement>(null);
   const [phase, setPhase] = useState<SessionPhase>("ready");
   const [session, setSession] = useState<FocusSession | null>(null);
   const [elapsedS, setElapsedS] = useState(0);
-  const [originRect, setOriginRect] = useState<DOMRectReadOnly | null>(null);
+  const originRect = null;
   const [notice, setNotice] = useState<string | null>(null);
-  const [noticeKind, setNoticeKind] = useState<NoticeKind>("warning");
   const [isSettling, setIsSettling] = useState(false);
-  // Set only on a genuine 55006 conflict from startSession -- a running
-  // session the server found that this attempt didn't create. Per the
-  // documented recovery contract (schema.md, api.md §3), the client must
-  // offer resume-or-discard here, never auto-resume into whatever the server
-  // happens to be holding.
-  const [pendingConflict, setPendingConflict] = useState<FocusSession | null>(null);
   const [linkedBlock, setLinkedBlock] = useState<LinkedBlock | null>(null);
   const [isLinkedBlockLoading, setIsLinkedBlockLoading] = useState(true);
-  const lastSettleKind = useRef<"complete" | "abandon" | null>(null);
+  const [isRunningSessionLoading, setIsRunningSessionLoading] = useState(true);
+  // Focus is only entered from a concrete task. This prevents the former
+  // unlinked "Open focus" landing screen from rendering as a second Focus
+  // experience, while keeping the existing live-session view unchanged.
+  const didAutoStart = useRef(false);
   const task = linkedBlock
     ? {
         eyebrow: "Today · linked block",
@@ -124,7 +118,9 @@ export default function SessionPage() {
         .select("id, started_at, planned_duration_s")
         .eq("state", "running")
         .maybeSingle();
-      if (!cancelled && !error && data) resume(data as FocusSession);
+      if (cancelled) return;
+      if (!error && data) resume(data as FocusSession);
+      setIsRunningSessionLoading(false);
     }
 
     void findRunningSession();
@@ -156,7 +152,10 @@ export default function SessionPage() {
       const {
         data: { user },
       } = await supabase.auth.getUser();
-      if (!user) return;
+      if (!user) {
+        if (!cancelled) setIsLinkedBlockLoading(false);
+        return;
+      }
       const { data, error } = await supabase
         .from("blocks")
         .select("id, text, notes, coaching, plan_categories(coaching_framework, topic_type)")
@@ -190,13 +189,10 @@ export default function SessionPage() {
     // Architecture 02 is still being resolved under RLS.
     if (isLinkedBlockLoading) return;
     if (new URLSearchParams(window.location.search).get("blockId") && !linkedBlock) {
-      setNoticeKind("warning");
       setNotice("Loading the selected task. Try Begin focus again in a moment.");
       return;
     }
     setNotice(null);
-    setPendingConflict(null);
-    setOriginRect(startButtonRef.current?.getBoundingClientRect() ?? null);
     setPhase("starting");
 
     const supabase = createClient();
@@ -212,11 +208,9 @@ export default function SessionPage() {
     });
 
     if (error || !data) {
-      // 55006 is a recovery state, not a generic failure -- but it is a real
-      // conflict, not this attempt's own session, so the server's row is
-      // surfaced as a resume-or-discard choice rather than entered silently
-      // (schema.md / api.md §3: "must offer resume-or-discard, calling
-      // abandon_session() before starting a new one").
+      // If a prior live session exists, keep this single Focus surface live
+      // by resuming the server-authoritative session instead of rendering a
+      // second recovery landing screen.
       if (isAlreadyRunningError(error)) {
         const { data: running } = await supabase
           .from("focus_sessions")
@@ -224,12 +218,10 @@ export default function SessionPage() {
           .eq("state", "running")
           .maybeSingle();
         if (running) {
-          setPendingConflict(running as FocusSession);
-          setPhase("ready");
+          resume(running as FocusSession);
           return;
         }
       }
-      setNoticeKind("warning");
       setNotice(messageFrom(error));
       setPhase("ready");
       return;
@@ -247,26 +239,25 @@ export default function SessionPage() {
     }
   }, [isLinkedBlockLoading, linkedBlock, phase, resume]);
 
-  const resumeConflict = useCallback(() => {
-    if (!pendingConflict) return;
-    resume(pendingConflict);
-    setPendingConflict(null);
-  }, [pendingConflict, resume]);
+  // A linked task starts the real session as soon as its RLS-scoped block has
+  // loaded. There is deliberately no intermediate generic Focus landing
+  // screen: the timer and coach are the single Focus destination.
+  useEffect(() => {
+    if (isLinkedBlockLoading || isRunningSessionLoading || phase !== "ready" || didAutoStart.current) return;
 
-  const discardConflict = useCallback(async () => {
-    if (!pendingConflict || isSettling) return;
-    setIsSettling(true);
-    const supabase = createClient();
-    const { error } = await supabase.rpc("abandon_session", { p_id: pendingConflict.id });
-    setIsSettling(false);
-    if (error) {
-      setNoticeKind("warning");
-      setNotice(messageFrom(error));
+    const hasRequestedBlock = Boolean(new URLSearchParams(window.location.search).get("blockId"));
+    if (!hasRequestedBlock || !linkedBlock) {
+      window.location.replace("/architecture-02");
       return;
     }
-    setPendingConflict(null);
-    setNotice(null);
-  }, [isSettling, pendingConflict]);
+
+    didAutoStart.current = true;
+    // Schedule after this loading effect settles; startSession changes the
+    // phase to "starting", which should not occur synchronously while React
+    // is reconciling this effect.
+    const startTimer = window.setTimeout(() => void startSession(), 0);
+    return () => window.clearTimeout(startTimer);
+  }, [isLinkedBlockLoading, isRunningSessionLoading, linkedBlock, phase, startSession]);
 
   const settleSession = useCallback(
     async (kind: "complete" | "abandon") => {
@@ -281,32 +272,23 @@ export default function SessionPage() {
       );
 
       if (error) {
-        setNoticeKind("warning");
         setNotice(messageFrom(error));
         setIsSettling(false);
         return;
       }
 
-      lastSettleKind.current = kind;
       setPhase("exiting");
     },
     [isSettling, phase, session],
   );
 
   const finishExit = useCallback(() => {
-    const kind = lastSettleKind.current;
-    lastSettleKind.current = null;
     setSession(null);
     setElapsedS(0);
-    setOriginRect(null);
     setIsSettling(false);
-    setPhase("ready");
-    setNoticeKind("success");
-    setNotice(
-      kind === "abandon"
-        ? "Session ended early. That's fine -- pick it back up whenever you're ready."
-        : "Session saved. Name one thing that moved before you leave it.",
-    );
+    // Do not return to the retired pre-session surface after a session ends.
+    // The settled session is already persisted by the RPC above.
+    window.location.replace("/architecture-02");
   }, []);
 
   const trigger: EmberMorphTrigger =
@@ -327,73 +309,36 @@ export default function SessionPage() {
           }
         : { phase: "idle" };
 
-  return (
-    <main className={styles.page}>
-      <section className={styles.readyShell} aria-labelledby="session-title">
-        <p className={styles.kicker}>Focus session</p>
-        <h1 id="session-title">One thing. A little further.</h1>
-        <p className={styles.intro}>
-          Start a 50-minute block. Your timer and coach stay with the work, so there is nothing to
-          manage once you begin.
-        </p>
-
-        <div className={styles.readyCard}>
-          <div>
-            <p className={styles.cardEyebrow}>{task.eyebrow}</p>
-            <h2>{task.title}</h2>
-            <p>{task.detail}</p>
-          </div>
-          <span className={`${styles.duration} num`}>50:00</span>
-        </div>
-
-        {pendingConflict ? (
-          <div className={styles.conflictPrompt} role="status">
-            <p className={styles.conflictText}>
-              A focus session is already running. Resume where you left off, or discard it and
-              start fresh?
-            </p>
-            <div className={styles.sessionActions}>
+  if (phase !== "active" && phase !== "exiting") {
+    return (
+      <main className={styles.page} aria-live="polite">
+        <div className={styles.preparing}>
+          <p>{notice ?? "Preparing your focus session…"}</p>
+          {notice && (
+            <div className={styles.preparingActions}>
               <button
-                className={styles.startButton}
+                className={styles.completeButton}
                 type="button"
-                onClick={resumeConflict}
-                disabled={isSettling}
+                onClick={() => {
+                  didAutoStart.current = false;
+                  setNotice(null);
+                  void startSession();
+                }}
               >
-                Resume it
+                Try again
               </button>
-              <button
-                className={styles.abandonButton}
-                type="button"
-                onClick={() => void discardConflict()}
-                disabled={isSettling}
-              >
-                {isSettling ? "Discarding…" : "Discard & start fresh"}
+              <button className={styles.abandonButton} type="button" onClick={() => window.location.replace("/architecture-02")}>
+                Back to deck
               </button>
             </div>
-          </div>
-        ) : (
-          <button
-            ref={startButtonRef}
-            className={styles.startButton}
-            type="button"
-            onClick={() => void startSession()}
-            disabled={phase === "starting" || isLinkedBlockLoading}
-          >
-            <span aria-hidden="true">{phase === "starting" || isLinkedBlockLoading ? "…" : "→"}</span>
-            {phase === "starting"
-              ? "Starting session"
-              : isLinkedBlockLoading
-                ? "Loading task"
-                : "Begin focus"}
-          </button>
-        )}
-        {notice && (
-          <p className={`${styles.notice} ${noticeKind === "success" ? styles.noticeSuccess : ""}`} role="status">
-            {notice}
-          </p>
-        )}
-      </section>
+          )}
+        </div>
+      </main>
+    );
+  }
 
+  return (
+    <main className={styles.page}>
       <EmberMorph trigger={trigger} onExitComplete={finishExit}>
         <div className={styles.focusLayout}>
           <section className={styles.taskPanel} aria-labelledby="focus-task-title">

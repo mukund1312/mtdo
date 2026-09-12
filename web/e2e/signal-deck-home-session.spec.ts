@@ -99,10 +99,8 @@ test("Home reflects a real picked task and Session shows real, non-fake coaching
   await page.locator(".a02-focus-node").click();
   await expect(page).toHaveURL(/\/session\?blockId=/);
 
-  // The coach rail only mounts once a session is actually active (it lives
-  // inside EmberMorph's trigger-gated children), not on the pre-start ready
-  // screen -- start the real session via start_session() before checking it.
-  await page.getByRole("button", { name: /begin focus/i }).click();
+  // Focus now enters the timer and coaching workspace directly: the retired
+  // unlinked pre-session landing surface is no longer part of this flow.
   await expect(page.getByRole("heading", { name: /stay with the question/i })).toBeVisible();
   await expect(page.getByText(/if a join feels slippery/i)).toHaveCount(0);
   await expect(page.getByText(/what changes if an order has no matching customer/i)).toHaveCount(0);
