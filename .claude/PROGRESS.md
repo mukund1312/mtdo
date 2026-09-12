@@ -159,6 +159,20 @@ mocked-response-driven UI-state coverage are this system's established and only 
 verification tiers for this exact surface, matching Google Calendar's own precedent through all of
 Phase 6.
 
+**CI caught one real regression this local pass missed, and it's worth recording why:**
+`e2e/onboarding.spec.ts`'s pre-existing "Listen keeps Music previews separate..." test asserted
+the old always-on demo heading `/connect spotify/i` after clicking the Spotify source -- true
+under the old mock (every provider always showed its own `disconnectedTitle`), but no longer true
+now that Spotify is real: this environment's genuine `configured: false` renders `SpotifyPanel`'s
+honest "Spotify isn't configured on this server yet." instead. This is the same category as the
+Phase 6 frontend session's own precedent (`signal-deck-home-session.spec.ts`'s empty-state
+assertion, updated for a deliberate UX change, not a broken regression gate) -- fixed by asserting
+the new real heading. Confirmed fixed in an uncontended isolated `-g` run against a fresh
+production-build server; a same-session combined re-run of the whole `onboarding.spec.ts` file
+immediately after hit the identical rate-limit signature again (this time also failing one
+entirely unrelated pre-existing "Review" test), consistent with this session's own repeated local
+rate-limit exhaustion rather than a second real bug -- CI is the tiebreaker.
+
 ---
 
 ## [backend] 2026-09-13 (PR pending) — Spotify: a real OAuth + token backend behind the Listen deck

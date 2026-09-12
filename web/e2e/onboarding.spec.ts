@@ -120,7 +120,11 @@ test("Listen keeps Music previews separate while loading Terminal's real radio s
 
   const sources = page.getByLabel("Music sources");
   await sources.getByRole("button", { name: /spotify/i }).click();
-  await expect(page.getByRole("heading", { name: /connect spotify/i })).toBeVisible();
+  // Spotify is real now (docs/architecture/api.md §3i) -- there are no Spotify
+  // credentials in this environment, so this is the genuine, honest
+  // `configured: false` state, not the old always-on demo "Connect Spotify"
+  // heading apple/local still show.
+  await expect(page.getByRole("heading", { name: /spotify isn.t configured on this server yet/i })).toBeVisible({ timeout: 20_000 });
   await sources.getByRole("button", { name: /local music/i }).click();
   await expect(page.getByRole("heading", { name: /no local library connected/i })).toBeVisible();
   await page.getByRole("button", { name: /show demo library/i }).click();
