@@ -6,11 +6,44 @@ import { useSignalDeckListen } from "./listen-state";
 
 type ConnectionModalProvider = MusicProvider | null;
 
+// /api/music/spotify/callback round-trips back as ?spotify=<outcome>
+// (docs/architecture/api.md §3i). Plain lookup, same pattern as Settings'
+// CALENDAR_OUTCOMES -- these strings are the only place a user learns why a
+// consent round trip did or didn't take.
+const SPOTIFY_OUTCOMES: Record<string, string> = {
+  connected: "Spotify connected.",
+  declined: "You declined access on Spotify's side -- nothing was connected.",
+  "exchange-failed": "Spotify accepted the sign-in but the connection couldn't be completed. Try again.",
+  "missing-verifier": "That sign-in didn't start here, so it was refused. Try again from this page.",
+  "no-code": "Spotify didn't return an authorisation code. Try again.",
+  "no-refresh-token": "Spotify didn't return a long-lived token. Try again.",
+  "no-session": "Your session expired during sign-in. Sign in and try again.",
+  "not-configured": "Spotify isn't configured on this server.",
+  "spotify-error": "Spotify returned an error during sign-in. Try again.",
+  "state-mismatch": "That sign-in didn't start here, so it was refused. Try again from this page.",
+};
+
 export function ListenDeck() {
   const listen = useSignalDeckListen();
   const [connectionModal, setConnectionModal] = useState<ConnectionModalProvider>(null);
   const [query, setQuery] = useState("");
+  const [spotifyNotice, setSpotifyNotice] = useState<string | null>(null);
   const activeProvider = MUSIC_PROVIDERS.find((provider) => provider.id === listen.activeProviderId) ?? MUSIC_PROVIDERS[0]!;
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      const outcome = new URLSearchParams(window.location.search).get("spotify");
+      if (!outcome) return;
+      setSpotifyNotice(SPOTIFY_OUTCOMES[outcome] ?? "That Spotify sign-in didn't complete.");
+      void listen.refreshSpotifyStatus();
+      // Strip the param so a reload doesn't re-show a stale notice.
+      const url = new URL(window.location.href);
+      url.searchParams.delete("spotify");
+      window.history.replaceState({}, "", url);
+    }, 0);
+    return () => window.clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- one-shot read of the redirect's own query param, not a reactive value.
+  }, []);
   const onModeKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
     if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
     event.preventDefault();
@@ -62,6 +95,8 @@ export function ListenDeck() {
       <div className="a02-listen-preview-note"><i>◇</i><span>{listen.mode === "radio" ? "LIVE RADIO" : "PREVIEW MODE"}</span><small>{listen.mode === "radio" ? "Browser audio player" : "Local interactions only"}</small></div>
     </header>
 
+    {spotifyNotice && <p className="a02-listen-empty-result" role="status">{spotifyNotice}</p>}
+
     <div className="a02-listen-tabs" role="tablist" aria-label="Listening mode" aria-orientation="horizontal" onKeyDown={onModeKeyDown}>
       <button type="button" id="listen-tab-music" role="tab" aria-controls="listen-panel-music" aria-selected={listen.mode === "music"} tabIndex={listen.mode === "music" ? 0 : -1} className={listen.mode === "music" ? "is-active" : ""} onClick={() => listen.setMode("music")}>Music <i>03 sources</i></button>
       <button type="button" id="listen-tab-radio" role="tab" aria-controls="listen-panel-radio" aria-selected={listen.mode === "radio"} tabIndex={listen.mode === "radio" ? 0 : -1} className={listen.mode === "radio" ? "is-active" : ""} onClick={() => listen.setMode("radio")}>Radio <i>11 stations</i></button>
@@ -97,17 +132,20 @@ function MusicWorkspace({ activeProvider, query, filteredTracks, onQueryChange, 
       <span className="a02-listen-section-label">MUSIC / SOURCE</span>
       {MUSIC_PROVIDERS.map((provider) => {
         const state = listen.connections[provider.id];
+        const label = provider.id === "spotify"
+          ? (state === "connected" ? "Connected" : listen.spotifyStatusState === "loading" ? "Checking…" : "Not connected")
+          : (state === "connected" ? "Demo connected" : state === "connecting" ? "Connecting…" : state === "error" ? "Try again" : "Not connected");
         return <button key={provider.id} type="button" aria-pressed={provider.id === activeProvider.id} className={`a02-listen-source a02-listen-source--${provider.accent} ${provider.id === activeProvider.id ? "is-active" : ""}`} onClick={() => onOpenProvider(provider.id)}>
           <i>{provider.id === "apple" ? "◐" : provider.id === "spotify" ? "◉" : "▣"}</i>
-          <span><b>{provider.name}</b><small>{state === "connected" ? "Demo connected" : state === "connecting" ? "Connecting…" : state === "error" ? "Try again" : "Not connected"}</small></span>
+          <span><b>{provider.name}</b><small>{label}</small></span>
           <em>{provider.id === activeProvider.id ? "→" : ""}</em>
         </button>;
       })}
     </aside>
 
     <section className="a02-listen-provider-panel">
-      <div className="a02-listen-panel-top"><span className="a02-listen-section-label">{activeProvider.shortName}</span><ConnectionBadge state={connection} /></div>
-      {!isConnected ? <ProviderEmptyState provider={activeProvider} state={connection} onConnect={() => onOpenConnection(activeProvider)} /> : <>
+      <div className="a02-listen-panel-top"><span className="a02-listen-section-label">{activeProvider.shortName}</span><ConnectionBadge provider={activeProvider} state={connection} /></div>
+      {activeProvider.id === "spotify" ? <SpotifyPanel /> : !isConnected ? <ProviderEmptyState provider={activeProvider} state={connection} onConnect={() => onOpenConnection(activeProvider)} /> : <>
         <div className="a02-listen-library-heading"><div><span>DEMO {activeProvider.libraryLabel.toUpperCase()}</span><b>{activeProvider.libraryStats}</b></div><button type="button" onClick={() => listen.disconnect(activeProvider.id)}>Disconnect</button></div>
         <label className="a02-listen-search"><span>⌕</span><input value={query} onChange={(event) => onQueryChange(event.target.value)} placeholder="Search your music…" aria-label="Search your music" /></label>
         <div className="a02-listen-library-tabs"><span>Recently played</span><span>Albums</span><span>Artists</span><span>Playlists</span></div>
@@ -117,23 +155,122 @@ function MusicWorkspace({ activeProvider, query, filteredTracks, onQueryChange, 
 
     <section className="a02-listen-player-column">
       <UnifiedMusicPlayer provider={activeProvider} />
-      <QueuePanel tracks={listen.queue} currentTrackId={listen.currentTrack?.id} onPlay={listen.setCurrentTrack} />
+      {activeProvider.id !== "spotify" && <QueuePanel tracks={listen.queue} currentTrackId={listen.currentTrack?.id} onPlay={listen.setCurrentTrack} />}
     </section>
   </div>;
 }
 
-function ConnectionBadge({ state }: { state: "disconnected" | "connecting" | "connected" | "error" }) {
+function ConnectionBadge({ provider, state }: { provider: MusicProvider; state: "disconnected" | "connecting" | "connected" | "error" }) {
+  const listen = useSignalDeckListen();
+  if (provider.id === "spotify") {
+    if (listen.spotifyStatusState === "loading") return <span className="a02-listen-connection is-connecting"><i />CHECKING…</span>;
+    if (listen.spotifyStatus && !listen.spotifyStatus.configured) return <span className="a02-listen-connection is-error"><i />NOT CONFIGURED</span>;
+    if (listen.spotifyReconnectRequired) return <span className="a02-listen-connection is-error"><i />RECONNECT NEEDED</span>;
+    const copy = state === "connected" ? "CONNECTED" : "NOT CONNECTED";
+    return <span className={`a02-listen-connection is-${state}`}><i />{copy}</span>;
+  }
   const copy = state === "connected" ? "CONNECTED / DEMO" : state === "connecting" ? "CONNECTING…" : state === "error" ? "CONNECTION FAILED" : "NOT CONNECTED";
   return <span className={`a02-listen-connection is-${state}`}><i />{copy}</span>;
 }
 
 function ProviderEmptyState({ provider, state, onConnect }: { provider: MusicProvider; state: string; onConnect: () => void }) {
   const hasError = state === "error";
-  return <div className="a02-provider-empty"><i className={`a02-provider-mark is-${provider.accent}`}>{provider.id === "apple" ? "◐" : provider.id === "spotify" ? "◉" : "▣"}</i>
+  return <div className="a02-provider-empty"><i className={`a02-provider-mark is-${provider.accent}`}>{provider.id === "apple" ? "◐" : "▣"}</i>
     <span>{provider.shortName}</span>
     <h2>{hasError ? "Connection could not start." : provider.disconnectedTitle}</h2>
     <p>{hasError ? "This UI preview checks your browser’s offline state. Try again when you are back online." : provider.disconnectedCopy}</p>
     <button type="button" className="a02-listen-primary" onClick={onConnect} disabled={state === "connecting"}>{state === "connecting" ? "Connecting…" : hasError ? "Try again" : provider.id === "local" ? "Show demo library" : `Connect ${provider.name}`}</button>
+  </div>;
+}
+
+/**
+ * The real Spotify surface -- everything here is a genuine backend call or a
+ * genuine `Spotify.Player` state, never a demo timeout. Every degraded state
+ * (unconfigured, free-tier, dead authorization, waiting for a device
+ * transfer) gets its own honest copy rather than a shared "couldn't connect."
+ */
+function SpotifyPanel() {
+  const listen = useSignalDeckListen();
+  const status = listen.spotifyStatus;
+
+  if (listen.spotifyStatusState === "loading" && !status) {
+    return <div className="a02-provider-empty"><i className="a02-provider-mark is-acid">◉</i><span>SPOTIFY</span><h2>Checking Spotify…</h2></div>;
+  }
+  if (listen.spotifyStatusState === "error") {
+    return <div className="a02-provider-empty"><i className="a02-provider-mark is-acid">◉</i><span>SPOTIFY</span>
+      <h2>Couldn&apos;t check Spotify&apos;s status.</h2>
+      <button type="button" className="a02-listen-primary" onClick={() => void listen.refreshSpotifyStatus()}>Try again</button>
+    </div>;
+  }
+  if (!status) return null;
+
+  if (!status.configured) {
+    return <div className="a02-provider-empty"><i className="a02-provider-mark is-acid">◉</i><span>SPOTIFY</span>
+      <h2>Spotify isn&apos;t configured on this server yet.</h2>
+      <p>
+        This deployment has no Spotify credentials set
+        {status.missing.length > 0 && <> (missing {status.missing.map((name, i) => <span key={name}>{i > 0 && ", "}<code>{name}</code></span>)})</>}.
+        Every other listening source here still works.
+      </p>
+    </div>;
+  }
+
+  if (!status.connected) {
+    return <div className="a02-provider-empty"><i className="a02-provider-mark is-acid">◉</i><span>SPOTIFY</span>
+      <h2>Connect Spotify</h2>
+      <p>{providerById("spotify").disconnectedCopy} Requires Spotify Premium for in-browser playback.</p>
+      <ul>{providerById("spotify").connectionBenefits.map((benefit) => <li key={benefit}>✓ {benefit}</li>)}</ul>
+      {/* Real top-level navigation -- GET /connect answers with a redirect to
+          Spotify's own consent screen, which only works as a browser nav. */}
+      <a className="a02-listen-primary" href={listen.spotifyConnectHref}>Connect Spotify ↗</a>
+    </div>;
+  }
+
+  if (listen.spotifyReconnectRequired) {
+    return <div className="a02-provider-empty"><i className="a02-provider-mark is-acid">◉</i><span>SPOTIFY</span>
+      <h2>Reconnect Spotify</h2>
+      <p>Spotify authorizations expire after six months, and yours has. Reconnect to keep listening here -- nothing else about your account is affected.</p>
+      <a className="a02-listen-primary" href={listen.spotifyConnectHref}>Reconnect Spotify ↗</a>
+    </div>;
+  }
+
+  if (status.connection?.premium === false) {
+    return <div className="a02-provider-empty"><i className="a02-provider-mark is-acid">◉</i><span>SPOTIFY</span>
+      <h2>Spotify Premium required</h2>
+      <p>
+        {status.connection.displayName ?? "This account"} is connected, but the Web Playback SDK -- the only way this app can play
+        Spotify audio -- is a Spotify Premium feature. This is a real Spotify platform restriction, not something mtdo can work
+        around. Upgrading on Spotify and reconnecting will pick it up.
+      </p>
+      <SpotifyDisconnectButton />
+    </div>;
+  }
+
+  return <div className="a02-listen-spotify-connected">
+    <div className="a02-listen-library-heading">
+      <div><span>SPOTIFY</span><b>{status.connection?.displayName ?? "Connected"}{status.connection?.premium === null ? " · Premium status unknown" : ""}</b></div>
+      <SpotifyDisconnectButton />
+    </div>
+    {listen.spotifyPlayerState === "error" && <p className="a02-listen-empty-result">{listen.spotifyPlayerError ?? "The Spotify player hit an error."}</p>}
+    {listen.spotifyPlayerState !== "error" && !listen.currentTrack?.isReal && <div className="a02-provider-empty">
+      <i className="a02-provider-mark is-acid">◉</i><span>SPOTIFY</span>
+      <h2>{listen.spotifyPlayerState === "ready" ? "Waiting for playback" : "Starting the Spotify player…"}</h2>
+      <p>
+        {listen.spotifyPlayerState === "ready"
+          ? "This app doesn't start playback itself -- open Spotify on your phone, desktop, or web player, hit play, then pick \"mtdo\" from the device (Connect) menu."
+          : "Loading the Spotify Web Playback SDK."}
+      </p>
+    </div>}
+  </div>;
+}
+
+function SpotifyDisconnectButton() {
+  const listen = useSignalDeckListen();
+  return <div>
+    <button type="button" disabled={listen.spotifyDisconnecting} onClick={() => void listen.disconnectSpotify()}>
+      {listen.spotifyDisconnecting ? "Disconnecting…" : "Disconnect"}
+    </button>
+    {listen.spotifyDisconnectError && <p className="a02-listen-empty-result" role="alert">{listen.spotifyDisconnectError}</p>}
   </div>;
 }
 
@@ -145,17 +282,25 @@ function TrackList({ tracks, onPlay, currentTrackId }: { tracks: MockTrack[]; on
 function UnifiedMusicPlayer({ provider }: { provider: MusicProvider }) {
   const listen = useSignalDeckListen();
   const track = listen.currentTrack;
+  const isReal = track?.isReal ?? false;
+  const kind = isReal ? "Spotify" : "mock";
   const playingProvider = providerById(listen.currentTrackProviderId ?? provider.id);
-  return <section className="a02-unified-player" aria-label="Mock music player">
+  return <section className="a02-unified-player" aria-label={isReal ? "Spotify player" : "Mock music player"}>
     <div className="a02-unified-player-top"><span>NOW PLAYING</span><b aria-label={`Current music source: ${playingProvider.name}`} className={`is-${playingProvider.accent}`}><i />{playingProvider.shortName}</b></div>
-    {track ? <><Artwork track={track} large /><div className="a02-unified-track"><b>{track.title}</b><span>{track.artist}</span><small>{track.album} · UI preview</small></div></> : <div className="a02-player-idle"><i>◌</i><b>Nothing queued</b><span>Choose a demo track from a connected source.</span></div>}
-    <div className="a02-player-progress"><input aria-label="Seek mock track" type="range" min="0" max={track?.duration ?? 0} value={track ? listen.position : 0} onChange={(event) => listen.setPosition(Number(event.target.value))} disabled={!track} /><span>{formatPlaybackTime(listen.position)}</span><span>{formatPlaybackTime(track?.duration ?? 0)}</span></div>
-    <div className="a02-player-controls"><button type="button" onClick={listen.previousTrack} aria-label="Previous mock track" disabled={!track}>◀</button><button type="button" className="a02-player-play" onClick={listen.toggleMusic} aria-label={listen.musicPlaying ? "Pause mock track" : "Play mock track"} disabled={!track}>{listen.musicPlaying ? "Ⅱ" : "▶"}</button><button type="button" onClick={listen.nextTrack} aria-label="Next mock track" disabled={!track}>▶</button></div>
-    <label className="a02-player-volume"><span>VOL</span><input aria-label="Mock player volume" type="range" min="0" max="100" value={listen.volume} onChange={(event) => listen.setVolume(Number(event.target.value))} /><b>{listen.volume}</b></label>
+    {track ? <><Artwork track={track} large /><div className="a02-unified-track"><b>{track.title}</b><span>{track.artist}</span><small>{track.album}{isReal ? "" : " · UI preview"}</small></div></> : <div className="a02-player-idle"><i>◌</i><b>Nothing queued</b><span>Choose a demo track from a connected source.</span></div>}
+    <div className="a02-player-progress"><input aria-label={`Seek ${kind} track`} type="range" min="0" max={track?.duration ?? 0} value={track ? listen.position : 0} onChange={(event) => listen.setPosition(Number(event.target.value))} disabled={!track} /><span>{formatPlaybackTime(listen.position)}</span><span>{formatPlaybackTime(track?.duration ?? 0)}</span></div>
+    <div className="a02-player-controls"><button type="button" onClick={listen.previousTrack} aria-label={`Previous ${kind} track`} disabled={!track}>◀</button><button type="button" className="a02-player-play" onClick={listen.toggleMusic} aria-label={listen.musicPlaying ? `Pause ${kind} track` : `Play ${kind} track`} disabled={!track}>{listen.musicPlaying ? "Ⅱ" : "▶"}</button><button type="button" onClick={listen.nextTrack} aria-label={`Next ${kind} track`} disabled={!track}>▶</button></div>
+    <label className="a02-player-volume"><span>VOL</span><input aria-label="Player volume" type="range" min="0" max="100" value={listen.volume} onChange={(event) => listen.setVolume(Number(event.target.value))} /><b>{listen.volume}</b></label>
   </section>;
 }
 
 function Artwork({ track, large = false }: { track: MockTrack; large?: boolean }) {
+  if (typeof track.artwork === "object") {
+    // A real, arbitrary Spotify CDN URL -- next/image's remote-pattern
+    // allowlist isn't worth configuring for one provider's cover art.
+    // eslint-disable-next-line @next/next/no-img-element
+    return <img src={track.artwork.url} alt="" aria-hidden="true" className={`a02-track-art is-real ${large ? "is-large" : ""}`} />;
+  }
   return <i aria-hidden="true" className={`a02-track-art is-${track.artwork} ${large ? "is-large" : ""}`}><span>{track.title.slice(0, 1)}</span></i>;
 }
 
