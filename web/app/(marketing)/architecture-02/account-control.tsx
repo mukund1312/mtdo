@@ -265,7 +265,12 @@ function AccountDialog({
     const next = intent === "signup"
       ? "/architecture-02?auth=confirmed"
       : "/architecture-02?deck=work";
-    const redirectTo = `${window.location.origin}/auth/callback?next=${encodeURIComponent(next)}`;
+    // Google signup only (never GitHub -- no calendar to connect there,
+    // never login -- an existing account already made this call once).
+    // /auth/callback silently skips this if Google Calendar isn't
+    // configured on the server, so it's safe to always send.
+    const promptCalendar = intent === "signup" && provider === "google" ? "&promptCalendar=1" : "";
+    const redirectTo = `${window.location.origin}/auth/callback?next=${encodeURIComponent(next)}${promptCalendar}`;
     const result = intent === "signup"
       ? await upgradeWithOAuth(createClient(), provider, redirectTo)
       : await signInWithOAuth(createClient(), provider, redirectTo);

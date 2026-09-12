@@ -777,6 +777,51 @@ one is a pure frontend change against a parameter that has existed since 0001.
 
 ---
 
+## 2026-09-13 — A brand-new Google signup chains straight into Calendar connect, as two real grants, not one
+
+The founder asked whether logging in with Google could "directly sync" a user's calendar through
+that same login, for a non-technical audience that will never go looking in Settings. **It can't,
+by Google's own policy, regardless of how this app is built**: login only ever requests
+`email`/`profile` scope, and Google requires a second, explicit, distinct consent screen for
+`calendar.events` scope no matter what — there is no server-side trick that grants calendar access
+from a login-only OAuth exchange. The two real options were (A) request both scopes in the
+*same* `signInWithOAuth` call, so Google shows one consent screen listing both permissions, or (B)
+keep the two flows exactly as already built and just chain them back-to-back right after a
+brand-new signup.
+
+**Went with B.** A does work, but Supabase's own session object only surfaces the Google refresh
+token once, on that exact initial callback (`provider_refresh_token`, not persisted by Supabase
+itself) — missing that one moment loses it permanently, and capturing it means teaching the
+*login* callback about calendar-token storage, mixing two concerns this schema has deliberately
+kept apart (`calendar_connections` is service-role-only, revoked from `authenticated`, precisely so
+a compromised browser session can never read a stored refresh token — a plain login exchange has no
+comparable reason to touch that boundary). B touches none of the already-audited, already-shipped
+Calendar OAuth security posture (CSRF state cookie, open-redirect-safe `next`, encrypted storage) —
+it only adds a redirect in between two already-correct routes.
+
+**How B actually chains.** `account-control.tsx`'s Google **signup** path only (never GitHub — no
+calendar to connect there; never plain login — an existing account already made this decision once)
+appends `&promptCalendar=1` to its `redirectTo`. `/auth/callback`, on a successful exchange, checks
+that flag and `resolveCalendarConfig()` — configured *and* requested means redirect into
+`/api/calendar/connect?next=<original next>` instead of landing directly; either condition false
+falls through to today's exact behavior, unchanged. `/api/calendar/connect` gained an optional
+`?next=`, validated with the same `safeNextPath()` open-redirect guard `/auth/callback` already
+used (extracted to `lib/safe-redirect.ts` so both routes share one, rather than a second
+hand-rolled copy), stored in a new httpOnly cookie (`OAUTH_NEXT_COOKIE`) scoped the same way as the
+existing CSRF state cookie. `/api/calendar/callback` reads that cookie — on every outcome, success
+or decline or error, not just the happy path — and falls back to its original hardcoded Settings
+destination when the cookie is absent, which is every pre-existing call site (a plain "Connect"
+click from Settings never sets `next`, so nothing about that flow changed).
+
+**Known, accepted gap:** the final landing page (`architecture-02/page.tsx`'s `auth=confirmed`
+handler) calls `router.replace("/architecture-02")` the instant it opens the welcome modal, which
+strips the `?calendar=<outcome>` query param before a user could see it. The user finds out whether
+the connection actually succeeded via Settings → Calendar, same as anyone who connects later — a
+transient toast confirming it inline was out of scope for what was asked (chaining the flow, not
+building new confirmation UI) and can be added later without touching anything built here.
+
+---
+
 
 ## Open, not yet decided
 
