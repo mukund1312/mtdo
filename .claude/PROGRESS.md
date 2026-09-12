@@ -9,6 +9,162 @@ Add each session's PROGRESS.md entry to the same branch as the code it describes
 
 ---
 
+## [frontend] 2026-09-12 (PR pending) — Focus Mode frontend: duration/breaks, pause, three-way exit, extend prompt, leftover notes, music -- and a same-day reconciliation with a parallel Focus rewrite
+
+Built the Session screen UI against the locked `migrations/0023` contract (previous entry,
+PR #160): editable duration + break configuration, pause/resume with auto-firing scheduled
+breaks, three-way session control (Pause / End session / Leave early), the "need more time?"
+prompt in a running session's last 5 minutes, natural-expiration -> finish-or-leftover-note,
+and music controls wired into the existing Signal Deck listening system. `web/app/session/
+page.tsx`, `session.module.css`, two new files (`session-setup.tsx`, `focus-music.tsx`), and a
+new Playwright spec (`e2e/focus-mode-session-controls.spec.ts`).
+
+**The session hit a real collision, not a hypothetical one, and is worth recording in full.**
+Mid-task, PR #162 ("fix: streamline Signal Deck focus session", commit `9ea780b`) landed on
+`main` from a teammate working in parallel on the exact same file. Her fix removed the old
+*generic, duplicate* pre-session landing screen entirely -- a linked task now auto-starts the
+real session the instant its block resolves (`didAutoStart` ref + a zero-delay `setTimeout`),
+a truly unlinked visit redirects straight to `/architecture-02` instead of rendering a fake
+"Open focus" placeholder, and settling a session now quietly `window.location.replace()`s back
+to the deck instead of returning to a stale surface with a notice message. All correct, and
+already merged with its own updated, green test (`signal-deck-home-session.spec.ts` dropped its
+"Begin focus" click assertion entirely).
+
+**That auto-start design is incompatible with this task's own requirements, and there is no
+UI trick around it.** `break_plan` is frozen at `start_session()` and never mutable afterward
+(api.md §3h) -- once a session auto-starts with the 50-minute default and no breaks, there is
+no RPC that can retroactively attach a break schedule or change the committed duration
+(`extend_session` only ever adds time forward from where the session already is). Duration and
+breaks being genuinely pre-start, user-set values is not a UX preference this task could relax;
+it's a hard consequence of what the locked backend contract will accept. So the reconciliation
+was not "adopt her file as-is and bolt my code on" -- it required reintroducing *one* click
+before the timer starts, but only for the linked-task path her fix's own critique ("duplicate,
+generic") was never actually about.
+
+**What survived from her fix, unchanged:** the redirect-to-deck for a genuinely unlinked visit
+(nothing in the app links to bare `/session` anymore either, per her `architecture-02/page.tsx`
+diff -- both `onWork()` call sites that used to `router.push("/session")` now go straight to the
+Kanban deck), the "Preparing your focus session…" loading treatment for the real async gap
+before a block or a running session resolves, the quiet `window.location.replace("/architecture-
+02")` exit (my leftover-note/outcome flow already finishes saving *before* this fires, since it
+happens during a distinct `awaiting-outcome` phase that precedes `exiting`), and the Signal Deck
+visual token rework in `session.module.css` (`--void`/`--ink`/`--acid`/`--aqua`/etc., redefined
+inside `.page` and consumed everywhere via the *same* `var(--accent)`/`var(--live)`/`var(--
+border)` names the rest of the file already used -- new CSS added for this task references those
+same variable names rather than hardcoding hex, so it inherits her palette automatically instead
+of drifting back toward the old Ember Graphite one).
+
+**What came back, deliberately:** a lean "ready" screen that renders *only* once a real linked
+block has resolved (never for the unlinked case -- that still redirects exactly as she built it),
+showing the task title, the duration/break setup controls, and a "Begin focus" button. `web/e2e/
+signal-deck-home-session.spec.ts` needed its one line restored (with a comment explaining both
+halves: her redirect fix stands, the linked-task click is back for a documented, necessary
+reason) -- the only test file this PR intentionally un-does part of a just-merged change in.
+
+**Mechanically, the reconciliation was a hard reset plus a manual re-apply, not a git merge.**
+My own edits to `page.tsx`/`session.module.css` had never been committed (session-scoped
+worktree, uncommitted-until-PR is this project's norm), so there was no commit history to rebase
+against her PR. Backed up my two modified tracked files to the scratchpad, `git reset --hard
+origin/main` (safe -- zero commits of my own ahead of the old base, and the reset doesn't touch
+untracked files, so `session-setup.tsx`/`focus-music.tsx`/the new e2e spec survived untouched),
+then rewrote `page.tsx`/`session.module.css` by hand against her new structure using the backups
+as reference. The inner `focusLayout`/`taskPanel`/`coachRail`/`EmberMorph` JSX her diff never
+touched carried over almost verbatim; only the outer ready/loading/redirect skeleton and every
+CSS class name's underlying palette needed real rework.
+
+**The break_plan shape**, exactly as api.md §3h documents and as sent by `session-setup.tsx`'s
+`buildBreakPlan()`: `{ "breaks": [{ "at_s": 900, "duration_s": 300 }, ...] }`, `at_s` in FOCUS
+seconds. The UI takes a break *count* and a *length* (both as mm:ss fields, reused for the
+session duration itself -- a deliberate choice: decimal minutes felt worse than a plain mm:ss
+picker, and it happens to make sub-minute durations reachable for testing without a hidden
+test-only field) and evenly spaces that many breaks across the work duration -- `buildBreakPlan
+(2700, 2, 300)` reproduces the doc's own worked example (45min work, breaks at 15:00/30:00,
+5min each) exactly. `validateBreakPlan()` mirrors the RPC's own checks client-side (breaks not
+fitting the duration, more than 6 breaks, non-positive lengths) so a bad configuration reads as
+a sentence on the setup screen instead of a raw `22023` after the round trip.
+
+**Breaks fire for real, not just visually.** The client watches `focusElapsedS` against each
+unfired breakpoint and calls `pause_session(id, 'break')` itself when one is due, then auto-
+calls `resume_session(id)` once that break's own `duration_s` has elapsed against wall clock
+(`paused_at`) -- exactly the "breaks are pauses with a reason tag" mechanic api.md §3h specifies,
+no second interval-tracking system. A manually-paused-then-resumed session slides its remaining
+breaks along for free, since `at_s` is focus seconds and the formula in `computeFocusElapsedS()`
+already freezes elapsed while `paused_at` is set. One real limitation, not worked around: the
+server persists *that* a session is paused (`paused_at`) but not *why* (`p_reason` isn't stored
+anywhere retrievable) -- a session restored after a tab reload always displays as a manual pause
+with a plain Resume control, even if it was mid-scheduled-break when the tab closed. Documented,
+not silently wrong: the countdown/auto-resume only runs live, in the tab that scheduled it.
+
+**Leftover notes are visible where the founder actually asked ("visible to the user afterward,
+not just written and never shown")**, and needed no new display surface: Kanban's own card
+footer (`today-deck.tsx`'s `KanbanCard`) already renders `roughDuration(elapsed_seconds) ??
+(notes || "Personal route")`, and Focus Mode never touches `blocks.elapsed_seconds`, so a block
+that just got a leftover note shows that note directly on its card the moment the board reloads
+-- confirmed by the e2e spec's own board-state assertion (`toContainText(note)`), not by trusting
+the RPC call succeeded. Also applied the one-line fix `api.md` flagged for the Session screen
+itself: `blocks.notes` is append-only and dated, so after a few sessions it holds several
+paragraphs -- the task detail now renders only the most recent one (`lastNoteParagraph()`,
+split on a blank line), not the whole growing blob.
+
+**Music controls -- `SignalDeckListenProvider` scoping, the explicit judgment call the brief
+asked for.** `SignalDeckListenProvider` lives today only inside `architecture-02/page.tsx`, and
+the brief's stated preference was lifting it to the shared root layout so state carries over
+between the deck and Focus. Did not do that: `web/app/layout.tsx` carries its own explicit
+conflict-prevention comment -- "this file is owned by one agent only... never edits this layout
+directly" -- and this task had no standing from any human instruction to override a rule another
+agent's own in-repo comment states plainly, especially the same session PR #162 just showed two
+agents can collide on files without any lifted-layout risk at all. Fallback used instead, exactly
+as the brief allowed for a documented reason: `focus-music.tsx`'s `FocusMusicDock` runs inside
+its own `<SignalDeckListenProvider>` instance mounted directly in `session/page.tsx`, restyled
+(not rebuilt) for this screen's own dark tokens rather than the Signal Deck's `a02-listen`
+chrome. Trade-off, stated plainly: a track playing on the Signal Deck does not carry into a
+Focus session or back, each screen's player starts fresh. Reusing the *same* `useSignalDeckListen
+()` hook and `listen-data.ts` mock library either way -- no second player was built.
+
+**Judgment calls worth flagging, beyond the layout one above:**
+- **+10 minutes is the highlighted extend option**, with +5/+15 alongside as real, clickable
+  alternatives -- "let them pick, or use a sensible default" read as both being true at once
+  rather than a single hardcoded button.
+- **The extend prompt's fixed 5-minute window fires immediately for any sub-5-minute test
+  session** (by construction -- remaining time starts inside the window), which is expected and
+  exercised directly by the e2e spec rather than avoided.
+- **Break count/length share the session-duration mm:ss picker rather than getting a separate
+  unit** -- every break the UI can express is "N breaks of the same length, evenly spaced," not
+  arbitrary heterogeneous placement. The underlying `break_plan` jsonb already supports
+  per-break `at_s`/`duration_s` independently; a future "drag each break to an exact minute" UI
+  is additive, not a schema change.
+- **`abandon_session`'s pre-existing 55006-conflict discard path still omits `p_block_outcome`**
+  (unchanged from before this task) -- that's a silent recovery from a stale conflict, not a
+  "leave early" the user asked for, so it deliberately doesn't touch the block.
+
+**Verification.** `npm run typecheck`/`lint` clean, `npm run test` 193/193 (unchanged -- no
+existing unit test touches this route). New `e2e/focus-mode-session-controls.spec.ts`, 6/6
+passing against a real `next build && next start` and the real linked Supabase project: custom
+duration + break plan configured and a scheduled break actually firing mid-session (proving the
+persisted plan round-tripped, not just that the picker computed the right preview text), pause
+freezing the visible progress meter and resume continuing it, End session moving the linked
+block to Done on the real Kanban board after navigating back, Leave early leaving it in In
+progress, the extend prompt appearing and genuinely pushing the deadline past the original
+mark, and natural expiration -> "something's left" -> a leftover note landing on the board.
+Short (5-40s) `p_planned_duration_s` values make the last-5-minutes and natural-expiration paths
+actually reachable in test time, as instructed, via the same mm:ss picker real users get.
+`e2e/signal-deck-home-session.spec.ts` re-verified 3/3 green with its restored click.
+
+**One real, pre-existing environment issue surfaced while re-running the full suite, not caused
+here:** running `web/e2e/` repeatedly in one session (my own multiple full runs plus individual
+file runs, on top of this task's new spec) burned through the linked Supabase project's
+anonymous-sign-in rate limit -- the exact `429 over_request_rate_limit -> "No authenticated
+session"` cascade the 2026-09-08/2026-09-11 entries above already document, confirmed here by
+the literal "No authenticated session. Refresh and try again." alert captured in the failing
+tests' own `error-context.md` snapshots, spread across otherwise-unrelated specs (`phase3`,
+`phase5`, `phase6-calendar`, `phase7-weekly-review`, `settings`) that touch nothing this task
+changed. Not fixed here (it isn't a code bug) -- confirmed by re-running exactly those six spec
+files in isolation with `--workers=2` a few minutes later: **19/19 passed, 1 skipped** (the
+weekly-engine seed helper's own `supabase db query --linked` dependency, a pre-existing local-
+tooling gap unrelated to this task). Full green once the rate limit had room to breathe again.
+
+---
+
 ## [backend] 2026-09-12 (PR pending) — Focus Mode round two: pause/resume, breaks, extension, and the block outcome that never existed
 
 Session-authority-tier work (`decisions.md` 2026-09-04: "client-led timers are too fragile under

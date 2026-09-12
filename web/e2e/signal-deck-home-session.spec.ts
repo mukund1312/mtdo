@@ -99,8 +99,16 @@ test("Home reflects a real picked task and Session shows real, non-fake coaching
   await page.locator(".a02-focus-node").click();
   await expect(page).toHaveURL(/\/session\?blockId=/);
 
-  // Focus now enters the timer and coaching workspace directly: the retired
-  // unlinked pre-session landing surface is no longer part of this flow.
+  // PR #162 removed the old *generic, duplicate* pre-session surface for an
+  // unlinked visit -- that redirect-to-deck behavior is unchanged (see
+  // page.tsx). It did not, and could not, remove the linked-task setup step
+  // itself: break_plan and planned_duration_s are frozen at start_session()
+  // (api.md §3h) and cannot be chosen after the fact, so a real linked task
+  // still lands on a lean "set your time, add breaks, begin" screen before
+  // the timer starts (Focus Mode frontend PROGRESS.md entry). Begin focus
+  // is that screen's own call to action, not the retired generic landing
+  // screen's.
+  await page.getByRole("button", { name: /begin focus/i }).click();
   await expect(page.getByRole("heading", { name: /stay with the question/i })).toBeVisible();
   await expect(page.getByText(/if a join feels slippery/i)).toHaveCount(0);
   await expect(page.getByText(/what changes if an order has no matching customer/i)).toHaveCount(0);
