@@ -61,6 +61,7 @@ async function createRouteWithCategories(page: Page, categories: CategoryDraft[]
     for (const task of category.tasks) {
       await page.getByRole("button", { name: /add from route/i }).click();
       await page.locator(".a02-curriculum-item").filter({ hasText: task }).click();
+      await page.getByRole("button", { name: /add selected \(1\)/i }).click();
     }
   }
   await expect(page.locator(".a02-live-block")).toHaveCount(totalTasks);
