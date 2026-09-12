@@ -25,6 +25,38 @@ type CalendarStatus = {
   provider: string;
 };
 
+// GET /api/music/spotify/status (docs/architecture/api.md §3i, the locked
+// contract) -- no token field ever appears here.
+type SpotifyStatus = {
+  configured: boolean;
+  connected: boolean;
+  connection: {
+    connectedAt: string;
+    displayName: string | null;
+    expired: boolean;
+    premium: boolean | null;
+    product: string | null;
+    refreshTokenExpiresAt: string | null;
+    scopes: string[];
+  } | null;
+  missing: string[];
+  provider: string;
+};
+
+// /api/music/spotify/callback round-trips back as ?spotify=<outcome>.
+const SPOTIFY_OUTCOMES: Record<string, string> = {
+  connected: "Spotify connected.",
+  declined: "You declined access on Spotify's side -- nothing was connected.",
+  "exchange-failed": "Spotify accepted the sign-in but the connection couldn't be completed. Try again.",
+  "missing-verifier": "That sign-in didn't start here, so it was refused. Try again from this page.",
+  "no-code": "Spotify didn't return an authorisation code. Try again.",
+  "no-refresh-token": "Spotify didn't return a long-lived token. Try again.",
+  "no-session": "Your session expired during sign-in. Sign in and try again.",
+  "not-configured": "Spotify isn't configured on this server.",
+  "spotify-error": "Spotify returned an error during sign-in. Try again.",
+  "state-mismatch": "That sign-in didn't start here, so it was refused. Try again from this page.",
+};
+
 // Outcomes /api/calendar/callback round-trips back as ?calendar=<reason>.
 // Kept as a plain lookup rather than rendering the raw code: these strings are
 // the only place a user learns why a consent round trip didn't take.
@@ -200,6 +232,63 @@ export default function SignalDeckSettingsPage() {
       setDisconnecting(false);
     }
   }, [loadCalendar]);
+
+  // Settings -> Music (Spotify, migrations/0024, api.md §3i). Same shape as
+  // Calendar above -- read-only status plus Connect/Disconnect, since the
+  // real playback UI (the Web Playback SDK, the actual player) lives on the
+  // Listen deck, not here. This panel exists so "is Spotify even set up" has
+  // an honest answer from Settings too, mirroring where Calendar's lives.
+  const [spotify, setSpotify] = useState<SpotifyStatus | null>(null);
+  const [spotifyState, setSpotifyState] = useState<LoadState>("loading");
+  const [spotifyNotice, setSpotifyNotice] = useState<string | null>(null);
+  const [spotifyConnectHref, setSpotifyConnectHref] = useState("/api/music/spotify/connect");
+  const [spotifyDisconnecting, setSpotifyDisconnecting] = useState(false);
+
+  const loadSpotify = useCallback(async () => {
+    setSpotifyState("loading");
+    try {
+      const response = await fetch("/api/music/spotify/status", { cache: "no-store" });
+      if (!response.ok) {
+        setSpotifyState("error");
+        return;
+      }
+      setSpotify((await response.json()) as SpotifyStatus);
+      setSpotifyState("ready");
+    } catch (err) {
+      console.error("[settings] failed to load Spotify status:", err);
+      setSpotifyState("error");
+    }
+  }, []);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      const outcome = new URLSearchParams(window.location.search).get("spotify");
+      if (outcome) setSpotifyNotice(SPOTIFY_OUTCOMES[outcome] ?? "That Spotify sign-in didn't complete.");
+      const next = `${window.location.pathname}${window.location.search}`;
+      setSpotifyConnectHref(`/api/music/spotify/connect?next=${encodeURIComponent(next)}`);
+      void loadSpotify();
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, [loadSpotify]);
+
+  const disconnectSpotify = useCallback(async () => {
+    setSpotifyDisconnecting(true);
+    setSpotifyNotice(null);
+    try {
+      const response = await fetch("/api/music/spotify/disconnect", { method: "POST" });
+      if (!response.ok) {
+        setSpotifyNotice("Couldn't disconnect Spotify. Try again.");
+        return;
+      }
+      setSpotifyNotice("Spotify disconnected.");
+      await loadSpotify();
+    } catch (err) {
+      console.error("[settings] failed to disconnect Spotify:", err);
+      setSpotifyNotice("Couldn't disconnect Spotify. Try again.");
+    } finally {
+      setSpotifyDisconnecting(false);
+    }
+  }, [loadSpotify]);
 
   return (
     <main className="a02-shell a02-settings">
@@ -380,6 +469,101 @@ export default function SignalDeckSettingsPage() {
               Sync is one-way: mtdo writes to your calendar, and edits you make on Google&apos;s
               side don&apos;t come back. Each task is added individually -- nothing is put on your
               calendar unless you ask for it.
+            </p>
+          </>
+        )}
+          </section>}
+
+          {activeSection === "integrations" && <section className="a02-product-state a02-settings-card" aria-labelledby="spotify-settings-title">
+        <b id="spotify-settings-title">Music</b>
+        {spotifyNotice && (
+          <p className="a02-settings-note" role="status">
+            {spotifyNotice}
+          </p>
+        )}
+        {spotifyState === "loading" && <p>Checking the Spotify connection…</p>}
+        {spotifyState === "error" && (
+          <>
+            <p>Could not read Spotify&apos;s status.</p>
+            <button type="button" onClick={() => void loadSpotify()}>
+              Try again ↗
+            </button>
+          </>
+        )}
+        {spotifyState === "ready" && spotify && !spotify.configured && (
+          <>
+            <div className="a02-settings-status">
+              <div className="a02-settings-row">
+                <span>Spotify</span>
+                <strong className="is-down">
+                  <i aria-hidden="true" /> Not configured
+                </strong>
+              </div>
+            </div>
+            <p className="a02-settings-note">
+              This server has no Spotify credentials set
+              {spotify.missing.length > 0 && (
+                <>
+                  {" (missing "}
+                  {spotify.missing.map((name, index) => (
+                    <span key={name}>
+                      {index > 0 && ", "}
+                      <code>{name}</code>
+                    </span>
+                  ))}
+                  {")"}
+                </>
+              )}
+              . The Listen deck&apos;s other sources still work -- Spotify playback is entirely
+              optional.
+            </p>
+          </>
+        )}
+        {spotifyState === "ready" && spotify?.configured && (
+          <>
+            <div className="a02-settings-status">
+              <div className="a02-settings-row">
+                <span>Spotify</span>
+                <strong className={spotify.connected ? "is-ok" : "is-down"}>
+                  <i aria-hidden="true" /> {spotify.connected ? "Connected" : "Not connected"}
+                </strong>
+              </div>
+              {spotify.connection && (
+                <div className="a02-settings-row">
+                  <span>Account</span>
+                  <strong>{spotify.connection.displayName ?? "Connected"}</strong>
+                </div>
+              )}
+              {spotify.connection && spotify.connection.premium === false && (
+                <div className="a02-settings-row">
+                  <span>Premium</span>
+                  <strong className="is-down">
+                    <i aria-hidden="true" /> Required, not on this account
+                  </strong>
+                </div>
+              )}
+            </div>
+            {spotify.connected ? (
+              <button type="button" disabled={spotifyDisconnecting} onClick={() => void disconnectSpotify()}>
+                {spotifyDisconnecting ? "Disconnecting…" : "Disconnect ↗"}
+              </button>
+            ) : (
+              // A plain link, not fetch(): /api/music/spotify/connect answers
+              // with a redirect to Spotify's consent screen, which has to be
+              // a top-level navigation to work at all.
+              <a href={spotifyConnectHref}>Connect Spotify ↗</a>
+            )}
+            {spotify.connection?.premium === false && (
+              <p className="a02-settings-note">
+                Full in-browser playback requires Spotify Premium -- this is a Spotify platform
+                restriction, not something mtdo can work around.
+              </p>
+            )}
+            <p className="a02-settings-note">
+              The player itself lives on the Listen deck. Connecting here only grants the three
+              scopes playback needs (<code>streaming</code>, <code>user-read-email</code>,{" "}
+              <code>user-read-private</code>) -- mtdo never reads or changes your library,
+              playlists, or follows.
             </p>
           </>
         )}

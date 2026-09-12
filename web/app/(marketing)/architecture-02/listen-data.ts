@@ -7,13 +7,28 @@ export type MusicProviderId = "apple" | "spotify" | "local";
 export type ListeningMode = "music" | "radio";
 export type ConnectionState = "disconnected" | "connecting" | "connected" | "error";
 
+/**
+ * `artwork` is a fixed named palette ("violet"/"coral"/"aqua"/"acid") for the
+ * three mock providers, which have no real cover art. A real Spotify track
+ * does have real album art, so `artwork` also accepts `{ url }` -- one field,
+ * two shapes, rather than a second track type. See listen-state.tsx's
+ * `normalizeSpotifyTrack()` for why this project normalizes real Spotify
+ * tracks into this exact shape instead of a MockTrack | SpotifyTrack union:
+ * every consumer (TrackList, QueuePanel, UnifiedMusicPlayer, Artwork) reads
+ * one shape today, and a union would have forced each of them to branch on
+ * provider just to render a title and a picture.
+ */
+export type TrackArtwork = string | { url: string };
+
 export type MockTrack = {
   id: string;
   title: string;
   artist: string;
   album: string;
   duration: number;
-  artwork: string;
+  artwork: TrackArtwork;
+  /** True only for a track normalized from a real Spotify.Player state. */
+  isReal?: boolean;
 };
 
 export type MusicProvider = {
@@ -130,4 +145,33 @@ export function providerById(id: MusicProviderId): MusicProvider {
 export function formatPlaybackTime(seconds: number): string {
   const safeSeconds = Math.max(0, Math.floor(seconds));
   return `${Math.floor(safeSeconds / 60)}:${String(safeSeconds % 60).padStart(2, "0")}`;
+}
+
+/**
+ * Normalizes a real Spotify.Player track (from `player_state_changed`'s
+ * `track_window.current_track`) into the same MockTrack shape the rest of
+ * the Listen deck already renders. The SDK reports a track's duration on the
+ * *playback state*, not the track object itself, so it's a separate
+ * parameter here -- `durationMs` -- converted to seconds like every other
+ * track in this app.
+ */
+export function normalizeSpotifyTrack(
+  track: {
+    id: string | null;
+    uri: string;
+    name: string;
+    album: { name: string; images: { url: string }[] };
+    artists: { name: string }[];
+  },
+  durationMs: number,
+): MockTrack {
+  return {
+    id: track.id ?? track.uri,
+    title: track.name,
+    artist: track.artists.map((artist) => artist.name).join(", ") || "Unknown artist",
+    album: track.album.name,
+    duration: Math.round(durationMs / 1000),
+    artwork: track.album.images[0] ? { url: track.album.images[0].url } : "acid",
+    isReal: true,
+  };
 }

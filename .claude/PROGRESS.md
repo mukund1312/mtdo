@@ -9,6 +9,158 @@ Add each session's PROGRESS.md entry to the same branch as the code it describes
 
 ---
 
+## [frontend] 2026-09-13 (PR pending) — Spotify: the real Web Playback SDK player behind the Listen deck
+
+Built against the backend session's merged contract (PR #169, `7a92ad2`, `docs/architecture/
+api.md` §3i) in a separate worktree -- no route/migration/`lib/music/spotify/**`/`lib/crypto/
+token-envelope.ts` touched, all locked per the brief. Read the Spotify backend entry above and
+the Phase 6 Calendar frontend entry (2026-09-11) as the closest precedent for "a real
+connect/disconnect/reconnect UI against a just-merged OAuth backend" -- Calendar's Settings panel
+and `BlockDetailPopover`'s honesty states are the direct template for every degraded state below.
+
+**Real-vs-mock track data: normalized into the existing `MockTrack` shape, not a union.**
+`listen-data.ts`'s `MockTrack.artwork` field now accepts `string | { url: string }` (the four
+named mock colours, or a real Spotify cover-art URL) plus an `isReal?: boolean` flag, instead of a
+second `SpotifyTrack` type unioned across the deck. Every consumer -- `TrackList`, `QueuePanel`,
+`UnifiedMusicPlayer`, `Artwork` -- already rendered one shape; a union would have forced each of
+them to branch on provider just to show a title and a picture, for a distinction (mock vs. real)
+that only matters in exactly three places: `Artwork` (string colour vs. `<img>`), the aria-label
+copy ("mock track" vs. "Spotify track"), and `listen-state.tsx`'s own play/pause/seek/next/
+previous, which route to the real `Spotify.Player` instance whenever `currentTrack.isReal` is
+true and to the existing mock state machine otherwise. `normalizeSpotifyTrack()` (`listen-data.ts`)
+does the conversion; `duration` is a separate parameter because the SDK reports it on the playback
+*state*, not the track object -- the first draft called `track.duration`, which doesn't exist,
+and `tsc` caught it immediately.
+
+**The Web Playback SDK's script URL and ready-callback name were verified against Spotify's own
+live docs, not memory** (`spotify-sdk.ts`'s file comment): `<script src="https://sdk.scdn.co/
+spotify-player.js">`, `window.onSpotifyWebPlaybackSDKReady`. Also fetched live: the exact
+`player_state_changed`/`ready`/`not_ready` event payload shapes and the `Spotify.Player` method
+list (`connect`, `togglePlay`, `pause`, `resume`, `nextTrack`, `previousTrack`, `seek`,
+`setVolume`, `getCurrentState`). One real finding from reading the reference doc rather than
+guessing: `WebPlaybackTrack` has no `duration` field of its own (see above) -- would have shipped
+a runtime `undefined` if assumed by pattern-matching the SDK's other objects.
+
+**The scopes granted (`streaming user-read-email user-read-private`, api.md §3i) have no
+`user-modify-playback-state`, which is a real, worth-recording product constraint: this app
+cannot transfer Spotify Connect playback to itself.** The SDK's own player methods
+(`togglePlay`/`nextTrack`/etc.) work directly against the local SDK connection once "mtdo" is the
+*active* device -- but nothing here can make it active. The honest, and only correct, UX is
+telling the user to open Spotify elsewhere (phone, desktop, web player), hit play, and pick "mtdo"
+from that client's own device/Connect picker -- `SpotifyPanel`'s "Waiting for playback" state says
+exactly this rather than presenting a player that silently never receives a track. This was found
+by reading the granted-scopes list against what Spotify's Web API actually gates behind
+`user-modify-playback-state`, not by hitting a wall at runtime (no real Spotify session exists in
+this environment to hit a wall against) -- flagged here explicitly since it wasn't in the original
+brief and changes what "connected" visually means on this screen.
+
+**All four `/api/music/spotify/token` states are handled, and kept distinct end to end, not just
+at the fetch layer.** `spotify-token.ts`'s `fetchSpotifyAccessToken()` classifies 200 / 409
+`{connected:false}` / 409 `{connected:true, reconnectRequired:true}` / 502 / 503 / 401 into a
+discriminated union (`spotify-token.test.ts`, 8 vitest cases including RFC-adjacent edge cases
+like a thrown network error and an undocumented status code). The SDK's `getOAuthToken` callback
+in `listen-state.tsx` consumes this on every single invocation, not once -- a `reconnect-required`
+result sets a new `spotifyReconnectRequired` flag and re-triggers a status refresh; `not-connected`
+also refreshes status (covers the edge case where the row was deleted from another tab);
+`transient` (502) does nothing but let the SDK's own retry schedule continue, per api.md §3i's
+explicit "retry, do not re-OAuth" instruction; `not-configured` never reaches this path in
+practice (the player effect doesn't even initialize when `!spotifyStatus.connected`, which is
+already true whenever unconfigured). **`spotifyReconnectRequired` is deliberately NOT derived from
+`connection.expired`** -- that field is normal 60s access-token cache staleness the token route
+already refreshes transparently (per the backend entry above), and treating it as a warning would
+have been a false alarm on every ordinary page load. Flagged as a judgment call: the only
+authoritative reconnect signal used is a real 409 observed during actual token use, so a user who
+never triggers a token fetch (e.g., confirmed non-Premium, where the player never initializes) has
+no proactive way to learn their authorization died -- acceptable since Premium is already blocking
+playback for that user regardless.
+
+**Premium (`connection.premium`) drives whether the SDK initializes at all, not just what's
+displayed.** `false` (confirmed free tier) skips creating the `Spotify.Player` entirely -- a
+device that can never actually play is worse than not creating one, and `SpotifyPanel` shows the
+permanent-restriction message instead (matching the backend's own "real signal, not a bug"
+framing verbatim). `null` ("unknown yet") still initializes -- unknown is not a no. No fallback
+preview-only mode was built (out of scope per the brief); noted here as a real, separate future
+enhancement, not silently dropped.
+
+**`configured: false` gets the same honest, connect-button-free treatment as every other
+integration in this app** (`SpotifyPanel` on the Listen deck, the mirrored Settings → Music panel)
+-- named missing env vars, explicit note that everything else still works, no anchor rendered at
+all rather than one that would 503 on click.
+
+**Connect/Disconnect/Reconnect live in both places the brief allowed, mirroring where Calendar's
+own connect UI already lives.** The Listen deck's `SpotifyPanel` (primary -- it's where the player
+actually is) and Settings → Music (secondary, read-only-plus-two-actions like Calendar's own
+panel) both render a real `<a href="/api/music/spotify/connect?next=...">` for Connect/Reconnect
+(a genuine top-level navigation, never a click handler that then navigates -- GET /connect answers
+with a 307) and a real `fetch(..., {method:"POST"})` with loading/error state for Disconnect.
+`spotifyConnectHref` is computed once, deferred a tick past first render (this codebase's
+established pattern for effects that set state, avoiding the `react-hooks/set-state-in-effect`
+lint) so the server-rendered href (no `?next=`) never mismatches the hydrated client one.
+
+**`connections.spotify` in `listen-state.tsx`'s exposed record is derived via `useMemo` from the
+real `spotifyStatus`, not mirrored into its own `useState` synced by an effect** -- the first draft
+did exactly that and `eslint`'s `react-hooks/set-state-in-effect` correctly flagged it as an
+unnecessary cascading render; deriving it removes the redundant state entirely rather than
+suppressing the lint. `apple`/`local`'s demo connect/disconnect timeout logic is otherwise
+byte-identical, now keyed off a renamed `demoConnections` state that spotify's key is typed into
+but never writes to (both `connect()`/`disconnect()` branch spotify away before touching it).
+
+**`useSignalDeckListen()` consumers, checked before touching the hook's public shape**: only
+`listen-deck.tsx` and `page.tsx` (the persistent Listening-studio widget) call it --
+`app/session/page.tsx` does not consume it at all, confirmed by grep, so there was no Session-
+screen surface to regress. Every existing field on `ListenState` keeps its exact name and
+signature; only new fields were added (`spotifyStatus`, `spotifyStatusState`,
+`refreshSpotifyStatus`, `spotifyConnectHref`, `disconnectSpotify`, `spotifyDisconnecting`,
+`spotifyDisconnectError`, `spotifyPlayerState`, `spotifyPlayerError`, `spotifyWaitingForTransfer`,
+`spotifyReconnectRequired`) -- `connect`/`disconnect`/`currentTrack`/`musicPlaying`/`position`/
+`setPosition`/`nextTrack`/`previousTrack`/`queue` all kept their old call signatures, now branching
+internally on `provider === "spotify"` or `currentTrack.isReal`.
+
+**Verified.** `tsc --noEmit` and `eslint .` clean repo-wide. `340/340` vitest (8 new in
+`spotify-token.test.ts`; the other 332 unchanged, confirming `apple`/`local` and every other
+suite are unaffected). Real production build (`rm -rf .next && npm run build`) succeeds with all
+five Spotify routes registered alongside the existing Calendar/AI ones. Playwright run against
+that build served from an isolated port (3213 -- port 3000 had a stray `next-server` from another
+worktree, confirmed via `lsof` before choosing 3213, matching this project's own repeatedly-
+recorded practice): new `e2e/spotify-listen.spec.ts` **4/4** -- the Listen deck's Spotify source
+and Settings → Music both show the real, unconfigured-in-this-environment `configured: false`
+state end to end with no mocking and no rendered Connect link; the five real routes all degrade
+with the documented status codes and shapes; a real `<a href="/api/music/spotify/connect...">` is
+confirmed to exist and point at the right route once `GET /api/music/spotify/status` is
+intercepted to report `configured: true, connected: false` -- the one piece that genuinely cannot
+be reached against this environment's real backend, tested at the boundary of what's real (the
+actual Route Handler is real; only its already-tested backend-side response is substituted, per
+the brief's explicit allowance for "component/unit-level mocking of fetch() responses").
+
+**A full combined `web/e2e/` `--workers=1` run hit this project's own documented Supabase
+anonymous-auth rate limit, exactly the signature recorded in five prior sessions' entries
+(2026-09-08, both 2026-09-11 entries, 2026-09-12, and the "Calendar: editable duration" entry
+above).** First combined run: 33 passed, 9 failed -- 5 of the 9 in files this session never
+touched at all (`onboarding.spec.ts`, `phase6-calendar.spec.ts`, `settings.spec.ts` x3,
+`signal-deck-home-session.spec.ts`), the other 4 in the new `spotify-listen.spec.ts`. Re-running
+`spotify-listen.spec.ts` alone immediately after (the pre-existing project practice for
+distinguishing a real regression from rate-limit noise) initially passed clean 4/4; a further
+back-to-back retry 90 seconds later -- deliberately run to see how the failure count moves under
+continued load, not to chase a specific green number -- dropped to 2/4, with the two failures
+sharing one identical signature both times: `GET /api/music/spotify/status` returning a real
+`401` (no session) rather than the unconfigured `200` it returns once a session exists, i.e. the
+anonymous sign-in itself failing under quota, not anything in this session's own code. This is the
+same class of evidence prior sessions used to call an issue environmental rather than a
+regression (non-deterministic, shifts identity between consecutive runs, the same signature
+appearing in files this session never touched) -- treated the same way here. The one full,
+uncontended isolated run (this entry's first verification pass, before the combined run existed)
+is the trustworthy local signal per this project's established practice; CI is the tiebreaker for
+the full-suite number.
+
+**Not tested, and it cannot be, for the same reason as the backend session:** the real Spotify
+consent screen, and anything past it (an actual device transfer, an actual playing track). No
+Spotify developer app exists for mtdo in this environment. `configured: false` end to end and
+mocked-response-driven UI-state coverage are this system's established and only available
+verification tiers for this exact surface, matching Google Calendar's own precedent through all of
+Phase 6.
+
+---
+
 ## [backend] 2026-09-13 (PR pending) — Spotify: a real OAuth + token backend behind the Listen deck
 
 The Listen deck has been a fake player over hardcoded `MockTrack` data since it was built. This
