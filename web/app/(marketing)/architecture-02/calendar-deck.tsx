@@ -1,11 +1,13 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState, type DragEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent } from "react";
 
 import { createClient } from "@/lib/supabase/client";
 
 import { isBlockStatus, type BlockStatus } from "./today-deck";
 import { isTaskPriority, priorityLabel, type TaskPriority } from "./kanban-metadata";
+import { categoryColorToken } from "./category-color";
+import { laneStyle, layoutDayOverlaps, type LanePlacement } from "./calendar-overlap";
 
 // The Time deck (Phase 6 frontend, operating-engine plan). Renders and
 // reschedules real `blocks` rows against schedule_block() (docs/architecture/
@@ -58,6 +60,14 @@ const HOURS = Array.from({ length: DAY_END_HOUR - DAY_START_HOUR }, (_, index) =
 const ROW_HEIGHT = 48;
 const DEFAULT_DURATION_MINUTES = 30;
 const DEFAULT_SCHEDULE_HOUR = 9; // for a block dropped somewhere with no time granularity (Month view)
+// Resize snap increment. Free-form second-level precision from raw pixel
+// deltas would be unusable (nobody can drag to exactly 11:47) -- 15 minutes
+// matches the granularity the founder's own brief asked for ("1h, or 30
+// mins, or 15 mins") and divides ROW_HEIGHT (48px/hour) into a whole
+// number of pixels per snap (12px), so there's no rounding drift between
+// the snapped minute value and the pixel the handle visually settles at.
+const RESIZE_SNAP_MINUTES = 15;
+const MIN_DURATION_MINUTES = 15; // a resize can never shrink a block below one snap increment
 const WEEKDAY_LABELS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
 function startOfDay(date: Date): Date {
@@ -145,6 +155,16 @@ function eventGeometry(start: Date, end: Date): { top: number; height: number } 
   return { top, height };
 }
 
+/** Inverse of eventGeometry's own height math -- the ONLY place resize
+ * converts a dragged pixel delta back into minutes, so it can never drift
+ * from the vertical math eventGeometry and the drag-to-reschedule path
+ * already use. Snapped to RESIZE_SNAP_MINUTES so a drag lands on a sensible
+ * increment rather than an arbitrary number of seconds. */
+function snapMinutesFromPixels(deltaPx: number): number {
+  const rawMinutes = (deltaPx / ROW_HEIGHT) * 60;
+  return Math.round(rawMinutes / RESIZE_SNAP_MINUTES) * RESIZE_SNAP_MINUTES;
+}
+
 function databaseErrorMessage(error: unknown, fallback: string): string {
   if (!error || typeof error !== "object") return fallback;
   const candidate = error as { code?: string; message?: string };
@@ -164,6 +184,18 @@ export function CalendarDeck() {
   const [draggedBlockId, setDraggedBlockId] = useState<string | null>(null);
   const [dropHint, setDropHint] = useState<string | null>(null);
   const [selectedBlockId, setSelectedBlockId] = useState<string | null>(null);
+
+  // Resize (bottom-edge drag-to-extend/shrink). Deliberately plain
+  // mouse events, not the HTML5 DnD the move-drag path uses -- a resize
+  // needs continuous pixel feedback while dragging, which HTML5 DnD's
+  // opaque drag-image model doesn't give a clean hook into. resizeStateRef
+  // holds the authoritative in-progress values (read at mouseup, when
+  // React state from the last mousemove render may not have committed
+  // yet); resizeDeltaMinutes is state purely so EventChip can render a
+  // live preview height while dragging.
+  const resizeStateRef = useRef<{ blockId: string; startClientY: number; baseDurationMinutes: number; deltaMinutes: number } | null>(null);
+  const [resizingId, setResizingId] = useState<string | null>(null);
+  const [resizeDeltaMinutes, setResizeDeltaMinutes] = useState(0);
 
   const [calendarStatus, setCalendarStatus] = useState<CalendarStatus | null>(null);
   const [calendarStatusState, setCalendarStatusState] = useState<LoadState>("loading");
@@ -289,6 +321,51 @@ export function CalendarDeck() {
     [load],
   );
 
+  // Resize: bottom-edge drag extends/shrinks a block's end time. Deliberately
+  // reuses rescheduleBlock (same schedule_block() call, existing start,
+  // computed end) rather than a parallel write path -- resize IS a
+  // reschedule, just one whose start never moves.
+  const finishResize = useCallback(() => {
+    const state = resizeStateRef.current;
+    resizeStateRef.current = null;
+    setResizingId(null);
+    setResizeDeltaMinutes(0);
+    if (!state) return;
+    const block = blocksById.get(state.blockId);
+    if (!block || !block.scheduled_start_at) return;
+    const start = new Date(block.scheduled_start_at);
+    const finalDurationMinutes = Math.max(MIN_DURATION_MINUTES, state.baseDurationMinutes + state.deltaMinutes);
+    const end = new Date(start.getTime() + finalDurationMinutes * 60000);
+    void rescheduleBlock(block, start, end);
+  }, [blocksById, rescheduleBlock]);
+
+  useEffect(() => {
+    if (!resizingId) return;
+    const handleMove = (event: MouseEvent) => {
+      const state = resizeStateRef.current;
+      if (!state) return;
+      const deltaPx = event.clientY - state.startClientY;
+      const deltaMinutes = snapMinutesFromPixels(deltaPx);
+      state.deltaMinutes = deltaMinutes;
+      setResizeDeltaMinutes(deltaMinutes);
+    };
+    const handleUp = () => finishResize();
+    window.addEventListener("mousemove", handleMove);
+    window.addEventListener("mouseup", handleUp);
+    return () => {
+      window.removeEventListener("mousemove", handleMove);
+      window.removeEventListener("mouseup", handleUp);
+    };
+  }, [resizingId, finishResize]);
+
+  const startResize = useCallback((block: CalendarBlock, clientY: number) => {
+    if (!block.scheduled_start_at || !block.scheduled_end_at) return;
+    const baseDurationMinutes = (new Date(block.scheduled_end_at).getTime() - new Date(block.scheduled_start_at).getTime()) / 60000;
+    resizeStateRef.current = { blockId: block.id, startClientY: clientY, baseDurationMinutes, deltaMinutes: 0 };
+    setResizingId(block.id);
+    setResizeDeltaMinutes(0);
+  }, []);
+
   const unscheduleBlock = useCallback(
     async (block: CalendarBlock) => {
       setWriteError(null);
@@ -350,6 +427,26 @@ export function CalendarDeck() {
     },
     [],
   );
+
+  // Per-event notes. blocks.notes is an ordinary client-writable column
+  // (schema.md §6's grants table) -- no RPC exists or is needed for this,
+  // same as api.md's own framing of blocks as "an ordinary client-writable
+  // table" for everything schedule_block() doesn't specifically own.
+  // Updates local state directly (both scheduled/unscheduled arrays,
+  // whichever the block lives in) instead of a full load() -- a save-on-
+  // blur shouldn't force-refetch and re-render the whole grid/panel.
+  const saveBlockNotes = useCallback(async (blockId: string, notes: string): Promise<{ ok: true } | { ok: false; message: string }> => {
+    const supabase = createClient();
+    const { error } = await supabase.from("blocks").update({ notes: notes.trim().length > 0 ? notes : null }).eq("id", blockId);
+    if (error) {
+      console.error("[calendar] failed to save note:", error);
+      return { ok: false, message: databaseErrorMessage(error, "Couldn't save that note. Try again.") };
+    }
+    const patch = (list: CalendarBlock[]) => list.map((block) => (block.id === blockId ? { ...block, notes: notes.trim().length > 0 ? notes : null } : block));
+    setScheduled(patch);
+    setUnscheduled(patch);
+    return { ok: true };
+  }, []);
 
   const dropAtSlot = (day: Date, hour: number | null) => {
     if (!draggedBlockId) return;
@@ -457,6 +554,9 @@ export function CalendarDeck() {
                 onDrop={dropAtSlot}
                 onHover={setDropHint}
                 onOpenBlock={setSelectedBlockId}
+                resizingId={resizingId}
+                resizeDeltaMinutes={resizeDeltaMinutes}
+                onResizeStart={startResize}
               />
             )}
           </div>
@@ -486,6 +586,7 @@ export function CalendarDeck() {
           calendarStatusState={calendarStatusState}
           moving={movingId === selectedBlock.id}
           onClose={() => setSelectedBlockId(null)}
+          onSaveNotes={saveBlockNotes}
           onToggleSync={(enabled) => void toggleSync(selectedBlock, enabled)}
           onUnschedule={() => void unscheduleBlock(selectedBlock)}
           synced={syncedIds.has(selectedBlock.id)}
@@ -497,16 +598,26 @@ export function CalendarDeck() {
   );
 }
 
-function EventChip({ block, moving, onDragEnd, onDragStart, onOpen }: {
+function EventChip({ block, lanePlacement, moving, resizeDeltaMinutes, resizing, onDragEnd, onDragStart, onOpen, onResizeStart }: {
   block: CalendarBlock;
+  lanePlacement: LanePlacement;
   moving: boolean;
+  resizeDeltaMinutes: number;
+  resizing: boolean;
   onDragEnd: () => void;
   onDragStart: (event: DragEvent<HTMLElement>) => void;
   onOpen: () => void;
+  onResizeStart: (clientY: number) => void;
 }) {
   const start = block.scheduled_start_at ? new Date(block.scheduled_start_at) : null;
   const end = block.scheduled_end_at ? new Date(block.scheduled_end_at) : null;
   const geometry = start && end ? eventGeometry(start, end) : null;
+  const baseDurationMinutes = start && end ? (end.getTime() - start.getTime()) / 60000 : null;
+  // While a resize is in progress, preview the dragged height live rather
+  // than waiting for schedule_block()'s round trip -- same
+  // baseDuration+deltaMinutes math finishResize() commits with, so the
+  // preview never shows something the commit wouldn't actually save.
+  const previewDurationMinutes = resizing && baseDurationMinutes !== null ? Math.max(MIN_DURATION_MINUTES, baseDurationMinutes + resizeDeltaMinutes) : baseDurationMinutes;
   // 40px is the real floor, not a stylistic choice: task name + time (the
   // two lines that must never disappear) need ~26px of content height
   // once padding is subtracted, and anything smaller reintroduces the
@@ -514,14 +625,27 @@ function EventChip({ block, moving, onDragEnd, onDragStart, onOpen }: {
   // ~50min hits this floor, which is most of them. A short block visually
   // overlapping its true time-proportional height is the accepted
   // tradeoff, same one most calendar UIs make for legibility.
-  const style = geometry ? { top: `${geometry.top}px`, height: `${Math.max(40, geometry.height)}px` } : undefined;
+  const height = previewDurationMinutes !== null ? Math.max(40, (previewDurationMinutes / 60) * ROW_HEIGHT) : undefined;
+  const lane = laneStyle(lanePlacement.lane, lanePlacement.laneCount);
+  const style = geometry
+    ? { top: `${geometry.top}px`, height: height !== undefined ? `${height}px` : undefined, ...(lane ?? {}) }
+    : undefined;
+  const colorToken = categoryColorToken(block.category_id);
   return (
     <button
       type="button"
-      className={`a02-calendar-event a02-calendar-event--${block.priority} ${moving ? "is-moving" : ""}`}
+      className={`a02-calendar-event a02-calendar-event--cat-${colorToken} ${moving ? "is-moving" : ""} ${resizing ? "is-resizing" : ""}`}
       style={style}
-      draggable={!moving}
+      draggable={!moving && !resizing}
       data-testid={`calendar-event-${block.id}`}
+      // Exposed for tests only, not read by any app code: category_id is a
+      // server-generated UUID, so two real categories can legitimately (if
+      // unluckily) land on the same of the four palette slots -- that's the
+      // documented tradeoff in category-color.ts, not a bug. A test can't
+      // assert "these two differ" against a random UUID without sometimes
+      // being wrong; this lets a test compute the real expected token via
+      // categoryColorToken(realCategoryId) instead of guessing.
+      data-category-id={block.category_id}
       onDragStart={onDragStart}
       onDragEnd={onDragEnd}
       onClick={onOpen}
@@ -532,12 +656,41 @@ function EventChip({ block, moving, onDragEnd, onDragStart, onOpen }: {
           when, this text is the only place that says what. */}
       <b>{block.text}</b>
       {start && end && <small>{formatTimeRange(start, end)}</small>}
-      {block.category_label && <span>{block.category_label}</span>}
+      {/* Colour by category is now the dominant signal (founder: "each
+          block each event meaning should be of different colours like
+          Google Calendar"); priority stays visible as this small dot +
+          label rather than disappearing, kept on the SAME line as the
+          category label so this never grows the chip past the 40px floor
+          above -- a 4th line here would reopen the short-block clipping
+          bug PR #161 fixed. */}
+      <span className="a02-calendar-event-meta">
+        <i className={`a02-calendar-event-priority-dot a02-calendar-event-priority-dot--${block.priority}`} title={`${priorityLabel(block.priority)} priority`} />
+        {block.category_label}
+      </span>
+      {start && end && (
+        <span
+          className="a02-calendar-event-resize-handle"
+          // Deliberately NOT prefixed `calendar-event-` -- every existing
+          // test (and every new one here) locates the chip itself via
+          // `[data-testid^="calendar-event-"]`, and that attribute
+          // selector matches on substring prefix regardless of DOM
+          // nesting. A `calendar-event-resize-<id>` testid would silently
+          // become a second match under that same selector.
+          data-testid={`calendar-resize-handle-${block.id}`}
+          draggable={false}
+          onClick={(event) => event.stopPropagation()}
+          onMouseDown={(event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            onResizeStart(event.clientY);
+          }}
+        />
+      )}
     </button>
   );
 }
 
-function TimeGrid({ days, blocks, draggedBlockId, dropHint, movingId, onDragStart, onDragEnd, onDrop, onHover, onOpenBlock }: {
+function TimeGrid({ days, blocks, draggedBlockId, dropHint, movingId, onDragStart, onDragEnd, onDrop, onHover, onOpenBlock, resizingId, resizeDeltaMinutes, onResizeStart }: {
   days: Date[];
   blocks: CalendarBlock[];
   draggedBlockId: string | null;
@@ -548,6 +701,9 @@ function TimeGrid({ days, blocks, draggedBlockId, dropHint, movingId, onDragStar
   onDrop: (day: Date, hour: number | null) => void;
   onHover: (hint: string | null) => void;
   onOpenBlock: (id: string) => void;
+  resizingId: string | null;
+  resizeDeltaMinutes: number;
+  onResizeStart: (block: CalendarBlock, clientY: number) => void;
 }) {
   const today = new Date();
   return (
@@ -560,6 +716,14 @@ function TimeGrid({ days, blocks, draggedBlockId, dropHint, movingId, onDragStar
       {days.map((day) => {
         const dayBlocks = blocks.filter((block) => block.scheduled_start_at && sameDay(new Date(block.scheduled_start_at), day));
         const key = isoDate(day);
+        // Overlap lanes are computed per day column, from this day's own
+        // blocks only -- see calendar-overlap.ts. Horizontal placement
+        // only; ROW_HEIGHT/eventGeometry's vertical math is untouched.
+        const lanePlacements = layoutDayOverlaps(
+          dayBlocks
+            .filter((block) => block.scheduled_start_at && block.scheduled_end_at)
+            .map((block) => ({ id: block.id, start: new Date(block.scheduled_start_at as string), end: new Date(block.scheduled_end_at as string) })),
+        );
         return (
           <div key={key} className={`a02-time-column ${sameDay(day, today) ? "is-today" : ""}`}>
             {days.length > 1 && (
@@ -583,10 +747,14 @@ function TimeGrid({ days, blocks, draggedBlockId, dropHint, movingId, onDragStar
                 <EventChip
                   key={block.id}
                   block={block}
+                  lanePlacement={lanePlacements.get(block.id) ?? { lane: 0, laneCount: 1 }}
                   moving={movingId === block.id}
+                  resizing={resizingId === block.id}
+                  resizeDeltaMinutes={resizeDeltaMinutes}
                   onDragStart={(event) => { event.dataTransfer.effectAllowed = "move"; event.dataTransfer.setData("text/plain", block.id); onDragStart(block.id); }}
                   onDragEnd={onDragEnd}
                   onOpen={() => onOpenBlock(block.id)}
+                  onResizeStart={(clientY) => onResizeStart(block, clientY)}
                 />
               ))}
             </div>
@@ -597,6 +765,16 @@ function TimeGrid({ days, blocks, draggedBlockId, dropHint, movingId, onDragStar
   );
 }
 
+// Month view deliberately gets NO overlap-lane layout, category colour
+// only. Reasoning: lanes exist to solve blocks visually covering each
+// other at absolute pixel positions on the hour grid (TimeGrid) -- Month's
+// `.a02-month-chip`s are never absolutely positioned by time at all, they
+// are an ordinary vertical list (up to 3 + an overflow count) inside a flex
+// column cell, so two overlapping-in-time blocks already render as two
+// separate, fully visible, independently clickable rows with zero changes
+// needed. Adding lane math here would solve a collision that structurally
+// cannot happen in this view. Month's own "click a day to see it in Day
+// view" (`onDayClick`) is where a user goes to see the real time layout.
 function MonthGrid({ anchorDate, blocks, draggedBlockId, dropHint, movingId, onDayClick, onDragStart, onDragEnd, onDrop, onHover, onOpenBlock }: {
   anchorDate: Date;
   blocks: CalendarBlock[];
@@ -649,13 +827,14 @@ function MonthGrid({ anchorDate, blocks, draggedBlockId, dropHint, movingId, onD
                 <button
                   key={block.id}
                   type="button"
-                  className={`a02-month-chip a02-month-chip--${block.priority} ${movingId === block.id ? "is-moving" : ""}`}
+                  className={`a02-month-chip a02-month-chip--cat-${categoryColorToken(block.category_id)} ${movingId === block.id ? "is-moving" : ""}`}
                   draggable={movingId !== block.id}
                   data-testid={`calendar-month-chip-${block.id}`}
                   onDragStart={(event) => { event.dataTransfer.effectAllowed = "move"; event.dataTransfer.setData("text/plain", block.id); onDragStart(block.id); }}
                   onDragEnd={onDragEnd}
                   onClick={(event) => { event.stopPropagation(); onOpenBlock(block.id); }}
                 >
+                  <i className={`a02-calendar-event-priority-dot a02-calendar-event-priority-dot--${block.priority}`} title={`${priorityLabel(block.priority)} priority`} />
                   {block.text}
                 </button>
               ))}
@@ -709,12 +888,15 @@ function UnscheduledPanel({ items, draggedBlockId, isDropTarget, onDragStart, on
   );
 }
 
-function BlockDetailPopover({ block, calendarStatus, calendarStatusState, moving, onClose, onToggleSync, onUnschedule, synced, syncError, syncing }: {
+type NotesSaveState = "idle" | "saving" | "saved" | "error";
+
+function BlockDetailPopover({ block, calendarStatus, calendarStatusState, moving, onClose, onSaveNotes, onToggleSync, onUnschedule, synced, syncError, syncing }: {
   block: CalendarBlock;
   calendarStatus: CalendarStatus | null;
   calendarStatusState: LoadState;
   moving: boolean;
   onClose: () => void;
+  onSaveNotes: (blockId: string, notes: string) => Promise<{ ok: true } | { ok: false; message: string }>;
   onToggleSync: (enabled: boolean) => void;
   onUnschedule: () => void;
   synced: boolean;
@@ -723,6 +905,36 @@ function BlockDetailPopover({ block, calendarStatus, calendarStatusState, moving
 }) {
   const start = block.scheduled_start_at ? new Date(block.scheduled_start_at) : null;
   const end = block.scheduled_end_at ? new Date(block.scheduled_end_at) : null;
+
+  // Draft resets whenever a different block is opened -- keyed on block.id
+  // (not just block.notes) so switching blocks always shows that block's
+  // own saved note, never a stale draft left over from the previous one.
+  // Plain useState comparison (not a ref) per React's own "adjusting state
+  // when a prop changes" pattern -- setState calls during render are fine,
+  // reading/writing a ref during render is not.
+  const [lastOpenBlockId, setLastOpenBlockId] = useState(block.id);
+  const [noteDraft, setNoteDraft] = useState(block.notes ?? "");
+  const [noteSaveState, setNoteSaveState] = useState<NotesSaveState>("idle");
+  const [noteError, setNoteError] = useState<string | null>(null);
+  if (lastOpenBlockId !== block.id) {
+    setLastOpenBlockId(block.id);
+    setNoteDraft(block.notes ?? "");
+    setNoteSaveState("idle");
+    setNoteError(null);
+  }
+
+  const commitNote = async () => {
+    if (noteDraft === (block.notes ?? "")) return; // nothing changed since the last save
+    setNoteSaveState("saving");
+    setNoteError(null);
+    const result = await onSaveNotes(block.id, noteDraft);
+    if (result.ok) {
+      setNoteSaveState("saved");
+    } else {
+      setNoteSaveState("error");
+      setNoteError(result.message);
+    }
+  };
 
   return (
     <section className="a02-record-overlay" role="dialog" aria-modal="true" aria-labelledby="calendar-detail-title" data-testid="calendar-detail-popover" onClick={onClose}>
@@ -743,6 +955,23 @@ function BlockDetailPopover({ block, calendarStatus, calendarStatusState, moving
           <span className={`a02-priority a02-priority--${block.priority}`}>{priorityLabel(block.priority)}</span>
           {block.category_label && <span>{block.category_label}</span>}
           <span>{block.status.replace("_", " ")}</span>
+        </div>
+
+        <div className="a02-calendar-notes">
+          <label htmlFor="calendar-detail-notes">NOTE</label>
+          <textarea
+            id="calendar-detail-notes"
+            data-testid="calendar-detail-notes"
+            placeholder="Add a note for this task -- what you're focusing on, what's left, anything worth remembering next time."
+            value={noteDraft}
+            onChange={(event) => { setNoteDraft(event.target.value); if (noteSaveState !== "idle") setNoteSaveState("idle"); }}
+            onBlur={() => void commitNote()}
+          />
+          <p className="a02-calendar-notes-status" data-testid="calendar-notes-status" aria-live="polite">
+            {noteSaveState === "saving" && "Saving…"}
+            {noteSaveState === "saved" && "Saved"}
+            {noteSaveState === "error" && (noteError ?? "Couldn't save that note.")}
+          </p>
         </div>
 
         {start && end && (
