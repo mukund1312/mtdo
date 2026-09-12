@@ -1,59 +1,64 @@
 .page {
+  /* Signal Deck tokens: Focus is an Architecture 02 surface, not a separate
+     dark/orange theme. EmberMorph inherits these values for its fixed shell. */
+  --void: #090a20;
+  --void2: #101332;
+  --ink: #e9ebff;
+  --dim: #8e93bd;
+  --line: rgba(216, 221, 255, 0.18);
+  --ultra: #8975ff;
+  --acid: #d7ff52;
+  --coral: #ff8071;
+  --aqua: #57e7ff;
+  --bg: var(--void);
+  --text: var(--ink);
+  --muted: var(--dim);
+  --accent: var(--aqua);
+  --live: var(--acid);
+  --border: var(--line);
+  --radius-xl: 10px;
+  --radius-lg: 8px;
+  --radius-sm: 5px;
+  --radius-full: 5px;
+  --ease-spring: cubic-bezier(0.2, 0.8, 0.2, 1);
   min-height: 100dvh;
   padding: 32px;
+  color: var(--ink);
+  background: var(--void);
+  font-family: "Space Grotesk", Arial, sans-serif;
 }
 
-.readyShell {
+.preparing {
   display: grid;
-  width: min(100%, 720px);
-  min-height: calc(100dvh - 64px);
-  margin: 0 auto;
-  align-content: center;
-  justify-items: start;
+  justify-items: center;
+  gap: 14px;
+  margin: 0;
+  padding-top: 40dvh;
+  color: var(--muted);
+  font-size: 14px;
+  text-align: center;
 }
 
-.kicker,
+.preparing p {
+  margin: 0;
+}
+
+.preparingActions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 10px;
+}
+
 .cardEyebrow {
   margin: 0;
-  color: var(--accent);
+  color: #57e7ff;
   font-size: 11px;
   font-weight: 500;
   letter-spacing: 0.14em;
   text-transform: uppercase;
 }
 
-.readyShell h1 {
-  max-width: 600px;
-  margin: 14px 0 16px;
-  font-size: clamp(44px, 7vw, 76px);
-  font-weight: 900;
-  letter-spacing: -0.055em;
-  line-height: 0.94;
-}
-
-.intro {
-  max-width: 520px;
-  margin: 0;
-  color: var(--muted);
-  font-size: 18px;
-  font-weight: 300;
-  line-height: 1.55;
-}
-
-.readyCard {
-  display: flex;
-  width: 100%;
-  margin: 44px 0 24px;
-  padding: 24px;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 24px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-xl);
-  background: var(--surface);
-}
-
-.readyCard h2,
 .taskPanel h1,
 .coachRail h2 {
   margin: 7px 0 8px;
@@ -61,28 +66,15 @@
   letter-spacing: -0.035em;
 }
 
-.readyCard h2 {
-  font-size: 23px;
-}
-
-.readyCard p:not(.cardEyebrow),
 .taskPanel > p:not(.cardEyebrow),
 .coachCopy {
   margin: 0;
-  color: var(--muted);
+  color: #8e93bd;
   font-size: 15px;
   font-weight: 300;
   line-height: 1.5;
 }
 
-.duration {
-  color: var(--text);
-  font-size: 18px;
-  font-weight: 700;
-  letter-spacing: -0.04em;
-}
-
-.startButton,
 .completeButton,
 .abandonButton,
 .askButton {
@@ -96,63 +88,21 @@
   cursor: pointer;
 }
 
-.startButton {
-  display: inline-flex;
-  min-width: 178px;
-  padding: 0 20px;
-  align-items: center;
-  justify-content: center;
-  gap: 10px;
-  /* --bg stands in for a dedicated "on-accent" token DESIGN.md doesn't define
-   * yet -- same near-black-on-cyan contrast the marketing page's CTA already
-   * uses, kept token-derived instead of a second hardcoded near-black. */
-  color: var(--bg);
-  background: var(--accent);
-}
-
-.startButton:hover:not(:disabled),
 .completeButton:hover:not(:disabled) {
   transform: scale(1.045);
 }
 
-.startButton:disabled,
 .completeButton:disabled,
 .abandonButton:disabled {
   cursor: wait;
   opacity: 0.6;
 }
 
-.notice,
 .focusNotice {
   margin: 14px 0 0;
   color: var(--warning);
   font-size: 13px;
   font-weight: 400;
-}
-
-/* A completed/abandoned-and-saved session is not a warning -- distinct from
- * an actual interruption so the two are never visually identical. */
-.noticeSuccess {
-  color: var(--success);
-}
-
-.conflictPrompt {
-  display: grid;
-  gap: 12px;
-  width: 100%;
-  max-width: 440px;
-  padding: 20px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
-  background: var(--surface);
-}
-
-.conflictText {
-  margin: 0;
-  color: var(--muted);
-  font-size: 14px;
-  font-weight: 300;
-  line-height: 1.5;
 }
 
 .focusLayout {
@@ -164,9 +114,10 @@
 
 .taskPanel,
 .coachRail {
-  border: 1px solid var(--border);
-  border-radius: var(--radius-xl);
-  background: rgba(255, 255, 255, 0.026);
+  border: 1px solid rgba(216, 221, 255, 0.18);
+  border-radius: 10px;
+  background: linear-gradient(145deg, rgba(31, 35, 87, 0.88), rgba(18, 22, 56, 0.92));
+  box-shadow: inset 0 1px rgba(255, 255, 255, 0.025);
 }
 
 .taskPanel {
@@ -184,7 +135,7 @@
   padding: 0;
   margin: 36px 0 0;
   list-style: none;
-  border-top: 1px solid var(--border);
+  border-top: 1px solid rgba(216, 221, 255, 0.18);
 }
 
 .steps li {
@@ -192,15 +143,15 @@
   grid-template-columns: 30px 1fr;
   gap: 14px;
   padding: 16px 0;
-  border-bottom: 1px solid var(--border);
-  color: var(--text);
+  border-bottom: 1px solid rgba(216, 221, 255, 0.18);
+  color: #e9ebff;
   font-size: 14px;
   font-weight: 300;
   line-height: 1.45;
 }
 
 .steps span {
-  color: var(--dim);
+  color: #8e93bd;
   font-size: 11px;
   font-weight: 500;
   letter-spacing: 0.08em;
@@ -215,20 +166,21 @@
 
 .completeButton {
   padding: 0 18px;
-  color: var(--bg); /* same on-accent contrast approach as .startButton */
-  background: var(--live);
+  color: #151729;
+  background: #d7ff52;
 }
 
 .abandonButton {
   padding: 0 16px;
-  color: var(--muted);
-  border-color: var(--border);
+  color: #8e93bd;
+  border-color: rgba(216, 221, 255, 0.18);
   background: transparent;
 }
 
 .abandonButton:hover:not(:disabled) {
-  color: var(--text);
-  border-color: rgba(255, 255, 255, 0.2);
+  color: #e9ebff;
+  border-color: #57e7ff;
+  background: rgba(87, 231, 255, 0.06);
 }
 
 .coachRail {
@@ -250,9 +202,9 @@
   width: 28px;
   height: 28px;
   place-items: center;
-  border: 1px solid rgba(34, 211, 238, 0.32);
-  border-radius: var(--radius-sm);
-  color: var(--accent);
+  border: 1px solid rgba(87, 231, 255, 0.5);
+  border-radius: 5px;
+  color: #57e7ff;
   font-size: 16px;
 }
 
@@ -268,11 +220,11 @@
 .coachPrompt {
   margin-top: 24px;
   padding-top: 16px;
-  border-top: 1px solid var(--border);
+  border-top: 1px solid rgba(216, 221, 255, 0.18);
 }
 
 .coachPrompt span {
-  color: var(--dim);
+  color: #8e93bd;
   font-size: 10px;
   font-weight: 500;
   letter-spacing: 0.13em;
@@ -281,7 +233,7 @@
 
 .coachPrompt p {
   margin: 7px 0 0;
-  color: var(--text);
+  color: #e9ebff;
   font-size: 13px;
   font-weight: 400;
   line-height: 1.4;
@@ -314,15 +266,6 @@
     padding: 24px 16px;
   }
 
-  .readyShell {
-    min-height: calc(100dvh - 48px);
-  }
-
-  .readyCard {
-    margin-top: 32px;
-    padding: 20px;
-  }
-
   .focusLayout {
     grid-template-columns: 1fr;
   }
@@ -337,7 +280,6 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .startButton,
   .completeButton,
   .abandonButton,
   .askButton {

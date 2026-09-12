@@ -164,7 +164,8 @@ function ArchitectureTwoDeck() {
       router.push(`/session?blockId=${encodeURIComponent(activeBlock.id)}`);
       return;
     }
-    router.push("/session");
+    setLensOpen(false);
+    setDeck("work");
   };
 
   return (
@@ -344,7 +345,11 @@ function HomeDeck({
       router.push("/session");
       return;
     }
-    router.push(focusTarget ? `/session?blockId=${encodeURIComponent(focusTarget.id)}` : "/session");
+    if (focusTarget) {
+      router.push(`/session?blockId=${encodeURIComponent(focusTarget.id)}`);
+      return;
+    }
+    onWork();
   };
 
   const openNextInLens = () => {

@@ -120,6 +120,7 @@ export function EmberMorph({
 
       <header className={styles.header}>
         <span className={styles.wordmark}>mtdo</span>
+        <span className={styles.deckId}>MTDO / ARCHITECTURE 02 — SIGNAL DECK</span>
         <span className={styles.liveStatus}>
           <span className={styles.liveDot} aria-hidden="true" />
           In session
