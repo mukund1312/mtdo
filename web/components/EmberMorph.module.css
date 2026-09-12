@@ -104,6 +104,16 @@
   animation: live-pulse 2s ease-out infinite;
 }
 
+.pausedStatus {
+  color: #57e7ff;
+}
+
+.pausedStatus .liveDot {
+  background: #57e7ff;
+  box-shadow: none;
+  animation: none;
+}
+
 .frame {
   display: grid;
   grid-template-columns: minmax(340px, 1fr) minmax(0, 730px);

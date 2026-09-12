@@ -109,6 +109,21 @@ function formatTimeRange(start: Date, end: Date): string {
   return `${fmt.format(start)} – ${fmt.format(end)}`;
 }
 
+function timeInputValue(date: Date): string {
+  return `${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`;
+}
+
+function withTime(day: Date, value: string): Date | null {
+  const match = /^(\d{2}):(\d{2})$/.exec(value);
+  if (!match) return null;
+  const hours = Number(match[1]);
+  const minutes = Number(match[2]);
+  if (hours > 23 || minutes > 59) return null;
+  const result = new Date(day);
+  result.setHours(hours, minutes, 0, 0);
+  return result;
+}
+
 /** The visible fetch/navigation window for a view, as [start, end) local `Date`s. */
 function viewRange(view: CalendarView, anchor: Date): { start: Date; end: Date } {
   if (view === "day") {
@@ -300,7 +315,7 @@ export function CalendarDeck() {
   }, [scheduled, unscheduled]);
 
   const rescheduleBlock = useCallback(
-    async (block: CalendarBlock, start: Date, end: Date) => {
+    async (block: CalendarBlock, start: Date, end: Date): Promise<boolean> => {
       setWriteError(null);
       setMovingId(block.id);
       const supabase = createClient();
@@ -313,10 +328,11 @@ export function CalendarDeck() {
         console.error("[calendar] failed to schedule block:", error);
         setWriteError(databaseErrorMessage(error, "We could not move that task. Your schedule is unchanged."));
         setMovingId(null);
-        return;
+        return false;
       }
       await load();
       setMovingId(null);
+      return true;
     },
     [load],
   );
@@ -585,6 +601,7 @@ export function CalendarDeck() {
           calendarStatus={calendarStatus}
           calendarStatusState={calendarStatusState}
           moving={movingId === selectedBlock.id}
+          onReschedule={(start, end) => rescheduleBlock(selectedBlock, start, end)}
           onClose={() => setSelectedBlockId(null)}
           onSaveNotes={saveBlockNotes}
           onToggleSync={(enabled) => void toggleSync(selectedBlock, enabled)}
@@ -890,12 +907,13 @@ function UnscheduledPanel({ items, draggedBlockId, isDropTarget, onDragStart, on
 
 type NotesSaveState = "idle" | "saving" | "saved" | "error";
 
-function BlockDetailPopover({ block, calendarStatus, calendarStatusState, moving, onClose, onSaveNotes, onToggleSync, onUnschedule, synced, syncError, syncing }: {
+function BlockDetailPopover({ block, calendarStatus, calendarStatusState, moving, onClose, onReschedule, onSaveNotes, onToggleSync, onUnschedule, synced, syncError, syncing }: {
   block: CalendarBlock;
   calendarStatus: CalendarStatus | null;
   calendarStatusState: LoadState;
   moving: boolean;
   onClose: () => void;
+  onReschedule: (start: Date, end: Date) => Promise<boolean>;
   onSaveNotes: (blockId: string, notes: string) => Promise<{ ok: true } | { ok: false; message: string }>;
   onToggleSync: (enabled: boolean) => void;
   onUnschedule: () => void;
@@ -916,6 +934,9 @@ function BlockDetailPopover({ block, calendarStatus, calendarStatusState, moving
   const [noteDraft, setNoteDraft] = useState(block.notes ?? "");
   const [noteSaveState, setNoteSaveState] = useState<NotesSaveState>("idle");
   const [noteError, setNoteError] = useState<string | null>(null);
+  const [startTime, setStartTime] = useState(start ? timeInputValue(start) : "");
+  const [endTime, setEndTime] = useState(end ? timeInputValue(end) : "");
+  const [timeError, setTimeError] = useState<string | null>(null);
   if (lastOpenBlockId !== block.id) {
     setLastOpenBlockId(block.id);
     setNoteDraft(block.notes ?? "");
@@ -934,6 +955,20 @@ function BlockDetailPopover({ block, calendarStatus, calendarStatusState, moving
       setNoteSaveState("error");
       setNoteError(result.message);
     }
+  };
+
+  const commitTime = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!start || !end) return;
+    const nextStart = withTime(start, startTime);
+    const nextEnd = withTime(start, endTime);
+    if (!nextStart || !nextEnd || nextEnd <= nextStart) {
+      setTimeError("End time must be later than start time.");
+      return;
+    }
+    setTimeError(null);
+    const saved = await onReschedule(nextStart, nextEnd);
+    if (saved) onClose();
   };
 
   return (
@@ -956,6 +991,22 @@ function BlockDetailPopover({ block, calendarStatus, calendarStatusState, moving
           {block.category_label && <span>{block.category_label}</span>}
           <span>{block.status.replace("_", " ")}</span>
         </div>
+
+        {start && end && (
+          <form className="a02-calendar-time-editor" onSubmit={(event) => void commitTime(event)}>
+            <span>TIME WINDOW</span>
+            <label>
+              Start time
+              <input aria-label="Start time" type="time" value={startTime} onChange={(event) => { setStartTime(event.target.value); setTimeError(null); }} disabled={moving} required />
+            </label>
+            <label>
+              End time
+              <input aria-label="End time" type="time" value={endTime} onChange={(event) => { setEndTime(event.target.value); setTimeError(null); }} disabled={moving} required />
+            </label>
+            <button type="submit" disabled={moving}>{moving ? "Saving…" : "Save time"}</button>
+            {timeError && <p role="alert">{timeError}</p>}
+          </form>
+        )}
 
         <div className="a02-calendar-notes">
           <label htmlFor="calendar-detail-notes">NOTE</label>

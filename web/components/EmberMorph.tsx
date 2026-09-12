@@ -22,6 +22,7 @@ export type EmberMorphTrigger =
       plannedDurationS: number;
       elapsedS: number;
       originRect: DOMRectReadOnly | null;
+      status?: "active" | "paused" | "complete";
     }
   | {
       phase: "exiting";
@@ -100,6 +101,8 @@ export function EmberMorph({
   const originY = origin ? `${origin.top + origin.height / 2}px` : "50vh";
   const ringCircumference = 2 * Math.PI * 46;
   const ringOffset = ringCircumference * (1 - progress);
+  const status = isActive ? trigger.status ?? "active" : "complete";
+  const statusLabel = status === "paused" ? "Paused" : status === "complete" ? "Time is up" : "In session";
   const shellClassName = [
     styles.shell,
     !isExiting && styles.entering,
@@ -121,9 +124,9 @@ export function EmberMorph({
       <header className={styles.header}>
         <span className={styles.wordmark}>mtdo</span>
         <span className={styles.deckId}>MTDO / ARCHITECTURE 02 — SIGNAL DECK</span>
-        <span className={styles.liveStatus}>
+        <span className={`${styles.liveStatus} ${status === "paused" ? styles.pausedStatus : ""}`}>
           <span className={styles.liveDot} aria-hidden="true" />
-          In session
+          {statusLabel}
         </span>
       </header>
 

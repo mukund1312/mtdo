@@ -100,8 +100,12 @@ test("Home reflects a real picked task and Session shows real, non-fake coaching
   await page.locator(".a02-focus-node").click();
   await expect(page).toHaveURL(/\/session\?blockId=/);
 
-  // Focus now enters the timer and coaching workspace directly: the retired
-  // unlinked pre-session landing surface is no longer part of this flow.
+  // A linked task opens the single focus setup surface. Duration and breaks
+  // are frozen into start_session before the timer begins; the retired
+  // unlinked generic landing surface remains absent from this flow.
+  await expect(page.getByRole("heading", { name: taskText! })).toBeVisible();
+  await expect(page.getByLabel("Focus minutes")).toHaveValue("50");
+  await page.getByRole("button", { name: /begin focus/i }).click();
   await expect(page.getByRole("heading", { name: /stay with the question/i })).toBeVisible();
   await expect(page.getByText(/if a join feels slippery/i)).toHaveCount(0);
   await expect(page.getByText(/what changes if an order has no matching customer/i)).toHaveCount(0);

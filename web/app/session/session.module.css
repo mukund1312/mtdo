@@ -50,6 +50,87 @@
   gap: 10px;
 }
 
+.setup {
+  width: min(100%, 680px);
+  margin: min(17vh, 150px) auto 0;
+  padding: clamp(26px, 5vw, 42px);
+  border: 1px solid rgba(216, 221, 255, 0.18);
+  border-radius: 10px;
+  background: linear-gradient(145deg, rgba(31, 35, 87, 0.88), rgba(18, 22, 56, 0.92));
+  box-shadow: inset 0 1px rgba(255, 255, 255, 0.025);
+}
+
+.setup h1 {
+  margin: 7px 0 8px;
+  font-size: clamp(32px, 4vw, 48px);
+  letter-spacing: -0.035em;
+  line-height: 1;
+}
+
+.setup > p:not(.cardEyebrow):not(.setupSummary):not(.focusNotice) {
+  margin: 0;
+  color: var(--dim);
+  font-size: 15px;
+  font-weight: 300;
+  line-height: 1.5;
+}
+
+.setupFields {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  margin-top: 28px;
+}
+
+.setupFields label,
+.extensionField,
+.leftoverField {
+  display: grid;
+  gap: 7px;
+  color: var(--dim);
+  font: 10px "DM Mono", monospace;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.setupFields input,
+.extensionField input,
+.leftoverField textarea {
+  width: 100%;
+  box-sizing: border-box;
+  border: 1px solid rgba(216, 221, 255, 0.18);
+  border-radius: 5px;
+  outline: none;
+  color: var(--ink);
+  background: rgba(9, 10, 32, 0.7);
+  font: 14px "DM Mono", monospace;
+}
+
+.setupFields input,
+.extensionField input {
+  min-height: 42px;
+  padding: 0 11px;
+}
+
+.setupFields input:focus-visible,
+.extensionField input:focus-visible,
+.leftoverField textarea:focus-visible {
+  border-color: var(--aqua);
+  box-shadow: 0 0 0 3px rgba(87, 231, 255, 0.1);
+}
+
+.setupFields input:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.setupSummary {
+  margin: 16px 0 0;
+  color: var(--aqua);
+  font: 10px/1.6 "DM Mono", monospace;
+  letter-spacing: 0.05em;
+}
+
 .cardEyebrow {
   margin: 0;
   color: #57e7ff;
@@ -77,6 +158,7 @@
 
 .completeButton,
 .abandonButton,
+.pauseButton,
 .askButton {
   min-height: 44px;
   border: 1px solid transparent;
@@ -93,14 +175,15 @@
 }
 
 .completeButton:disabled,
-.abandonButton:disabled {
+.abandonButton:disabled,
+.pauseButton:disabled {
   cursor: wait;
   opacity: 0.6;
 }
 
 .focusNotice {
   margin: 14px 0 0;
-  color: var(--warning);
+  color: var(--coral);
   font-size: 13px;
   font-weight: 400;
 }
@@ -170,6 +253,19 @@
   background: #d7ff52;
 }
 
+.pauseButton {
+  padding: 0 16px;
+  color: var(--aqua);
+  border-color: rgba(87, 231, 255, 0.36);
+  background: rgba(87, 231, 255, 0.06);
+}
+
+.pauseButton:hover:not(:disabled) {
+  color: var(--ink);
+  border-color: var(--aqua);
+  background: rgba(87, 231, 255, 0.12);
+}
+
 .abandonButton {
   padding: 0 16px;
   color: #8e93bd;
@@ -188,6 +284,55 @@
   min-height: 100%;
   padding: 22px;
   flex-direction: column;
+}
+
+.outcomePanel {
+  margin-top: 28px;
+  padding-top: 22px;
+  border-top: 1px solid rgba(216, 221, 255, 0.18);
+}
+
+.outcomePanel h2,
+.extensionDialog h2 {
+  margin: 8px 0 0;
+  color: var(--ink);
+  font-size: 23px;
+  letter-spacing: -0.025em;
+}
+
+.leftoverField {
+  margin-top: 18px;
+}
+
+.leftoverField textarea {
+  min-height: 96px;
+  padding: 11px;
+  resize: vertical;
+  text-transform: none;
+}
+
+.extensionDialog {
+  position: fixed;
+  z-index: 4;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 22px;
+  background: rgba(9, 10, 32, 0.64);
+  backdrop-filter: blur(8px);
+}
+
+.extensionDialog > div {
+  width: min(100%, 410px);
+  padding: 27px;
+  border: 1px solid rgba(87, 231, 255, 0.32);
+  border-radius: 10px;
+  background: linear-gradient(145deg, rgba(31, 35, 87, 0.98), rgba(18, 22, 56, 0.98));
+  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.42);
+}
+
+.extensionField {
+  margin-top: 22px;
 }
 
 .coachHead {
@@ -256,6 +401,7 @@
 .startButton:focus-visible,
 .completeButton:focus-visible,
 .abandonButton:focus-visible,
+.pauseButton:focus-visible,
 .askButton:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 3px;
@@ -276,6 +422,14 @@
 
   .askButton {
     margin-top: 26px;
+  }
+
+  .setup {
+    margin-top: 12vh;
+  }
+
+  .setupFields {
+    grid-template-columns: 1fr;
   }
 }
 

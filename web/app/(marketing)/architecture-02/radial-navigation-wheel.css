@@ -36,6 +36,10 @@
   outline: none;
 }
 
+.a02-wheel-trigger:active {
+  transform: translateX(-50%) scale(0.94);
+}
+
 .a02-wheel-overlay {
   position: fixed;
   z-index: 90;
