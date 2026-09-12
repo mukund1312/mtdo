@@ -1,0 +1,272 @@
+.surface {
+  position: fixed;
+  z-index: 8;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgba(9, 10, 32, 0.64);
+  backdrop-filter: blur(9px) saturate(0.76);
+}
+
+.panel {
+  width: min(100%, 440px);
+  padding: clamp(24px, 4vw, 36px);
+  border: 1px solid rgba(87, 231, 255, 0.32);
+  border-radius: 10px;
+  background: linear-gradient(145deg, rgba(22, 48, 82, 0.96), rgba(14, 31, 62, 0.98));
+  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.46), inset 0 1px rgba(255, 255, 255, 0.04);
+  text-align: center;
+}
+
+.eyebrow,
+.remaining {
+  margin: 0;
+  color: #57e7ff;
+  font: 10px "DM Mono", monospace;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.title {
+  margin: 9px 0 0;
+  color: #e9ebff;
+  font-size: clamp(28px, 5vw, 38px);
+  letter-spacing: -0.04em;
+  line-height: 1;
+}
+
+.copy {
+  min-height: 24px;
+  margin: 10px 0 0;
+  color: #8e93bd;
+  font-size: 14px;
+  font-weight: 300;
+}
+
+.note {
+  min-height: 22px;
+  margin: 15px 0 -4px;
+  color: rgba(215, 255, 82, 0.82);
+  font-size: 13px;
+  font-weight: 300;
+  font-style: italic;
+  animation: note-arrive 620ms ease both;
+}
+
+.selector {
+  display: inline-flex;
+  gap: 5px;
+  margin: 24px auto 18px;
+  padding: 4px;
+  border: 1px solid rgba(216, 221, 255, 0.16);
+  border-radius: 7px;
+  background: rgba(9, 10, 32, 0.38);
+}
+
+.selector button,
+.resume {
+  min-height: 38px;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  cursor: pointer;
+  font: 11px "DM Mono", monospace;
+  letter-spacing: 0.04em;
+}
+
+.selector button {
+  padding: 0 12px;
+  color: #8e93bd;
+  background: transparent;
+}
+
+.selector button[aria-selected="true"] {
+  color: #e9ebff;
+  background: rgba(87, 231, 255, 0.11);
+  box-shadow: inset 0 0 0 1px rgba(87, 231, 255, 0.25);
+}
+
+.selector button:focus-visible,
+.resume:focus-visible {
+  outline: 2px solid #57e7ff;
+  outline-offset: 3px;
+}
+
+.breathingStage,
+.stretchStage {
+  display: grid;
+  min-height: 245px;
+  place-items: center;
+}
+
+.breathingStage {
+  position: relative;
+}
+
+.breathingRing,
+.breathingCore {
+  position: absolute;
+  border-radius: 50%;
+}
+
+.breathingRing {
+  width: 142px;
+  height: 142px;
+  border: 1px solid rgba(87, 231, 255, 0.5);
+  box-shadow: 0 0 44px rgba(87, 231, 255, 0.18);
+  animation: breath 8s ease-in-out infinite;
+}
+
+.breathingCore {
+  width: 74px;
+  height: 74px;
+  background: radial-gradient(circle at 35% 30%, rgba(215, 255, 82, 0.82), rgba(87, 231, 255, 0.18) 62%, transparent 70%);
+  animation: breath 8s ease-in-out infinite;
+}
+
+.breathingInstruction {
+  z-index: 1;
+  margin: 0;
+  color: #e9ebff;
+  font-size: 22px;
+  font-weight: 500;
+  letter-spacing: -0.03em;
+}
+
+.breathingCount {
+  position: absolute;
+  bottom: 8px;
+  margin: 0;
+  color: #8e93bd;
+  font: 10px "DM Mono", monospace;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.stretchFigure {
+  width: 132px;
+  height: 180px;
+  overflow: visible;
+}
+
+.figureLine {
+  fill: none;
+  stroke: #57e7ff;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 3;
+}
+
+.figureSoft {
+  fill: none;
+  stroke: rgba(215, 255, 82, 0.78);
+  stroke-linecap: round;
+  stroke-width: 3;
+}
+
+.stretchArms {
+  transform-origin: 66px 67px;
+  animation: stretch 6.5s ease-in-out infinite;
+}
+
+.stretchCopy {
+  margin: -4px 0 0;
+  color: #e9ebff;
+  font-size: 16px;
+  font-weight: 400;
+}
+
+.soothing {
+  display: grid;
+  justify-items: center;
+  gap: 5px;
+  margin: 4px 0 0;
+  padding: 15px;
+  border: 1px solid rgba(87, 231, 255, 0.2);
+  border-radius: 7px;
+  background: rgba(9, 10, 32, 0.27);
+}
+
+.soothing p {
+  margin: 0;
+  color: #e9ebff;
+  font-size: 13px;
+  font-weight: 400;
+}
+
+.soothing span {
+  color: #8e93bd;
+  font: 10px "DM Mono", monospace;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.soothingToggle {
+  min-height: 34px;
+  margin-top: 5px;
+  padding: 0 12px;
+  border: 1px solid rgba(87, 231, 255, 0.38);
+  border-radius: 5px;
+  color: #57e7ff;
+  background: rgba(87, 231, 255, 0.07);
+  cursor: pointer;
+  font: 10px "DM Mono", monospace;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.soothingToggle:hover {
+  border-color: #57e7ff;
+  background: rgba(87, 231, 255, 0.13);
+}
+
+.soothingToggle:focus-visible {
+  outline: 2px solid #57e7ff;
+  outline-offset: 3px;
+}
+
+.resume {
+  width: 100%;
+  margin-top: 18px;
+  color: #12213a;
+  background: #d7ff52;
+  transition: transform 180ms ease, filter 180ms ease;
+}
+
+.resume:hover:not(:disabled) {
+  filter: brightness(1.04);
+  transform: translateY(-1px);
+}
+
+.resume:disabled {
+  cursor: wait;
+  opacity: 0.6;
+}
+
+.remaining {
+  margin-top: 15px;
+  color: #8e93bd;
+}
+
+@keyframes breath {
+  0%, 100% { opacity: 0.7; transform: scale(0.68); }
+  48%, 52% { opacity: 1; transform: scale(1); }
+}
+
+@keyframes stretch {
+  0%, 100% { transform: rotate(-8deg) translateY(3px); }
+  50% { transform: rotate(8deg) translateY(-4px); }
+}
+
+@keyframes note-arrive {
+  from { opacity: 0; transform: translateY(3px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .surface { backdrop-filter: none; }
+  .breathingRing,
+  .breathingCore,
+  .stretchArms { animation: none; }
+  .note { animation: none; }
+}

@@ -38,6 +38,8 @@ export interface EmberMorphProps {
   className?: string;
   showTimer?: boolean;
   onTimerVisibilityChange?: (visible: boolean) => void;
+  showSandglass?: boolean;
+  onSandglassVisibilityChange?: (visible: boolean) => void;
 }
 
 const BLOOM_EXIT_MS = 420;
@@ -74,6 +76,8 @@ export function EmberMorph({
   className,
   showTimer = true,
   onTimerVisibilityChange,
+  showSandglass = false,
+  onSandglassVisibilityChange,
 }: EmberMorphProps) {
   const reducedMotion = useReducedMotion();
   const exitHandledFor = useRef<string | null>(null);
@@ -119,6 +123,7 @@ export function EmberMorph({
     "--ember-origin-x": originX,
     "--ember-origin-y": originY,
   } as CSSProperties;
+  const timerExpired = status === "complete" && remainingS === 0;
 
   return (
     <section key={sessionId} className={shellClassName} aria-label="Focus session" style={bloomStyle}>
@@ -139,6 +144,16 @@ export function EmberMorph({
               Timer {showTimer ? "on" : "off"}
             </button>
           )}
+          {onSandglassVisibilityChange && (
+            <button
+              className={styles.sandglassToggle}
+              type="button"
+              aria-pressed={showSandglass}
+              onClick={() => onSandglassVisibilityChange(!showSandglass)}
+            >
+              Sandglass {showSandglass ? "on" : "off"}
+            </button>
+          )}
           <span className={`${styles.liveStatus} ${status === "paused" ? styles.pausedStatus : ""}`}>
             <span className={styles.liveDot} aria-hidden="true" />
             {statusLabel}
@@ -146,8 +161,10 @@ export function EmberMorph({
         </div>
       </header>
 
-      <div className={`${styles.frame} ${!showTimer ? styles.timerHidden : ""}`}>
-        {showTimer && <div className={styles.timerArea}>
+        <div className={`${styles.frame} ${!showTimer && !showSandglass ? styles.timerHidden : ""}`}>
+        {(showTimer || showSandglass) && <div className={styles.timerArea}>
+          {showTimer && <>
+          <div className={styles.timerReadout}>
           <div className={styles.ringWrap}>
             <svg
               className={styles.ring}
@@ -181,10 +198,27 @@ export function EmberMorph({
               <span className="num">{formatClock(elapsedS)}</span> invested
             </p>
           </div>
+          </div>
+          </>}
+          {showSandglass && <Sandglass progress={progress} complete={timerExpired} />}
         </div>}
 
         <div className={styles.content}>{children}</div>
       </div>
     </section>
+  );
+}
+
+function Sandglass({ progress, complete }: { progress: number; complete: boolean }) {
+  const filled = Math.max(0, Math.min(1, progress));
+  return (
+    <div className={`${styles.sandglass} ${complete ? styles.sandglassComplete : ""}`} role="img" aria-label={complete ? "Focus sandglass complete" : "Focus sandglass in progress"}>
+      <svg viewBox="0 0 62 96" aria-hidden="true">
+        <path className={styles.sandglassFrame} d="M12 7H50M12 89H50M15 8C15 30 24 39 31 48C38 57 47 66 47 88M47 8C47 30 38 39 31 48C24 57 15 66 15 88" />
+        <path className={styles.sandTop} d="M17 11H45L31 43Z" style={{ transform: `scaleY(${1 - filled})` }} />
+        <path className={styles.sandBottom} d="M31 53L45 85H17Z" style={{ transform: `scaleY(${filled})` }} />
+        <circle className={styles.sandDrop} cx="31" cy="49" r="1.8" />
+      </svg>
+    </div>
   );
 }

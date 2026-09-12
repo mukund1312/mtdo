@@ -300,6 +300,14 @@
   letter-spacing: -0.025em;
 }
 
+.celebrationCopy {
+  margin: 9px 0 0;
+  color: var(--dim);
+  font-size: 15px;
+  font-weight: 300;
+}
+
+
 .leftoverField {
   margin-top: 18px;
 }
@@ -431,6 +439,7 @@
   .setupFields {
     grid-template-columns: 1fr;
   }
+
 }
 
 @media (prefers-reduced-motion: reduce) {

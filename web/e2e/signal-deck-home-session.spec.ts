@@ -118,6 +118,10 @@ test("Home reflects a real picked task and Session shows real, non-fake coaching
   await page.reload();
   await expect(page.getByRole("button", { name: "Timer off" })).toBeVisible();
   await expect(page.getByRole("meter")).toHaveCount(0);
+  const sandglassToggle = page.getByRole("button", { name: "Sandglass off" });
+  await sandglassToggle.click();
+  await expect(page.getByRole("button", { name: "Sandglass on" })).toBeVisible();
+  await expect(page.getByRole("img", { name: "Focus sandglass in progress" })).toBeVisible();
   await expect(page.getByText(/if a join feels slippery/i)).toHaveCount(0);
   await expect(page.getByText(/what changes if an order has no matching customer/i)).toHaveCount(0);
   await expect(page.getByRole("button", { name: /ask for a nudge/i })).toHaveCount(0);
