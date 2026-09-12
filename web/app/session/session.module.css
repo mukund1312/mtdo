@@ -50,6 +50,180 @@
   gap: 10px;
 }
 
+/* Linked-task setup screen (deliverables 1/2). PR #162 removed the old
+ * *generic, duplicate* pre-session surface; this one only ever renders once
+ * a real linked block has resolved, and exists because break_plan and
+ * planned_duration_s are frozen at start_session() -- they cannot be chosen
+ * after the fact, so some pre-start moment is unavoidable. See the Focus
+ * Mode frontend PROGRESS.md entry for the full reconciliation. */
+.readyShell {
+  display: grid;
+  width: min(100%, 640px);
+  min-height: calc(100dvh - 64px);
+  margin: 0 auto;
+  align-content: center;
+  justify-items: start;
+}
+
+.readyShell h1 {
+  max-width: 600px;
+  margin: 14px 0 16px;
+  font-size: clamp(38px, 6vw, 60px);
+  font-weight: 900;
+  letter-spacing: -0.05em;
+  line-height: 1;
+  color: var(--ink);
+}
+
+.intro {
+  max-width: 520px;
+  margin: 0 0 8px;
+  color: var(--dim);
+  font-size: 16px;
+  font-weight: 300;
+  line-height: 1.55;
+}
+
+.startButton {
+  display: inline-flex;
+  min-width: 178px;
+  min-height: 44px;
+  margin-top: 22px;
+  padding: 0 20px;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-full);
+  color: #151729;
+  background: var(--acid);
+  font: inherit;
+  font-size: 14px;
+  font-weight: 500;
+  transition: transform 200ms var(--ease-spring), background 200ms ease;
+  cursor: pointer;
+}
+
+.startButton:hover:not(:disabled) {
+  transform: scale(1.045);
+}
+
+.startButton:disabled {
+  cursor: wait;
+  opacity: 0.6;
+}
+
+.notice {
+  margin: 14px 0 0;
+  color: var(--warning);
+  font-size: 13px;
+  font-weight: 400;
+}
+
+.setup {
+  display: grid;
+  width: 100%;
+  max-width: 460px;
+  gap: 16px;
+  margin: 26px 0 4px;
+  padding: 18px 20px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  background: linear-gradient(145deg, rgba(31, 35, 87, 0.6), rgba(18, 22, 56, 0.7));
+}
+
+.mmssField {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.mmssLabel {
+  color: var(--dim);
+  font-size: 13px;
+  font-weight: 400;
+}
+
+.mmssInputs {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--ink);
+  font-size: 14px;
+  font-weight: 500;
+}
+
+.mmssInputs input {
+  width: 46px;
+  padding: 6px 4px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--ink);
+  font: inherit;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+}
+
+.mmssInputs input:disabled {
+  opacity: 0.5;
+}
+
+.breakSetup {
+  display: grid;
+  gap: 12px;
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
+}
+
+.breakStepper {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.breakStepper button {
+  display: grid;
+  width: 30px;
+  height: 30px;
+  place-items: center;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-full);
+  background: transparent;
+  color: var(--ink);
+  font-size: 16px;
+  cursor: pointer;
+}
+
+.breakStepper button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.breakCount {
+  min-width: 18px;
+  color: var(--ink);
+  font-size: 15px;
+  font-weight: 700;
+  text-align: center;
+}
+
+.breakPreview {
+  margin: 0;
+  color: var(--dim);
+  font-size: 12.5px;
+  font-weight: 400;
+}
+
+.setupError {
+  margin: 0;
+  color: var(--warning);
+  font-size: 12.5px;
+  font-weight: 400;
+}
+
 .cardEyebrow {
   margin: 0;
   color: #57e7ff;
@@ -183,6 +357,348 @@
   background: rgba(87, 231, 255, 0.06);
 }
 
+.pauseButton {
+  min-height: 44px;
+  padding: 0 18px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-full);
+  color: var(--ink);
+  background: rgba(255, 255, 255, 0.05);
+  font: inherit;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.pauseButton:hover:not(:disabled) {
+  border-color: #57e7ff;
+  background: rgba(87, 231, 255, 0.08);
+}
+
+.pauseButton:disabled {
+  cursor: wait;
+  opacity: 0.6;
+}
+
+/* On-a-scheduled-break banner. --live (acid) is reserved for "happening
+ * right now" (DESIGN.md) -- a break is exactly that, the session's clock is
+ * genuinely stopped this second, so it earns the accent, not --warning. */
+.breakBanner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  margin-top: 24px;
+  padding: 14px 18px;
+  border: 1px solid rgba(215, 255, 82, 0.35);
+  border-radius: var(--radius-lg);
+  background: rgba(215, 255, 82, 0.08);
+}
+
+.breakBanner p {
+  margin: 0;
+  color: var(--ink);
+  font-size: 14px;
+  font-weight: 300;
+}
+
+.breakBanner button {
+  min-height: 36px;
+  padding: 0 14px;
+  border: 1px solid rgba(215, 255, 82, 0.45);
+  border-radius: var(--radius-full);
+  color: var(--live);
+  background: transparent;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+/* "Do you need more time?" prompt -- last 5 minutes of a running session. */
+.extendPrompt {
+  margin-top: 24px;
+  padding: 16px 18px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.extendPrompt p {
+  margin: 0 0 12px;
+  color: var(--ink);
+  font-size: 14px;
+  font-weight: 400;
+}
+
+.extendActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.extendActions button {
+  min-height: 36px;
+  padding: 0 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-full);
+  color: var(--dim);
+  background: transparent;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.extendActions button:hover:not(:disabled) {
+  color: var(--ink);
+  border-color: #57e7ff;
+}
+
+.extendPrimary {
+  color: #151729 !important;
+  border-color: transparent !important;
+  background: var(--accent) !important;
+}
+
+.extendDecline {
+  margin-left: auto;
+  color: var(--dim) !important;
+}
+
+/* Post-expiry "did you finish, or is something left" prompt. */
+.outcomeCard {
+  margin-top: 28px;
+  padding-top: 24px;
+  border-top: 1px solid var(--line);
+}
+
+.outcomeQuestion {
+  margin: 0 0 18px;
+  color: var(--ink);
+  font-size: 16px;
+  font-weight: 500;
+}
+
+.leftoverLabel {
+  display: block;
+  margin-bottom: 8px;
+  color: var(--dim);
+  font-size: 13px;
+  font-weight: 400;
+}
+
+.leftoverInput {
+  width: 100%;
+  padding: 12px 14px;
+  margin-bottom: 18px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  background: rgba(255, 255, 255, 0.03);
+  color: var(--ink);
+  font: inherit;
+  font-size: 14px;
+  line-height: 1.5;
+  resize: vertical;
+}
+
+.leftoverInput:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* Focus Mode's music dock (focus-music.tsx) -- restyles the existing
+ * useSignalDeckListen() state for this surface's own tokens; not a copy of
+ * the Signal Deck's a02-listen chrome. */
+.musicDock {
+  margin-top: 14px;
+  padding: 16px 20px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-xl);
+  background: linear-gradient(145deg, rgba(31, 35, 87, 0.6), rgba(18, 22, 56, 0.7));
+}
+
+.musicHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.musicTabs {
+  display: flex;
+  gap: 4px;
+  padding: 3px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-full);
+}
+
+.musicTabs button {
+  min-height: 28px;
+  padding: 0 14px;
+  border: none;
+  border-radius: var(--radius-full);
+  background: transparent;
+  color: var(--dim);
+  font: inherit;
+  font-size: 12.5px;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.musicTabActive {
+  color: #151729 !important;
+  background: var(--accent) !important;
+}
+
+.musicNowPlaying {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-top: 16px;
+}
+
+.musicNowPlaying > div {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.musicNowPlaying b {
+  overflow: hidden;
+  color: var(--ink);
+  font-size: 14px;
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.musicNowPlaying span {
+  overflow: hidden;
+  color: var(--dim);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.musicTransport {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 8px;
+}
+
+.musicTransport button {
+  display: grid;
+  width: 32px;
+  height: 32px;
+  flex-shrink: 0;
+  place-items: center;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-full);
+  background: transparent;
+  color: var(--ink);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.musicTransport button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.musicPlay {
+  width: 38px !important;
+  height: 38px !important;
+  color: #151729 !important;
+  background: var(--accent) !important;
+  border-color: transparent !important;
+}
+
+.musicLibraryToggle {
+  margin-top: 12px;
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--dim);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.musicLibraryToggle:hover {
+  color: var(--ink);
+}
+
+.musicLibrary {
+  display: grid;
+  gap: 10px;
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+}
+
+.musicSourceRow {
+  display: flex;
+  gap: 6px;
+}
+
+.musicSourceRow button {
+  min-height: 26px;
+  padding: 0 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-full);
+  background: transparent;
+  color: var(--dim);
+  font: inherit;
+  font-size: 11.5px;
+  cursor: pointer;
+}
+
+.musicTrackList {
+  display: grid;
+  max-height: 160px;
+  padding: 0;
+  margin: 0;
+  list-style: none;
+  gap: 2px;
+  overflow-y: auto;
+}
+
+.musicTrackList button {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 7px 8px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--dim);
+  font: inherit;
+  font-size: 12.5px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.musicTrackList button:hover {
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--ink);
+}
+
+.musicTrackList em {
+  flex-shrink: 0;
+  color: var(--dim);
+  font-size: 11px;
+  font-style: normal;
+}
+
+.musicTrackActive {
+  color: var(--accent) !important;
+}
+
 .coachRail {
   display: flex;
   min-height: 100%;
@@ -256,6 +772,7 @@
 .startButton:focus-visible,
 .completeButton:focus-visible,
 .abandonButton:focus-visible,
+.pauseButton:focus-visible,
 .askButton:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 3px;
@@ -264,6 +781,10 @@
 @media (max-width: 620px) {
   .page {
     padding: 24px 16px;
+  }
+
+  .readyShell {
+    min-height: calc(100dvh - 48px);
   }
 
   .focusLayout {
@@ -280,8 +801,10 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
+  .startButton,
   .completeButton,
   .abandonButton,
+  .pauseButton,
   .askButton {
     transition: none;
   }
