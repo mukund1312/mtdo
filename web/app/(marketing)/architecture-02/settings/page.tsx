@@ -1,9 +1,11 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { PlanningModeSelector } from "../planning-mode-selector";
+import { DockStyleChooser } from "../dock-style-chooser";
 import { isPlanningMode, type PlanningMode } from "../planning-mode";
 import "../signal-deck.css";
 import "../planning-mode-selector.css";
@@ -13,6 +15,7 @@ import "../fixed-layer-safety.css";
 type AIStatus = { models: string[]; provider: string; reachable: boolean };
 type LoadState = "loading" | "ready" | "error";
 type PlanState = "loading" | "ready" | "error" | "no-plan";
+type SettingsSection = "general" | "appearance" | "planning" | "integrations" | "account" | "system" | "help";
 
 type CalendarStatus = {
   configured: boolean;
@@ -37,12 +40,11 @@ const CALENDAR_OUTCOMES: Record<string, string> = {
   "state-mismatch": "That sign-in didn't start here, so it was refused. Try again from this page.",
 };
 
-// Settings -> AI (Phase 2 of the operating-engine plan). The rest of
-// Settings (Plan & Data, Integrations, Preferences, Record, Account, Help)
-// is Phase 8's "More" surface -- this page is deliberately just the one
-// section Phase 2 actually built a backend for, not a stand-in for the
-// whole thing.
+// Settings -> AI (Phase 2 of the operating-engine plan). The provider
+// report remains read-only: it is a server capability, not a per-user
+// preference.
 export default function SignalDeckSettingsPage() {
+  const [activeSection, setActiveSection] = useState<SettingsSection>("appearance");
   const [status, setStatus] = useState<AIStatus | null>(null);
   const [state, setState] = useState<LoadState>("loading");
 
@@ -215,7 +217,27 @@ export default function SignalDeckSettingsPage() {
         </Link>
       </div>
 
-      <section className="a02-product-state a02-settings-card" aria-labelledby="ai-settings-title">
+      <div className="a02-settings-workspace">
+        <nav className="a02-settings-nav" aria-label="Settings sections">
+          <span>SETTINGS</span>
+          <button type="button" className={activeSection === "general" ? "is-active" : ""} onClick={() => setActiveSection("general")}>General</button>
+          <button type="button" className={activeSection === "appearance" ? "is-active" : ""} onClick={() => setActiveSection("appearance")}>Appearance</button>
+          <button type="button" className={activeSection === "planning" ? "is-active" : ""} onClick={() => setActiveSection("planning")}>Planning &amp; Route</button>
+          <button type="button" className={activeSection === "integrations" ? "is-active" : ""} onClick={() => setActiveSection("integrations")}>Integrations</button>
+          <button type="button" className={activeSection === "account" ? "is-active" : ""} onClick={() => setActiveSection("account")}>Account</button>
+          <button type="button" className={activeSection === "system" ? "is-active" : ""} onClick={() => setActiveSection("system")}>System</button>
+          <button type="button" className={activeSection === "help" ? "is-active" : ""} onClick={() => setActiveSection("help")}>Help</button>
+          <small>COMING LATER</small>
+          <i>Focus · Kanban · Goals<br />Listen · Notifications · Tutor</i>
+        </nav>
+
+        <div className="a02-settings-content">
+          {activeSection === "general" && <GeneralSettings />}
+          {activeSection === "appearance" && <section className="a02-product-state a02-settings-card" aria-label="Appearance settings"><DockStyleChooser /></section>}
+          {activeSection === "account" && <AccountSettings />}
+          {activeSection === "help" && <HelpSettings />}
+
+          {activeSection === "system" && <section className="a02-product-state a02-settings-card" aria-labelledby="ai-settings-title">
         <b id="ai-settings-title">AI provider</b>
         {state === "loading" && <p>Checking the configured provider…</p>}
         {state === "error" && (
@@ -249,8 +271,9 @@ export default function SignalDeckSettingsPage() {
           switch here yet. Self-hosting with Ollama: point <code>OLLAMA_ENDPOINT</code> at a
           running daemon; a failed health check falls back to Anthropic automatically.
         </p>
-      </section>
+          </section>}
 
+          {activeSection === "planning" && <>
       <section className="a02-product-state a02-settings-card" aria-labelledby="planning-mode-title">
         <b id="planning-mode-title">Planning mode</b>
         <p className="a02-settings-note">Choose whether your Signal Deck should frame the route one week at a time or against the whole goal.</p>
@@ -275,8 +298,14 @@ export default function SignalDeckSettingsPage() {
           </>
         )}
       </section>
+      <section className="a02-product-state a02-settings-card" aria-labelledby="route-tools-title">
+        <b id="route-tools-title">Route tools</b>
+        <p className="a02-settings-note">Import an existing route or export the route you have. These tools use the same active plan as Signal Deck.</p>
+        <Link href="/architecture-02/onboarding/import" className="a02-settings-action">Open import / export ↗</Link>
+      </section>
+          </>}
 
-      <section className="a02-product-state a02-settings-card" aria-labelledby="calendar-settings-title">
+          {activeSection === "integrations" && <section className="a02-product-state a02-settings-card" aria-labelledby="calendar-settings-title">
         <b id="calendar-settings-title">Calendar</b>
         {calendarNotice && (
           <p className="a02-settings-note" role="status">
@@ -354,7 +383,137 @@ export default function SignalDeckSettingsPage() {
             </p>
           </>
         )}
-      </section>
+          </section>}
+        </div>
+      </div>
     </main>
   );
+}
+
+function GeneralSettings() {
+  const router = useRouter();
+  const [timezone, setTimezone] = useState("UTC");
+  const [state, setState] = useState<LoadState>("loading");
+  const [notice, setNotice] = useState<string | null>(null);
+  const zones = useMemo(() => {
+    const supported = typeof Intl.supportedValuesOf === "function" ? Intl.supportedValuesOf("timeZone") : ["UTC"];
+    return Array.from(new Set(["UTC", Intl.DateTimeFormat().resolvedOptions().timeZone, ...supported])).filter(Boolean).sort();
+  }, []);
+
+  useEffect(() => {
+    const timer = window.setTimeout(async () => {
+      const supabase = createClient();
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) { setState("error"); return; }
+      const { data, error } = await supabase.from("profiles").select("timezone").eq("id", user.id).maybeSingle();
+      if (error) { setState("error"); return; }
+      setTimezone(data?.timezone ?? Intl.DateTimeFormat().resolvedOptions().timeZone ?? "UTC");
+      setState("ready");
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, []);
+
+  const saveTimezone = async (next: string) => {
+    setTimezone(next);
+    setNotice(null);
+    const supabase = createClient();
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) { setNotice("Sign in to save your time zone."); return; }
+    const { error } = await supabase.from("profiles").update({ timezone: next }).eq("id", user.id);
+    setNotice(error ? "Couldn’t save that time zone. Try again." : "Time zone saved.");
+  };
+
+  const replayGuide = () => {
+    try { window.localStorage.removeItem("mtdo:signal-deck:walkthrough"); } catch { /* navigation still works */ }
+    router.push("/architecture-02");
+  };
+
+  return <>
+    <section className="a02-product-state a02-settings-card" aria-labelledby="general-time-title">
+      <b id="general-time-title">Time zone</b>
+      <p className="a02-settings-note">Sets the local day used by Today, Review, and calendar sync.</p>
+      {state === "loading" && <p>Reading your time zone…</p>}
+      {state === "error" && <p role="alert">Couldn’t read your profile time zone.</p>}
+      {state === "ready" && <label className="a02-settings-select"><span>Current time zone</span><select value={timezone} onChange={(event) => void saveTimezone(event.target.value)}>{zones.map((zone) => <option key={zone} value={zone}>{zone}</option>)}</select></label>}
+      {notice && <p className="a02-settings-note" role="status">{notice}</p>}
+    </section>
+    <section className="a02-product-state a02-settings-card" aria-labelledby="guide-title">
+      <b id="guide-title">Field Guide</b>
+      <p className="a02-settings-note">Replay the existing Signal Deck walkthrough whenever you want a quick tour of the route, Kanban, focus, and review loop.</p>
+      <button type="button" className="a02-settings-action" onClick={replayGuide}>Replay Field Guide ↗</button>
+    </section>
+  </>;
+}
+
+function AccountSettings() {
+  const router = useRouter();
+  const [name, setName] = useState("");
+  const [email, setEmail] = useState<string | null>(null);
+  const [state, setState] = useState<LoadState>("loading");
+  const [notice, setNotice] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    const timer = window.setTimeout(async () => {
+      const supabase = createClient();
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) { setState("error"); return; }
+      const { data, error } = await supabase.from("profiles").select("display_name").eq("id", user.id).maybeSingle();
+      if (error) { setState("error"); return; }
+      setName(data?.display_name ?? "");
+      setEmail(user.email ?? null);
+      setState("ready");
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, []);
+
+  const save = async () => {
+    setSaving(true); setNotice(null);
+    const supabase = createClient();
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) { setSaving(false); setNotice("Sign in to save your profile."); return; }
+    const { error } = await supabase.from("profiles").update({ display_name: name.trim() || null }).eq("id", user.id);
+    setSaving(false); setNotice(error ? "Couldn’t save your profile. Try again." : "Profile saved.");
+  };
+
+  const resetPassword = async () => {
+    if (!email) return;
+    const redirectTo = `${window.location.origin}/auth/callback?next=${encodeURIComponent("/architecture-02?auth=reset")}`;
+    const { error } = await createClient().auth.resetPasswordForEmail(email, { redirectTo });
+    setNotice(error ? "Couldn’t send a password-reset link. Try again." : "If this account supports password login, a secure reset link is on its way.");
+  };
+
+  const signOut = async () => {
+    setSaving(true);
+    const { error } = await createClient().auth.signOut();
+    if (error) { setSaving(false); setNotice("Couldn’t log out. Try again."); return; }
+    router.replace("/architecture-02?auth=logged-out");
+    router.refresh();
+  };
+
+  return <section className="a02-product-state a02-settings-card" aria-labelledby="account-title">
+    <b id="account-title">Account</b>
+    {state === "loading" && <p>Reading your account…</p>}
+    {state === "error" && <p role="alert">Couldn’t read account details. Open the profile menu on Deck to try again.</p>}
+    {state === "ready" && <div className="a02-settings-form">
+      <label><span>Display name</span><input value={name} maxLength={80} onChange={(event) => setName(event.target.value)} placeholder="How MTDO should address you" /></label>
+      <label><span>Email</span><input value={email ?? "Guest route"} readOnly aria-readonly="true" /></label>
+      <div className="a02-settings-actions"><button type="button" className="a02-settings-action" onClick={() => void save()} disabled={saving}>{saving ? "Saving…" : "Save profile"}</button><button type="button" className="a02-settings-secondary" onClick={() => void resetPassword()} disabled={!email || saving}>Reset password</button><button type="button" className="a02-settings-danger" onClick={() => void signOut()} disabled={saving}>Log out</button></div>
+    </div>}
+    {notice && <p className="a02-settings-note" role="status">{notice}</p>}
+  </section>;
+}
+
+function HelpSettings() {
+  return <>
+    <section className="a02-product-state a02-settings-card" aria-labelledby="shortcuts-title">
+      <b id="shortcuts-title">Keyboard shortcuts</b>
+      <div className="a02-shortcuts"><span><kbd>?</kbd> Open Field Guide</span><span><kbd>M</kbd> Open Navigation Wheel</span><span><kbd>Space</kbd> Play / pause Radio</span><span><kbd>N</kbd> Next radio station</span><span><kbd>P</kbd> Previous radio station</span><span><kbd>F</kbd> Favourite radio station</span></div>
+      <p className="a02-settings-note">Shortcuts run only when focus is not in a text field. Shortcut remapping is not available yet.</p>
+    </section>
+    <section className="a02-product-state a02-settings-card" aria-labelledby="feedback-title">
+      <b id="feedback-title">Feedback</b>
+      <p className="a02-settings-note">Use the Feedback control at the lower-right of the app to send product feedback with the current screen attached.</p>
+    </section>
+  </>;
 }
