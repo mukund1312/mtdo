@@ -9,6 +9,138 @@ Add each session's PROGRESS.md entry to the same branch as the code it describes
 
 ---
 
+## [frontend] 2026-09-12 (PR pending) — Calendar: editable duration, real overlap lanes, category colour, per-event notes
+
+Phase 6 calendar follow-up, built directly against the founder's own words rather than a
+spec doc: "If I want to allocate 1h, 30 mins, or 15 mins, the blocks should be editable.
+And if one block is 30 mins, I should be able to add more in the block, just like Google
+Calendar -- multiple events in a time block, each meaning a different colour, and each
+event should be custom -- I should be able to add a note." Frontend only, no RPC/migration
+touched -- `schedule_block()` already supports the resize call shape (existing
+`p_start_at`, new `p_end_at`) and `blocks.notes` is already directly client-writable, both
+confirmed against api.md/schema.md before writing a line of code, not assumed.
+
+Read the Phase 6 frontend entry and both calendar-alignment-bug entries (PR #158, PR #161)
+first, per the brief -- PR #161's root-cause fix (a dead mockup stylesheet silently
+overriding `grid-template-rows`) is why `ROW_HEIGHT`/`eventGeometry()`'s vertical math was
+treated as off-limits throughout this session; every new mechanism here is a horizontal or
+duration-only layer on top of it, never a parallel calculation.
+
+- **Drag-to-resize (bottom edge only).** New `snapMinutesFromPixels()` is the literal
+  inverse of `eventGeometry()`'s own height formula (`(deltaPx/ROW_HEIGHT)*60`, rounded to
+  **15-minute** snaps) -- reusing the one existing conversion rather than re-deriving it is
+  what keeps this from drifting off the geometry PR #161 spent real effort fixing. A plain
+  `mousedown`/`mousemove`/`mouseup` interaction (not the existing HTML5 DnD move-drag path,
+  which resize sits alongside, never replaces) tracks `{ blockId, startClientY,
+  baseDurationMinutes, deltaMinutes }` in a ref (read at `mouseup`, since a `mousemove`
+  handler that only re-runs when `resizingId` changes would otherwise close over a stale
+  delta) plus a `deltaMinutes` state purely for the live preview height. Commits through
+  the existing `rescheduleBlock()` -> `schedule_block()` path with the block's unchanged
+  start and the new end -- a resize genuinely IS a reschedule, just one whose start never
+  moves, so no new write path exists.
+- **Overlap lanes (`calendar-overlap.ts`, new, unit tested).** Google Calendar's own
+  algorithm: sort by start time, chain overlapping/adjacent intervals into clusters (a
+  block belongs to a cluster if its start is before the running max end time already in
+  it -- two blocks don't need to directly overlap each other, only be connected through a
+  chain), then within each cluster greedily assign every block to the lowest-numbered lane
+  whose last-placed block already ended. Lane count is therefore each cluster's REAL max
+  concurrent overlap, not a whole-day-wide count -- a two-block 9am cluster and an
+  unrelated three-block 2pm cluster get 2 and 3 lanes respectively, never both forced to 3.
+  `laneStyle()` turns `{lane, laneCount}` into `calc()` left/width strings (nested calc is
+  valid CSS, browsers resolve it fine) so the mixed `%`/`px` math -- the day column's
+  responsive width minus fixed edge insets and inter-lane gaps -- is resolved by the
+  browser, not guessed at in JS. Returns `null` for the common single-lane case so the
+  existing `left:3px;right:3px` CSS rule keeps working untouched. **Month view deliberately
+  gets no lane logic** -- its `.a02-month-chip`s are never absolutely time-positioned (an
+  ordinary vertical list, up to 3 + overflow), so nothing can visually collide there in the
+  first place; documented in a code comment rather than silently skipped.
+- **Category colour (`category-color.ts`, new, unit tested) is now the dominant chip
+  colour**, priority-based colour is retired to a small dot next to the category label
+  (kept on the SAME line as the label, not a new line -- a 4th line would grow past the
+  40px legibility floor PR #158/#161 tuned and reopen the short-block clipping bug).
+  `categoryColorToken()` is a djb2 hash of `category_id` mod 4, into the four accent tokens
+  this route already uses (`--ultra`/`--acid`/`--coral`/`--aqua`, defined once on
+  `.a02-shell` in signal-deck.css) -- no new colour system, matching the brief's explicit
+  instruction. `plan_categories` has no `color` column and none was added: a derived,
+  deterministic hash needs no persistence, the same `category_id` always lands on the same
+  slot. **A real 4-slot palette collision between two categories is possible and expected**
+  (documented in the module's own comment, not hidden) -- a plan with more than four
+  categories, or an unlucky pair of random UUIDs, will share a slot, the same tradeoff
+  Google Calendar's own limited palette makes once a user has enough calendars.
+- **Per-event notes.** A textarea in the existing `BlockDetailPopover` (`.a02-composer
+  textarea` already had shared styling from `product-deck.css`, nothing new needed there),
+  save-on-blur via a plain `supabase.from("blocks").update({ notes })` -- no RPC, per
+  schema.md §6's grants table. Save state (`idle`/`saving`/`saved`/`error`) is a real,
+  visible status line, never a silent failure. Draft state resets via a `useState`
+  comparison against the previous `block.id` (React's own documented "adjusting state when
+  a prop changes" pattern) rather than a `useRef` -- this project's `react-hooks/refs`
+  eslint rule flags ref reads/writes during render even though React's docs technically
+  allow it, so the ref-based version I wrote first had to be replaced, not just the
+  approach chosen fresh. **Confirmed, not rebuilt**, that the note already surfaces beyond
+  the calendar popover: `today-deck.tsx`'s `KanbanCard` footer already falls back to
+  `notes` when nothing is logged yet (`roughDuration(0)` is `null`), so a note written from
+  the calendar is visible on the Kanban board with zero changes there.
+
+**A real, non-obvious bug found only by testing the actual feature, not by reading the
+code:** the category-colour e2e test's first version asserted two arbitrary real categories
+render DIFFERENT colours. That's wrong on its own terms -- `category_id` is a
+server-generated UUID, and a 4-slot palette over two random UUIDs collides roughly 25% of
+the time, exactly the tradeoff `category-color.ts`'s own comment already documented. The
+test failed on a genuine, expected collision, not a code bug. Fixed by exposing
+`data-category-id` on the chip (test-only, read by nothing in app code) and asserting
+against `categoryColorToken(realCategoryId)` directly -- the real function, the real id --
+rather than guessing at "different category implies different colour."
+
+**Verification hit this project's own documented Supabase anonymous-auth rate limit,
+repeatedly, and the fix followed the same established pattern as the 2026-09-12 backend
+session/page.tsx entry.** The new `e2e/phase6b-calendar-editing.spec.ts` originally spun up
+a fresh anonymous sign-in per `test()` (4 total); back-to-back with this session's own
+earlier debugging runs, that reliably tripped "No authenticated session. Refresh and try
+again." -- confirmed NOT a regression by re-running the pre-existing, untouched
+`phase6-calendar.spec.ts` immediately beforehand each time and watching it fail with the
+identical signature. Rewritten as `test.describe.serial` with ONE shared `page`/anonymous
+session for all four sub-tests (Playwright's own documented pattern for exactly this),
+cutting sign-ins from 4 to 1. A full combined `--workers=1` run of all 10 spec files still
+re-exhausted the same tight budget mid-run (14 failures, every one the identical "No
+authenticated session" signature, spanning files this session never touched --
+`onboarding.spec.ts`, `phase3-plan-pipeline.spec.ts`, `settings.spec.ts` included) --
+environmental, not a regression, and consistent with this project's own repeatedly-recorded
+"CI is authoritative for a combined run, isolated per-file/per-suite runs are the trustworthy
+local signal" practice (2026-09-08, 2026-09-11 backend, 2026-09-11 frontend entries all hit
+the same class of issue). **Two real Playwright bugs found and fixed along the way, not
+flakiness:** `getByRole("button", {name: "Close"})` substring-matched the popover's other
+"ESC / close ×" button by default (needed `exact: true`); and `dragTo()`'s default
+centre-of-target position landed squarely on an already-scheduled chip's own body when
+testing the overlap-lane case on purpose (an 8px sliver at the row's bottom is the only
+part of a fully-occupied hour slot's drop target NOT covered by its existing 40px-floor
+chip) -- fixed with an explicit `targetPosition`.
+
+Verification: `tsc`/`eslint` clean, `205/205` vitest (12 new -- `calendar-overlap.test.ts`,
+`category-color.test.ts`). `e2e/phase6-calendar.spec.ts` (the row-height/hour-label
+regression gate PR #161 fixed) **3/3 in isolation**, confirmed clean both before and after
+this session's changes. New `e2e/phase6b-calendar-editing.spec.ts` **4/4 in isolation**
+(one shared session): resize persists a snapped duration and stays grid-aligned after
+reload (bounding-box cross-check against the real grid cell, PR #161's own verification
+technique, not just an isolated CSS assertion); two identically-scheduled blocks render in
+two equal-width lanes, are independently clickable, and the layout correctly collapses back
+to one full-width lane once one block is dragged away; category colour matches the real
+hash function end-to-end and priority stays visible as a secondary dot; a note persists
+through a real reload and surfaces on the Kanban card. Built and served from an isolated
+port (3212, `.env.local` copied from the shared checkout since this worktree started
+without one -- `NEXT_PUBLIC_*` vars are inlined at BUILD time, so the first attempt against
+it silently rendered "Supabase URL and API key required" until rebuilt), `ps`/`lsof`
+checked before trusting every run per the brief's own warning about stray servers from
+other concurrent worktree sessions.
+
+Judgment calls, flagged for review: bottom-edge-only resize (top-edge/start-time changes
+still go through the existing whole-block move-drag, judged sufficient rather than adding a
+second handle); 15-minute snap increment (matches the founder's own "1h, 30min, 15min"
+language, and divides ROW_HEIGHT into whole pixels); the 4-colour palette is exactly this
+route's four existing accent tokens with no 5th+ colour added for plans with more
+categories (a real, documented, Google-Calendar-precedented tradeoff, not an oversight).
+
+---
+
 ## [backend] 2026-09-12 (PR pending) — Focus Mode round two: pause/resume, breaks, extension, and the block outcome that never existed
 
 Session-authority-tier work (`decisions.md` 2026-09-04: "client-led timers are too fragile under

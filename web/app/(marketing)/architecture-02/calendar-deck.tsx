@@ -638,6 +638,14 @@ function EventChip({ block, lanePlacement, moving, resizeDeltaMinutes, resizing,
       style={style}
       draggable={!moving && !resizing}
       data-testid={`calendar-event-${block.id}`}
+      // Exposed for tests only, not read by any app code: category_id is a
+      // server-generated UUID, so two real categories can legitimately (if
+      // unluckily) land on the same of the four palette slots -- that's the
+      // documented tradeoff in category-color.ts, not a bug. A test can't
+      // assert "these two differ" against a random UUID without sometimes
+      // being wrong; this lets a test compute the real expected token via
+      // categoryColorToken(realCategoryId) instead of guessing.
+      data-category-id={block.category_id}
       onDragStart={onDragStart}
       onDragEnd={onDragEnd}
       onClick={onOpen}
