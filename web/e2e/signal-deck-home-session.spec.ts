@@ -30,7 +30,7 @@ test("Home and Time show honest empty states for a brand-new user, no fake liter
   // blocks at all).
   await openSignalDeckDestination(page, "Time");
   await expect(page.getByRole("heading", { name: /give time/i })).toBeVisible();
-  await expect(page.getByText(/nothing waiting/i)).toBeVisible();
+  await expect(page.getByTestId("calendar-unscheduled-panel").getByRole("button")).toHaveCount(0);
   await expect(page.locator('[data-testid^="calendar-event-"]')).toHaveCount(0);
   await expect(page.getByText("Two Sum")).toHaveCount(0);
 
@@ -107,6 +107,17 @@ test("Home reflects a real picked task and Session shows real, non-fake coaching
   await expect(page.getByLabel("Focus minutes")).toHaveValue("50");
   await page.getByRole("button", { name: /begin focus/i }).click();
   await expect(page.getByRole("heading", { name: /stay with the question/i })).toBeVisible();
+  const timerToggle = page.getByRole("button", { name: "Timer on" });
+  await expect(timerToggle).toBeVisible();
+  await expect(page.getByRole("meter")).toBeVisible();
+  await expect(page.getByText("Focus remaining")).toBeVisible();
+  await timerToggle.click();
+  await expect(page.getByRole("button", { name: "Timer off" })).toBeVisible();
+  await expect(page.getByRole("meter")).toHaveCount(0);
+  await expect(page.getByText("Focus remaining")).toHaveCount(0);
+  await page.reload();
+  await expect(page.getByRole("button", { name: "Timer off" })).toBeVisible();
+  await expect(page.getByRole("meter")).toHaveCount(0);
   await expect(page.getByText(/if a join feels slippery/i)).toHaveCount(0);
   await expect(page.getByText(/what changes if an order has no matching customer/i)).toHaveCount(0);
   await expect(page.getByRole("button", { name: /ask for a nudge/i })).toHaveCount(0);

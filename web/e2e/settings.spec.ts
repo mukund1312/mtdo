@@ -60,19 +60,6 @@ test("Settings shows an honest empty state for planning mode when there is no ac
   await expect(page.getByRole("radiogroup", { name: /planning mode/i })).toHaveCount(0);
 });
 
-test("Focus clock preference persists locally", async ({ page }) => {
-  await page.goto("/architecture-02/settings");
-  await page.getByRole("button", { name: "Focus" }).click();
-
-  const clockPreference = page.getByRole("switch", { name: /show clock in focus mode/i });
-  await expect(clockPreference).toBeChecked();
-  await clockPreference.uncheck();
-  await expect(clockPreference).not.toBeChecked();
-
-  await page.reload();
-  await page.getByRole("button", { name: "Focus" }).click();
-  await expect(page.getByRole("switch", { name: /show clock in focus mode/i })).not.toBeChecked();
-});
 
 // Phase 2's frontend piece: Settings -> AI is a real status panel backed by
 // GET /api/ai/status, not a static mock -- and the "More" dock button
@@ -125,6 +112,12 @@ test("Calendar routes degrade cleanly when Google isn't configured", async ({ pa
   // Establish the anonymous session the routes require, the same way every
   // other authenticated surface in this suite does.
   await page.goto("/architecture-02");
+
+  // The browser visit above mints the anonymous session via proxy.ts. Reload
+  // once so the request context below unquestionably carries the returned
+  // auth cookies; this is materially different from assuming a first-page
+  // response has already propagated them under CI's production server.
+  await page.reload();
 
   const status = await page.request.get("/api/calendar/status");
   expect(status.status()).toBe(200);

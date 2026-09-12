@@ -7,7 +7,6 @@ import { createClient } from "@/lib/supabase/client";
 import { PlanningModeSelector } from "../planning-mode-selector";
 import { DockStyleChooser } from "../dock-style-chooser";
 import { isPlanningMode, type PlanningMode } from "../planning-mode";
-import { useFocusClockPreference } from "@/lib/preferences/focus-clock";
 import "../signal-deck.css";
 import "../planning-mode-selector.css";
 import "./settings.css";
@@ -16,7 +15,7 @@ import "../fixed-layer-safety.css";
 type AIStatus = { models: string[]; provider: string; reachable: boolean };
 type LoadState = "loading" | "ready" | "error";
 type PlanState = "loading" | "ready" | "error" | "no-plan";
-type SettingsSection = "general" | "appearance" | "focus" | "planning" | "integrations" | "account" | "system" | "help";
+type SettingsSection = "general" | "appearance" | "planning" | "integrations" | "account" | "system" | "help";
 
 type CalendarStatus = {
   configured: boolean;
@@ -48,7 +47,6 @@ export default function SignalDeckSettingsPage() {
   const [activeSection, setActiveSection] = useState<SettingsSection>("appearance");
   const [status, setStatus] = useState<AIStatus | null>(null);
   const [state, setState] = useState<LoadState>("loading");
-  const [showFocusClock, setShowFocusClock] = useFocusClockPreference();
 
   const load = useCallback(async () => {
     setState("loading");
@@ -224,31 +222,18 @@ export default function SignalDeckSettingsPage() {
           <span>SETTINGS</span>
           <button type="button" className={activeSection === "general" ? "is-active" : ""} onClick={() => setActiveSection("general")}>General</button>
           <button type="button" className={activeSection === "appearance" ? "is-active" : ""} onClick={() => setActiveSection("appearance")}>Appearance</button>
-          <button type="button" className={activeSection === "focus" ? "is-active" : ""} onClick={() => setActiveSection("focus")}>Focus</button>
           <button type="button" className={activeSection === "planning" ? "is-active" : ""} onClick={() => setActiveSection("planning")}>Planning &amp; Route</button>
           <button type="button" className={activeSection === "integrations" ? "is-active" : ""} onClick={() => setActiveSection("integrations")}>Integrations</button>
           <button type="button" className={activeSection === "account" ? "is-active" : ""} onClick={() => setActiveSection("account")}>Account</button>
           <button type="button" className={activeSection === "system" ? "is-active" : ""} onClick={() => setActiveSection("system")}>System</button>
           <button type="button" className={activeSection === "help" ? "is-active" : ""} onClick={() => setActiveSection("help")}>Help</button>
           <small>COMING LATER</small>
-          <i>Kanban · Goals · Listen<br />Notifications · Tutor</i>
+          <i>Focus · Kanban · Goals<br />Listen · Notifications · Tutor</i>
         </nav>
 
         <div className="a02-settings-content">
           {activeSection === "general" && <GeneralSettings />}
           {activeSection === "appearance" && <section className="a02-product-state a02-settings-card" aria-label="Appearance settings"><DockStyleChooser /></section>}
-          {activeSection === "focus" && (
-            <section className="a02-product-state a02-settings-card" aria-labelledby="focus-settings-title">
-              <b id="focus-settings-title">Focus mode</b>
-              <label className="a02-settings-toggle">
-                <span>
-                  <strong>Show clock in Focus Mode</strong>
-                  <small>Keep the current time available without competing with your focus timer.</small>
-                </span>
-                <input type="checkbox" role="switch" checked={showFocusClock} onChange={(event) => setShowFocusClock(event.target.checked)} />
-              </label>
-            </section>
-          )}
           {activeSection === "account" && <AccountSettings />}
           {activeSection === "help" && <HelpSettings />}
 

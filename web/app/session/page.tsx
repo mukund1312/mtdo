@@ -5,7 +5,7 @@ import { EmberMorph, type EmberMorphTrigger } from "@/components/EmberMorph";
 import { createClient } from "@/lib/supabase/client";
 import { recordEvent } from "@/lib/analytics/record-event";
 import { buildCoachingContent, type CategoryMeta, type CoachingFields } from "@/lib/coaching/build-coaching-content";
-import { useFocusClockPreference } from "@/lib/preferences/focus-clock";
+import { useFocusTimerPreference } from "@/lib/preferences/focus-timer";
 import styles from "./session.module.css";
 
 type FocusSession = {
@@ -111,7 +111,7 @@ function messageFrom(error: { code?: string; message?: string } | null) {
 }
 
 export default function SessionPage() {
-  const [showFocusClock] = useFocusClockPreference();
+  const [showFocusTimer, setShowFocusTimer] = useFocusTimerPreference();
   const [phase, setPhase] = useState<SessionPhase>("ready");
   const [session, setSession] = useState<FocusSession | null>(null);
   const [elapsedS, setElapsedS] = useState(0);
@@ -581,7 +581,7 @@ export default function SessionPage() {
 
   return (
     <main className={styles.page}>
-      <EmberMorph trigger={trigger} onExitComplete={finishExit} showClock={showFocusClock}>
+      <EmberMorph trigger={trigger} onExitComplete={finishExit} showTimer={showFocusTimer} onTimerVisibilityChange={setShowFocusTimer}>
         <div className={styles.focusLayout}>
           <section className={styles.taskPanel} aria-labelledby="focus-task-title">
             <p className={styles.cardEyebrow}>{task.eyebrow}</p>
