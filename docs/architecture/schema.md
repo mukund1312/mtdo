@@ -329,6 +329,51 @@ calendar_event_links(id uuid pk, user_id, block_id,
   -- exists. RESTRICT was rejected — a user must always be able to delete
   -- their own block, calendar or no calendar.
 
+-- Spotify playback for the Listen deck (0024; api.md §3i, decisions.md
+-- 2026-09-13). Entirely optional and touched by nothing in the core loop: a
+-- user who never connects Spotify has a fully working board, focus timer and
+-- calendar. Named for the CATEGORY, keyed on the PROVIDER — the Listen deck's
+-- own data model already names three providers ('apple', 'spotify', 'local'),
+-- so a second one is a visible possibility here in a way a second calendar
+-- provider was not. Only 'spotify' is implemented.
+music_connections(id uuid pk, user_id, provider check in ('spotify') default 'spotify',
+                  refresh_token_encrypted, refresh_token_expires_at,
+                  access_token_encrypted, access_token_expires_at,
+                  provider_account_id, display_name, product,
+                  scopes text[] default '{}', connected_at, updated_at,
+                  unique(user_id, provider),
+                  check ((access_token_encrypted is null) = (access_token_expires_at is null)))
+  -- SAME STRICTEST POSTURE AS calendar_connections: RLS enabled with NO
+  -- POLICIES AT ALL, *and* every privilege revoked from anon/authenticated.
+  -- A browser cannot read this table even for its own row. It matters more
+  -- here, not less — a Spotify refresh token is a SIX-MONTH credential to a
+  -- third-party account. The only thing a browser ever receives is a
+  -- one-hour access token, minted on demand by GET /api/music/spotify/token.
+  -- Both token columns are AES-256-GCM ciphertext in the same self-describing
+  -- 'v1:<iv>:<tag>:<ct>' envelope, encrypted IN THE ROUTE HANDLER
+  -- (web/lib/crypto/token-envelope.ts, SPOTIFY_TOKEN_ENCRYPTION_KEY) — same
+  -- reasoning as 0020, and since 2026-09-13 the same shared module. The KEY
+  -- is deliberately separate from the calendar's: sharing code is a
+  -- duplication question, sharing a key is a blast-radius question.
+  -- THE ACCESS TOKEN IS CACHED HERE, which calendar_connections deliberately
+  -- does not do. The difference is the consumer, not inconsistency: the
+  -- calendar mints one token per explicit user-initiated sync, whereas the
+  -- Web Playback SDK's getOAuthToken callback fires on its own schedule
+  -- (init, transfer, expiry, every reconnect), so refreshing per call would
+  -- turn ordinary listening into a stream of requests to Spotify. Caching
+  -- bounds it to ~one refresh per hour per user. The paired-null CHECK is
+  -- what stops a token existing without its expiry, which would leave a
+  -- reader unable to tell fresh from hours-dead.
+  -- refresh_token_expires_at is SIX MONTHS from the original authorization
+  -- and is NOT extended by refreshing — a real, known death date the app
+  -- must surface as "reconnect", never retry as a transient error.
+  -- `scopes` holds what Spotify GRANTED, not what was requested.
+  -- `product` ('premium'/'free'/'open') is a CONNECT-TIME SNAPSHOT. The Web
+  -- Playback SDK requires Premium — a permanent platform restriction with no
+  -- app-side workaround — so this column is what lets the deck say so
+  -- honestly. A user who upgrades later reads stale until they reconnect;
+  -- accepted rather than re-reading /v1/me on every status call.
+
 -- the weekly engine (0022, Phase 7; api.md §3f/§3g, decisions.md 2026-09-11).
 -- DETERMINISTIC BY DESIGN: every row here is produced by rule evaluation over
 -- weekly_performance()'s numbers, never by a model. That is a product
@@ -603,6 +648,7 @@ erroring; where the grant itself is revoked, it errors with `42501`.
 | `weekly_plans`, `weekly_plan_changes` | **select only** | `save_weekly_plan()` / `apply_weekly_plan_change()` / `accept_all_weekly_plan_changes()` (0022) |
 | `tutor_messages` | **nothing** | future service-role chat backend; read via `tutor_context()` |
 | `calendar_connections` | **nothing** | `GET /api/calendar/callback`, service-role (0020) |
+| `music_connections` | **nothing** | `web/app/api/music/spotify/**`, service-role (0024) |
 
 Other rules, all enforced in the SQL:
 
@@ -683,6 +729,16 @@ Other rules, all enforced in the SQL:
   never crosses the PostgREST boundary — see the table's own comment in §2 and decisions.md's
   2026-09-11 entry. `calendar_event_links` is the ordinary SELECT-own/service-role-write pattern
   on top of it.
+- **`music_connections` (migrations/0024) is the second, and carries the same posture for a
+  stronger reason.** RLS on with zero policies, `revoke all` from `anon`/`authenticated`, both
+  token columns encrypted by the application. A Spotify refresh token is a *six-month* credential
+  to a third-party account, and unlike the calendar's it has a real death date that refreshing
+  does not extend — so the table also stores `refresh_token_expires_at`, and the app treats a
+  rejected refresh as "reconnect", never as a transient error to retry. It additionally caches a
+  one-hour access token (which `calendar_connections` deliberately does not); the reason is the
+  Web Playback SDK's callback-driven token appetite, written up in decisions.md 2026-09-13. The
+  browser receives only that short-lived token, via `GET /api/music/spotify/token` — never the
+  refresh token, under any circumstance.
 - **`activate_plan(p_plan_id)` (migrations/0005, guarded by 0006/0007) is a structural
   access-control boundary, not just a convention.** `plans` stays ordinary client-writable (the
   table above) — `plans_update_own`/`plans_insert_own` still permit a direct

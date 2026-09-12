@@ -9,6 +9,114 @@ Add each session's PROGRESS.md entry to the same branch as the code it describes
 
 ---
 
+## [backend] 2026-09-13 (PR pending) — Spotify: a real OAuth + token backend behind the Listen deck
+
+The Listen deck has been a fake player over hardcoded `MockTrack` data since it was built. This
+session replaced the **backend half** with a real Spotify integration — Authorization Code with
+PKCE, encrypted credential storage, and a token-serving endpoint — at the same security tier as
+Phase 6's Google Calendar work. **No UI was touched**: `listen-state.tsx`/`listen-data.ts`/
+`listen-deck.tsx` are byte-identical, and a separate frontend agent builds the `Spotify.Player`
+wiring next against the contract locked in api.md §3i. `apple`/`local` in `listen-data.ts` are
+untouched, per the explicit product decision this session.
+
+Read the Phase 6 backend entry, both calendar-CSS-bug entries, and the Google-signup-chain entry
+first, per the brief. The Calendar surface is the direct template throughout — and the places it
+could NOT be copied are the interesting part of this session.
+
+**Where Spotify genuinely differs from Google, and why copy-paste would have been wrong:**
+- **PKCE, no client secret.** Spotify's flow proves the client with a `code_verifier`, not a
+  `client_secret`. That verifier is generated in `/connect` and needed in `/callback` — two
+  separate requests — so it has to be carried in a second httpOnly cookie. Google needs nothing
+  of the sort. `resolveSpotifyConfig()` therefore checks **three** variables, not four, and
+  deliberately never looks for a `SPOTIFY_CLIENT_SECRET`: requiring one would leave a correctly
+  configured deployment permanently reporting "unconfigured". There's a test asserting exactly
+  that, because it is the most likely thing for a future author to "fix".
+- **Refresh tokens expire.** Six months from the original authorization, and refreshing an access
+  token does **not** extend that. So `refresh_token_expires_at` is a real stored column, a
+  rejected refresh is `reconnectRequired` rather than a retryable error, and a refresh never
+  pushes the deadline out (which would manufacture a false expiry and turn a predictable
+  "reconnect soon" into a surprise outage).
+- **Rotation is inconsistent.** Spotify "may or may not" return a new `refresh_token` on refresh.
+  When it doesn't, the column is simply **not included in the update** — writing a null there
+  would destroy a working six-month connection on the first non-rotating refresh, i.e. almost
+  immediately and permanently. That's the single highest-consequence line in the diff and it has
+  its own test.
+
+**What changed, concretely:**
+- `supabase/migrations/0024_music_connections.sql` (new) — `music_connections`, service-role only
+  (RLS on with zero policies **and** `revoke all` from `anon`/`authenticated`, the same doubled
+  posture as `calendar_connections`). Named for the category and keyed on the provider, not
+  `spotify_connections`: `listen-data.ts` already names three providers, so a second one is a
+  visible possibility here in a way a second calendar provider wasn't.
+- `web/lib/crypto/token-envelope.ts` (new) — **the encryption was extracted, not duplicated.**
+  Checked first rather than assumed: `lib/calendar/crypto.ts`'s functions turned out entirely
+  generic (a bare string under a Buffer key), with nothing calendar-shaped but three error
+  strings. Now an `EnvelopeLabels` argument. `lib/calendar/crypto.ts` is a thin labelled wrapper
+  preserving its exact public API *including* the error strings its own test asserts
+  character-for-character — which is what made the move provably behaviour-preserving.
+  Follows `lib/safe-redirect.ts`'s extraction precedent from the day before; the argument is
+  stronger for AES-GCM, where two implementations is how one quietly ends up wrong.
+- **The key is NOT shared, though.** New `SPOTIFY_TOKEN_ENCRYPTION_KEY`. Sharing code is a
+  duplication question; sharing a key is a blast-radius question, and they have different
+  answers — one key per credential store rotates independently.
+- `web/lib/music/spotify/{config,pkce,spotify,connection}.ts` (new). `connection.ts` is the only
+  module that touches `music_connections`, same containment rule as the calendar's.
+- Five Route Handlers under `web/app/api/music/spotify/`: `connect`, `callback`, `status`,
+  `token`, `disconnect`. `safeNextPath()` reused directly for `?next=`, supported from v1 here
+  (the calendar grew it later) because Spotify's caller is the Listen deck, not Settings.
+
+**The access-token cache — the one place I deliberately diverged from the Calendar template.**
+`calendar_connections` stores no access token: it mints one per explicit user-initiated sync, a
+handful a day. The Web Playback SDK is the opposite — `getOAuthToken` fires on the SDK's own
+schedule (init, transfer, expiry, every reconnect), so refreshing per call would turn ordinary
+listening into a stream of blocking requests to Spotify. So the token is cached encrypted with a
+60s expiry skew, bounding refreshes to ~one per hour per user. **The cost, accepted rather than
+hidden:** a token revoked on Spotify's side keeps being served until it expires — but the failure
+self-heals within one callback (the SDK's next request refreshes, hits `invalid_grant`, and
+correctly reports `reconnectRequired`), so the window is one callback, not an hour.
+
+**The Premium constraint is documented as permanent, not as a TODO.** The Web Playback SDK
+requires Spotify Premium; free-tier listeners cannot play through this integration and there is no
+app-side workaround. The backend's job is to report the real signal, so `product` is captured from
+`/v1/me` at connect time and surfaced as `connection.premium` — `true`/`false`/**`null`** kept
+distinct, because "we couldn't read your tier" and "your tier can't play" are different things to
+put on a screen. The profile read is best-effort: a failed `/me` stores nulls rather than costing
+the user a consent they just granted. Known staleness named in decisions.md: it's a connect-time
+snapshot, so a later upgrade reads stale until reconnect — rejected re-reading `/v1/me` per status
+call for a field that changes roughly never.
+
+**A real harness bug, found by writing the tests rather than by reading code.**
+`supabase/tests/01_harness.sql`'s `t.raises()` caught only three SQLSTATE classes. A constraint
+assertion didn't *fail* under it — it **escaped the handler and aborted the whole run** with a raw
+`ERROR`. Extended to catch `23505`/`23514`/`23503`, still as an explicit list rather than `when
+others` (which would swallow the "expected an error, got none" failure raised just above it).
+**And a second test-design bug of my own:** the obvious `updated_at` test — record, update, assert
+it grew — *cannot work*, because `set_updated_at()` uses `now()`, which is transaction time and
+identical for every statement in a `do` block. A correctly-firing trigger fails that test.
+`pg_sleep()` doesn't help. Rewritten to assert the trigger **overrides** a caller-supplied stale
+value, which is both testable and the sharper claim. Both are written up in the test file itself
+so the next person doesn't re-derive them.
+
+**Verified.** `supabase/tests/run.sh` **415/415 assertions** (25 new in
+`16_music_connections.sql`, covering the service-role-only posture from both `authenticated` and
+`anon`, that `service_role` genuinely *can* do what the routes need — the mirror-image check a
+typo'd grant would otherwise pass — the paired-access-token CHECK, the provider CHECK, the
+upsert's unique constraint, and the `auth.users` cascade leaving no orphaned credential).
+**332/332 vitest** repo-wide, **116 new** across 8 files — including the PKCE challenge checked
+against **RFC 7636 appendix B's own published test vector** (a subtly wrong S256 fails only at
+code exchange, after the user has already consented), the verifier→challenge round trip between
+`/connect` and `/callback`, the token route's refresh-on-expiry and cache-hit paths, and an
+explicit assertion that no refresh token can appear in any response body. `tsc`/`eslint` clean, a
+real production build succeeds with all five routes registered. Migration applied to the real
+linked project via `supabase db push`; `database.types.ts` regenerated (purely additive).
+
+**Not tested, and it cannot be:** the real Spotify consent screen. No Spotify developer app exists
+for mtdo, so — exactly as with Calendar for the whole of Phase 6 — `configured: false` is the path
+genuinely exercised end to end, and mocked unit/pgTAP verification is this system's established
+and only available tier for these routes.
+
+---
+
 ## [frontend] 2026-09-13 (PR pending) — A brand-new Google signup now chains into Calendar connect
 
 Founder asked whether a user logging in with Google could "directly sync" their calendar through

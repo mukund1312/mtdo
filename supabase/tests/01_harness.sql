@@ -26,7 +26,20 @@ begin
   execute sql;
   raise exception 'FAIL  %  expected errcode % but the statement succeeded', label, want_code;
 exception
-  when sqlstate '42501' or sqlstate '22023' or sqlstate '0A000' then
+  -- The catchable list, and why it is a list rather than `when others`.
+  -- `others` would also swallow the FAIL exception raised just above when a
+  -- statement unexpectedly SUCCEEDS, turning a clear "expected an error, got
+  -- none" into a confusing errcode mismatch on P0001. So each class a test
+  -- may legitimately assert on is named explicitly.
+  --
+  -- 23505/23514/23503 (unique, check, foreign-key violation) added 2026-09-13
+  -- for 16_music_connections.sql. Before that the list was privileges-only,
+  -- so a constraint assertion did not fail -- it ESCAPED the handler and
+  -- aborted the whole run with a raw ERROR, which is exactly how this was
+  -- found. Adding a class here can only turn an aborted run into a real
+  -- PASS/FAIL; no existing assertion changes meaning.
+  when sqlstate '42501' or sqlstate '22023' or sqlstate '0A000'
+    or sqlstate '23505' or sqlstate '23514' or sqlstate '23503' then
     if sqlstate = want_code then
       raise notice 'PASS  %  (errcode %)', label, want_code;
     else

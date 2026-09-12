@@ -85,7 +85,8 @@ fail=0
   -f "$ROOT/supabase/tests/12_block_scheduling_calendar.sql" \
   -f "$ROOT/supabase/tests/13_weekly_performance.sql" \
   -f "$ROOT/supabase/tests/14_weekly_plan_changes.sql" \
-  -f "$ROOT/supabase/tests/15_session_pause_breaks_outcomes.sql" 2>&1 \
+  -f "$ROOT/supabase/tests/15_session_pause_breaks_outcomes.sql" \
+  -f "$ROOT/supabase/tests/16_music_connections.sql" 2>&1 \
   | sed 's/^psql:[^ ]* //; s/^NOTICE:  //' | grep -E "^(PASS|FAIL|ERROR|---)" || fail=1
 
 echo
