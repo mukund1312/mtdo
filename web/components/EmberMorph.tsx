@@ -22,6 +22,7 @@ export type EmberMorphTrigger =
       plannedDurationS: number;
       elapsedS: number;
       originRect: DOMRectReadOnly | null;
+      status?: "active" | "paused" | "complete";
     }
   | {
       phase: "exiting";
@@ -35,6 +36,8 @@ export interface EmberMorphProps {
   children?: ReactNode;
   onExitComplete?: () => void;
   className?: string;
+  showTimer?: boolean;
+  onTimerVisibilityChange?: (visible: boolean) => void;
 }
 
 const BLOOM_EXIT_MS = 420;
@@ -69,6 +72,8 @@ export function EmberMorph({
   children,
   onExitComplete,
   className,
+  showTimer = true,
+  onTimerVisibilityChange,
 }: EmberMorphProps) {
   const reducedMotion = useReducedMotion();
   const exitHandledFor = useRef<string | null>(null);
@@ -100,6 +105,8 @@ export function EmberMorph({
   const originY = origin ? `${origin.top + origin.height / 2}px` : "50vh";
   const ringCircumference = 2 * Math.PI * 46;
   const ringOffset = ringCircumference * (1 - progress);
+  const status = isActive ? trigger.status ?? "active" : "complete";
+  const statusLabel = status === "paused" ? "Paused" : status === "complete" ? "Time is up" : "In session";
   const shellClassName = [
     styles.shell,
     !isExiting && styles.entering,
@@ -121,14 +128,26 @@ export function EmberMorph({
       <header className={styles.header}>
         <span className={styles.wordmark}>mtdo</span>
         <span className={styles.deckId}>MTDO / ARCHITECTURE 02 — SIGNAL DECK</span>
-        <span className={styles.liveStatus}>
-          <span className={styles.liveDot} aria-hidden="true" />
-          In session
-        </span>
+        <div className={styles.headerStatus}>
+          {onTimerVisibilityChange && (
+            <button
+              className={styles.timerToggle}
+              type="button"
+              aria-pressed={showTimer}
+              onClick={() => onTimerVisibilityChange(!showTimer)}
+            >
+              Timer {showTimer ? "on" : "off"}
+            </button>
+          )}
+          <span className={`${styles.liveStatus} ${status === "paused" ? styles.pausedStatus : ""}`}>
+            <span className={styles.liveDot} aria-hidden="true" />
+            {statusLabel}
+          </span>
+        </div>
       </header>
 
-      <div className={styles.frame}>
-        <div className={styles.timerArea}>
+      <div className={`${styles.frame} ${!showTimer ? styles.timerHidden : ""}`}>
+        {showTimer && <div className={styles.timerArea}>
           <div className={styles.ringWrap}>
             <svg
               className={styles.ring}
@@ -162,7 +181,7 @@ export function EmberMorph({
               <span className="num">{formatClock(elapsedS)}</span> invested
             </p>
           </div>
-        </div>
+        </div>}
 
         <div className={styles.content}>{children}</div>
       </div>

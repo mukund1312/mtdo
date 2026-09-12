@@ -10,7 +10,13 @@ export default defineConfig({
   // API server-side (route.ts's maxDuration is 60s) -- give the client-side
   // wait real headroom above the 30s default instead of racing that call.
   timeout: 90_000,
-  fullyParallel: true,
+  // These are live browser tests against one shared Supabase project. Every
+  // fresh context becomes an anonymous user through proxy.ts; running every
+  // spec at once regularly exceeds that project's anonymous-auth rate limit
+  // and turns unrelated UI assertions into 401/empty-state flakes. Keep CI
+  // deliberately serial so each test gets a real authenticated session.
+  fullyParallel: false,
+  workers: process.env.CI ? 1 : undefined,
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 2 : 0,
   reporter: process.env.CI ? "github" : "list",

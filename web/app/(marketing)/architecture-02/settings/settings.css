@@ -96,6 +96,7 @@
   font-family: "DM Mono", monospace;
 }
 
+
 .a02-settings-action,.a02-settings-secondary,.a02-settings-danger { display:inline-flex; min-height:36px; align-items:center; justify-content:center; margin-top:17px; padding:0 12px; border:1px solid rgba(87,231,255,.55); border-radius:7px; background:rgba(87,231,255,.1); color:var(--aqua); cursor:pointer; font:10px "DM Mono",monospace; letter-spacing:.04em; text-decoration:none; }
 .a02-settings-action:hover,.a02-settings-action:focus-visible { border-color:var(--aqua); background:rgba(87,231,255,.18); outline:none; }
 .a02-settings-secondary { margin:0; border-color:var(--line); background:transparent; color:var(--ink); }

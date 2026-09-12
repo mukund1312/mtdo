@@ -119,6 +119,15 @@
 
 /* Block detail popover -- reuses .a02-record-overlay/.a02-composer */
 .a02-calendar-detail-time { margin:-14px 0 6px; color:var(--dim); font:11px "DM Mono",monospace; }
+.a02-calendar-time-editor { display:grid; grid-template-columns:1fr 1fr auto; gap:9px; margin-top:18px; padding-top:14px; border-top:1px solid var(--line); }
+.a02-calendar-time-editor > span { grid-column:1/-1; color:var(--aqua); font:9px "DM Mono",monospace; letter-spacing:.1em; }
+.a02-calendar-time-editor label { display:grid; gap:5px; color:var(--dim); font:9px "DM Mono",monospace; letter-spacing:.05em; }
+.a02-calendar-time-editor input { min-width:0; height:34px; box-sizing:border-box; border:1px solid var(--line); border-radius:5px; padding:0 8px; color:var(--ink); background:rgba(8,10,30,.72); color-scheme:dark; font:12px "DM Mono",monospace; }
+.a02-calendar-time-editor input:focus-visible { border-color:var(--aqua); outline:2px solid rgba(87,231,255,.16); outline-offset:2px; }
+.a02-calendar-time-editor button { align-self:end; min-height:34px; border:1px solid rgba(87,231,255,.42); border-radius:5px; padding:0 11px; color:var(--aqua); background:rgba(87,231,255,.07); font:10px "DM Mono",monospace; letter-spacing:.05em; cursor:pointer; }
+.a02-calendar-time-editor button:hover:not(:disabled) { color:var(--ink); border-color:var(--aqua); background:rgba(87,231,255,.14); }
+.a02-calendar-time-editor button:disabled { cursor:wait; opacity:.6; }
+.a02-calendar-time-editor p { grid-column:1/-1; margin:0; color:var(--coral); font-size:11px; }
 /* Per-event notes (deliverable 4). .a02-composer textarea's own sizing/
    border/background already comes from product-deck.css (shared across
    every composer-shaped popover in this route) -- this block only adds
@@ -144,6 +153,8 @@
   .a02-view-switch,.a02-date-switch { width:100%; justify-content:center; }
   .a02-month-cells { grid-auto-rows:minmax(64px,1fr); }
   .a02-month-chip { display:none; }
+  .a02-calendar-time-editor { grid-template-columns:1fr 1fr; }
+  .a02-calendar-time-editor button { grid-column:1/-1; }
 }
 
 @media (prefers-reduced-motion:reduce) {

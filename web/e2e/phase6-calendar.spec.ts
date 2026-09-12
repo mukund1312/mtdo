@@ -98,6 +98,27 @@ test("unscheduling a block clears its window and returns it to Unscheduled", asy
   await expect(page.locator('button[data-testid^="calendar-unscheduled-"]').filter({ hasText: taskA })).toBeVisible();
 });
 
+test("a scheduled task accepts a directly entered start and end time", async ({ page }) => {
+  const taskA = "Edit a calendar time window";
+  const taskB = "Keep a second task available";
+  await createRouteWithTwoTasks(page, taskA, taskB);
+  await openTimeDeck(page);
+
+  const today = todayIso();
+  await page.locator('button[data-testid^="calendar-unscheduled-"]').filter({ hasText: taskA }).dragTo(page.getByTestId(`calendar-slot-${today}-9`));
+  const eventChip = page.locator('[data-testid^="calendar-event-"]').filter({ hasText: taskA });
+  await eventChip.click();
+
+  const popover = page.getByTestId("calendar-detail-popover");
+  await popover.getByLabel("Start time").fill("13:15");
+  await popover.getByLabel("End time").fill("14:45");
+  await popover.getByRole("button", { name: /save time/i }).click();
+  await expect(popover).toHaveCount(0);
+
+  await expect(eventChip).toHaveCSS("top", "348px");
+  await expect(eventChip).toContainText(/1:15 PM.*2:45 PM/i);
+});
+
 test("Google Calendar's honest not-connected state renders with no console errors", async ({ page }) => {
   const consoleErrors: string[] = [];
   page.on("console", (message) => { if (message.type() === "error") consoleErrors.push(message.text()); });

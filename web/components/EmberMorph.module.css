@@ -88,11 +88,38 @@
   align-items: center;
   gap: 8px;
   /* "the running timer is --live; it is the canonical use of Ember" (DESIGN.md) */
-  justify-self: end;
   color: #d7ff52;
   font: 10px "DM Mono", monospace;
   letter-spacing: 0.1em;
   text-transform: uppercase;
+}
+
+.headerStatus {
+  display: inline-flex;
+  align-items: center;
+  justify-self: end;
+  gap: 15px;
+}
+
+.timerToggle {
+  border: 0;
+  padding: 0;
+  color: #8e93bd;
+  background: transparent;
+  cursor: pointer;
+  font: 9px "DM Mono", monospace;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.timerToggle:hover,
+.timerToggle:focus-visible {
+  color: #e9ebff;
+  outline: none;
+}
+
+.timerToggle:focus-visible {
+  box-shadow: 0 2px #57e7ff;
 }
 
 .liveDot {
@@ -104,6 +131,16 @@
   animation: live-pulse 2s ease-out infinite;
 }
 
+.pausedStatus {
+  color: #57e7ff;
+}
+
+.pausedStatus .liveDot {
+  background: #57e7ff;
+  box-shadow: none;
+  animation: none;
+}
+
 .frame {
   display: grid;
   grid-template-columns: minmax(340px, 1fr) minmax(0, 730px);
@@ -113,6 +150,11 @@
   min-height: calc(100dvh - 83px);
   margin: 0 auto;
   padding: 52px 0;
+}
+
+.timerHidden {
+  grid-template-columns: minmax(0, 730px);
+  justify-content: center;
 }
 
 .timerArea {

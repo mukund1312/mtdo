@@ -77,7 +77,6 @@ export function RadialNavigationWheel({ active, onDeck, onKanban, onGoals, onTim
   const reducedMotion = useReducedMotion();
   const triggerRef = useRef<HTMLButtonElement>(null);
   const stageRef = useRef<HTMLDivElement>(null);
-  const holdStartedAt = useRef<number | null>(null);
   const ignoreNextClick = useRef(false);
   const [open, setOpen] = useState(false);
   const [selectedIndex, setSelectedIndex] = useState<number | null>(null);
@@ -100,6 +99,11 @@ export function RadialNavigationWheel({ active, onDeck, onKanban, onGoals, onTim
     setSelectedIndex(null);
     if (restoreFocus) window.setTimeout(() => triggerRef.current?.focus(), 0);
   }, []);
+
+  const toggle = useCallback(() => {
+    if (open) close(true);
+    else setOpen(true);
+  }, [close, open]);
 
   const select = useCallback((index: number) => {
     const item = items[index];
@@ -144,10 +148,7 @@ export function RadialNavigationWheel({ active, onDeck, onKanban, onGoals, onTim
       if (isTextTarget(event.target) || event.metaKey || event.ctrlKey || event.altKey) return;
       if (event.key.toLowerCase() === "m" && !event.repeat) {
         event.preventDefault();
-        if (!open) {
-          holdStartedAt.current = performance.now();
-          setOpen(true);
-        }
+        toggle();
         return;
       }
       if (!open) return;
@@ -175,40 +176,29 @@ export function RadialNavigationWheel({ active, onDeck, onKanban, onGoals, onTim
         setSelectedIndex((current) => current === null ? 5 : (current - 1 + items.length) % items.length);
       }
     };
-    const onKeyUp = (event: KeyboardEvent) => {
-      if (event.key.toLowerCase() !== "m" || holdStartedAt.current === null) return;
-      const heldFor = performance.now() - holdStartedAt.current;
-      holdStartedAt.current = null;
-      // A short press leaves the wheel open for click/keyboard selection.
-      // Holding M makes the selected wedge a fast flick-to-navigate gesture.
-      if (heldFor >= 170 && selectedIndex !== null) select(selectedIndex);
-    };
     window.addEventListener("keydown", onKeyDown);
-    window.addEventListener("keyup", onKeyUp);
     return () => {
       window.removeEventListener("keydown", onKeyDown);
-      window.removeEventListener("keyup", onKeyUp);
     };
-  }, [close, items.length, open, select, selectedIndex]);
+  }, [close, items.length, open, select, selectedIndex, toggle]);
 
   const selected = selectedIndex === null ? null : items[selectedIndex] ?? null;
 
   return (
     <>
-      <motion.button
+      <button
         ref={triggerRef}
         type="button"
         className="a02-wheel-trigger"
-        aria-label="Open navigation wheel"
+        aria-label={open ? "Close navigation wheel" : "Open navigation wheel"}
         aria-expanded={open}
         aria-haspopup="dialog"
         aria-keyshortcuts="M"
-        whileTap={{ scale: 0.94 }}
-        onClick={() => setOpen(true)}
+        onClick={toggle}
       >
         <Menu size={21} strokeWidth={2} aria-hidden="true" />
         <span>Menu</span>
-      </motion.button>
+      </button>
 
       <AnimatePresence>
         {open && (
@@ -314,11 +304,11 @@ export function RadialNavigationWheel({ active, onDeck, onKanban, onGoals, onTim
 
               <div className="a02-wheel-center" aria-live="polite">
                 <span>{selected ? selected.label : "Navigation"}</span>
-                <strong>{selected ? selected.description : "Press M or choose a direction"}</strong>
+                <strong>{selected ? selected.description : "Press M to close or choose a direction"}</strong>
                 <em>{selected ? "Click to open" : "M"}</em>
               </div>
             </motion.div>
-            <p className="a02-wheel-hint">Move toward a section · Click to open · Esc to close</p>
+            <p className="a02-wheel-hint">Move toward a section · Click to open · M or Esc to close</p>
           </motion.div>
         )}
       </AnimatePresence>
