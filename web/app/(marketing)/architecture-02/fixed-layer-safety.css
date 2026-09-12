@@ -29,9 +29,8 @@ html[data-a02-feedback-open="true"] .a02-shell:not(.a02-onboarding-shell) {
   --a02-feedback-clearance: 270px;
 }
 
-.a02-dock {
+.a02-radial-menu {
   z-index: 20;
-  bottom: var(--a02-dock-bottom);
 }
 
 .a02-audio {

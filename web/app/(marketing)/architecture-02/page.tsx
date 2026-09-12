@@ -11,6 +11,9 @@ import { SignalDeckListenProvider, useSignalDeckListen } from "./listen-state";
 import { fetchProfileTimezone } from "./profile-timezone";
 import { formatDuration, utcDateRange, utcToday } from "./product-data";
 import { ProgressDeck } from "./progress-deck";
+import { RadialMenu } from "./radial-menu";
+import { RadialNavigationWheel } from "./radial-navigation-wheel";
+import { useDockStyle } from "./dock-preference";
 import { SignalDeckConfirmedWelcome } from "./signal-deck-confirmed-welcome";
 import { SignalDeckWalkthrough } from "./signal-deck-walkthrough";
 import { computeStreaks } from "./streak";
@@ -57,6 +60,12 @@ function ArchitectureTwoDeck() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const authState = searchParams.get("auth");
+  const [savedDockStyle] = useDockStyle();
+  // Query values remain non-persisting design comparisons. Without an
+  // override, the live dock uses the user’s saved Appearance preference.
+  const comparisonStyle = searchParams.get("nav") === "5" ? "wheel" : searchParams.get("nav") === "4" ? "inline" : searchParams.get("nav") === "3" ? "rail" : searchParams.get("nav") === "2" ? "orbit" : searchParams.get("nav") === "1" ? "fan" : null;
+  const navigationVariant = comparisonStyle ?? savedDockStyle;
+  const wheelNavigation = navigationVariant === "wheel";
   const [deck, setDeck] = useState<Deck>("home");
   const [lensOpen, setLensOpen] = useState(false);
   const [activeBlock, setActiveBlock] = useState<TodayBlock | null>(null);
@@ -189,7 +198,30 @@ function ArchitectureTwoDeck() {
       {deck === "listen" && <ListenDeck />}
 
       <AudioTransport onOpenListen={() => setDeck("listen")} />
-      <DeckDock active={deck} onChange={setDeck} onMore={() => router.push("/architecture-02/settings")} />
+      {wheelNavigation ? (
+        <RadialNavigationWheel
+          active={deck}
+          onDeck={() => setDeck("home")}
+          onKanban={() => setDeck("work")}
+          onGoals={() => setDeck("goals")}
+          onTime={() => setDeck("calendar")}
+          onReview={() => setDeck("review")}
+          onListen={() => setDeck("listen")}
+          onSettings={() => router.push("/architecture-02/settings")}
+        />
+      ) : (
+        <RadialMenu
+          active={deck}
+          variant={navigationVariant}
+          onDeck={() => setDeck("home")}
+          onKanban={() => setDeck("work")}
+          onGoals={() => setDeck("goals")}
+          onTime={() => setDeck("calendar")}
+          onReview={() => setDeck("review")}
+          onListen={() => setDeck("listen")}
+          onSettings={() => router.push("/architecture-02/settings")}
+        />
+      )}
       {lensOpen && <ObjectLens block={activeBlock} onClose={() => setLensOpen(false)} onFocus={beginActiveBlock} />}
       {confirmedWelcomeOpen && <SignalDeckConfirmedWelcome onBeginGuide={beginConfirmedGuide} onRecover={recoverConfirmation} onSkipToOnboarding={finishConfirmedJourney} />}
       {walkthroughOpen && <SignalDeckWalkthrough
@@ -516,11 +548,6 @@ function LiveReadout() {
       <span className="a02-live-pip" /> {day} / {date} / {time} <i>{"///"}</i> PERSONAL ROUTE
     </div>
   );
-}
-
-function DeckDock({ active, onChange, onMore }: { active: Deck; onChange: (next: Deck) => void; onMore: () => void }) {
-  const items: [Deck, string, string][] = [["home", "◉", "Deck"], ["work", "▦", "Kanban"], ["goals", "◎", "Goals"], ["calendar", "⌗", "Time"], ["review", "◌", "Review"], ["listen", "♫", "Listen"]];
-  return <nav className="a02-dock" aria-label="Signal deck navigation">{items.map(([id, icon, label]) => <button key={id} className={active === id ? "is-active" : ""} onClick={() => onChange(id)}><i>{icon}</i><span>{label}</span></button>)}<button className="a02-dock-more" onClick={onMore}><i>···</i><span>More</span></button></nav>;
 }
 
 function AudioTransport({ onOpenListen }: { onOpenListen: () => void }) {

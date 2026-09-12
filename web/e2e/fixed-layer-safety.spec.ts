@@ -27,7 +27,7 @@ test("Signal Deck persistent controls share a collision-free mobile safe area", 
 
     return {
       audio: rect(".a02-audio"),
-      dock: rect(".a02-dock"),
+      dock: rect(".a02-radial-menu-trigger"),
       feedback: rect('[aria-label="Send feedback"]'),
       horizontalOverflow: document.documentElement.scrollWidth > window.innerWidth,
     };

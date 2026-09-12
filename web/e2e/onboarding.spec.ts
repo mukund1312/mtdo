@@ -1,4 +1,5 @@
 import { test, expect } from "@playwright/test";
+import { openSignalDeckDestination } from "./helpers/signal-deck";
 
 // Real end-to-end happy path: landing page -> onboarding entry -> intent step
 // -> rhythm step -> submit -> a persisted plan is ready. gh95 (anonymous
@@ -87,7 +88,7 @@ test("onboarding wizard: intent -> rhythm -> build a route end-to-end", async ({
 test("Review shows an honest empty heatmap and view-only Record Card", async ({ page }) => {
   await page.goto("/architecture-02");
   await page.getByRole("button", { name: /close walkthrough/i }).click();
-  await page.getByRole("navigation", { name: "Signal deck navigation" }).getByRole("button", { name: /review/i }).click();
+  await openSignalDeckDestination(page, "Review");
 
   await expect(page.getByRole("heading", { name: /make effort legible/i })).toBeVisible();
   await expect(page.getByLabel("Six-week focus heatmap")).toBeVisible();
@@ -103,8 +104,7 @@ test("Review shows an honest empty heatmap and view-only Record Card", async ({ 
 test("Listen keeps Music previews separate while loading Terminal's real radio streams", async ({ page }) => {
   await page.goto("/architecture-02");
   await page.getByRole("button", { name: /close walkthrough/i }).click();
-  const listenButton = page.getByRole("navigation", { name: "Signal deck navigation" }).getByRole("button", { name: /listen/i });
-  await listenButton.click();
+  await openSignalDeckDestination(page, "Listen");
 
   await expect(page.getByRole("heading", { name: /stay in the flow/i })).toBeVisible();
   await expect(page.getByText(/preview mode/i)).toBeVisible();
@@ -179,8 +179,7 @@ test("Listen keeps controls inside the mobile Signal Deck viewport", async ({ pa
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto("/architecture-02");
   await page.getByRole("button", { name: /close walkthrough/i }).click();
-  const listenButton = page.getByRole("navigation", { name: "Signal deck navigation" }).getByRole("button", { name: /listen/i });
-  await listenButton.click();
+  await openSignalDeckDestination(page, "Listen");
   await expect(page.getByRole("tab", { name: /music/i })).toBeVisible();
   await expect(page.getByLabel("Music sources")).toBeVisible();
   await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
@@ -191,9 +190,7 @@ test("Listen radio stays within the tablet Signal Deck viewport", async ({ page 
   await page.setViewportSize({ width: 834, height: 1024 });
   await page.goto("/architecture-02");
   await page.getByRole("button", { name: /close walkthrough/i }).click();
-  const listenButton = page.getByRole("navigation", { name: "Signal deck navigation" }).getByRole("button", { name: /listen/i });
-  await listenButton.focus();
-  await listenButton.press("Enter");
+  await openSignalDeckDestination(page, "Listen");
   await page.getByRole("tab", { name: /music/i }).press("ArrowRight");
   await expect(page.getByRole("tab", { name: /radio/i })).toHaveAttribute("aria-selected", "true");
   await expect(page.getByText("Hacker Radio", { exact: true })).toBeVisible();
