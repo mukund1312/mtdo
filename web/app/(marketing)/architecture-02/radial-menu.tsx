@@ -72,11 +72,12 @@ function pointForNavigation(
  */
 export function RadialMenu({ active, variant = "fan", onDeck, onKanban, onGoals, onTime, onReview, onListen, onSettings }: RadialMenuProps) {
   const reducedMotion = useReducedMotion();
-  const rootRef = useRef<HTMLDivElement>(null);
+  const rootRef = useRef<HTMLElement>(null);
   const closeTimer = useRef<number | null>(null);
   const menuButtonRef = useRef<HTMLButtonElement>(null);
   const itemRefs = useRef<Array<HTMLButtonElement | null>>([]);
   const [open, setOpen] = useState(false);
+  const [pinnedOpen, setPinnedOpen] = useState(false);
   const [isCompact, setIsCompact] = useState(false);
   const [isNarrow, setIsNarrow] = useState(false);
 
@@ -104,11 +105,13 @@ export function RadialMenu({ active, variant = "fan", onDeck, onKanban, onGoals,
 
   const closeMenu = (restoreFocus = false) => {
     clearCloseTimer();
+    setPinnedOpen(false);
     setOpen(false);
     if (restoreFocus) window.setTimeout(() => menuButtonRef.current?.focus(), 0);
   };
 
   const scheduleClose = () => {
+    if (pinnedOpen) return;
     clearCloseTimer();
     closeTimer.current = window.setTimeout(() => setOpen(false), 190);
   };
@@ -132,14 +135,18 @@ export function RadialMenu({ active, variant = "fan", onDeck, onKanban, onGoals,
   useEffect(() => {
     if (!open) return;
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        event.preventDefault();
-        setOpen(false);
+        if (event.key === "Escape") {
+          event.preventDefault();
+          setPinnedOpen(false);
+          setOpen(false);
         window.setTimeout(() => menuButtonRef.current?.focus(), 0);
       }
     };
     const onPointerDown = (event: PointerEvent) => {
-      if (isCompact && rootRef.current && !rootRef.current.contains(event.target as Node)) setOpen(false);
+      if (isCompact && rootRef.current && !rootRef.current.contains(event.target as Node)) {
+        setPinnedOpen(false);
+        setOpen(false);
+      }
     };
     window.addEventListener("keydown", onKeyDown);
     window.addEventListener("pointerdown", onPointerDown);
@@ -159,9 +166,10 @@ export function RadialMenu({ active, variant = "fan", onDeck, onKanban, onGoals,
   };
 
   return (
-    <div
+    <nav
       ref={rootRef}
       className={`a02-radial-menu a02-radial-menu--${variant}${open ? " is-open" : ""}`}
+      aria-label="Signal deck navigation"
       onPointerEnter={(event) => {
         if (!isCompact && (event.pointerType === "mouse" || event.pointerType === "pen")) openMenu();
       }}
@@ -237,11 +245,19 @@ export function RadialMenu({ active, variant = "fan", onDeck, onKanban, onGoals,
             window.setTimeout(() => itemRefs.current[0]?.focus(), 0);
           }
         }}
-        onClick={() => (open ? closeMenu() : openMenu())}
+        onClick={() => {
+          if (open && pinnedOpen) {
+            closeMenu();
+            return;
+          }
+          clearCloseTimer();
+          setPinnedOpen(true);
+          setOpen(true);
+        }}
       >
         <Menu size={22} strokeWidth={2} aria-hidden="true" />
         <span>Menu</span>
       </motion.button>
-    </div>
+    </nav>
   );
 }

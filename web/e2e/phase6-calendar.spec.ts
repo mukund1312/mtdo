@@ -1,4 +1,5 @@
 import { test, expect } from "@playwright/test";
+import { openSignalDeckDestination } from "./helpers/signal-deck";
 
 // Phase 6 frontend (migrations/0019-0020, docs/architecture/api.md §3d/§3e):
 // the Time deck now renders real `blocks.scheduled_start_at`/`scheduled_end_at`
@@ -35,7 +36,7 @@ async function createRouteWithTwoTasks(page: import("@playwright/test").Page, ta
 }
 
 async function openTimeDeck(page: import("@playwright/test").Page) {
-  await page.locator(".a02-dock button").filter({ hasText: "Time" }).click();
+  await openSignalDeckDestination(page, "Time");
   await expect(page.getByRole("heading", { name: /give time/i })).toBeVisible();
 }
 

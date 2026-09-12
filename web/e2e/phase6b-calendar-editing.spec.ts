@@ -1,4 +1,5 @@
 import { test, expect, type Page } from "@playwright/test";
+import { openSignalDeckDestination } from "./helpers/signal-deck";
 
 import { categoryColorToken } from "../app/(marketing)/architecture-02/category-color";
 
@@ -66,12 +67,12 @@ async function createRouteWithCategories(page: Page, categories: CategoryDraft[]
 }
 
 async function openTimeDeck(page: Page) {
-  await page.locator(".a02-dock button").filter({ hasText: "Time" }).click();
+  await openSignalDeckDestination(page, "Time");
   await expect(page.getByRole("heading", { name: /give time/i })).toBeVisible();
 }
 
 async function openKanbanDeck(page: Page) {
-  await page.locator(".a02-dock button").filter({ hasText: "Kanban" }).click();
+  await openSignalDeckDestination(page, "Kanban");
 }
 
 async function scheduleFromUnscheduled(page: Page, taskText: string, hour: number) {

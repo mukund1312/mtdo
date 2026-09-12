@@ -1,4 +1,5 @@
 import { test, expect } from "@playwright/test";
+import { openSignalDeckDestination } from "./helpers/signal-deck";
 
 // Phase 1 of the operating-engine plan ("make the shipped surfaces honest")
 // closed a real gap: Home, Time and the Session coach rail all showed
@@ -27,7 +28,7 @@ test("Home and Time show honest empty states for a brand-new user, no fake liter
   // event -- the real calendar's own honest empty state instead (nothing on
   // the grid, nothing waiting in Unscheduled for a brand-new user with no
   // blocks at all).
-  await page.getByRole("navigation", { name: "Signal deck navigation" }).getByRole("button", { name: /time/i }).click();
+  await openSignalDeckDestination(page, "Time");
   await expect(page.getByRole("heading", { name: /give time/i })).toBeVisible();
   await expect(page.getByText(/nothing waiting/i)).toBeVisible();
   await expect(page.locator('[data-testid^="calendar-event-"]')).toHaveCount(0);
@@ -35,7 +36,7 @@ test("Home and Time show honest empty states for a brand-new user, no fake liter
 
   // Goals is a first-class dock destination. It reads the existing active
   // route when present; the shell must remain useful even before one exists.
-  await page.getByRole("navigation", { name: "Signal deck navigation" }).getByRole("button", { name: /goals/i }).click();
+  await openSignalDeckDestination(page, "Goals");
   await expect(page.getByRole("heading", { name: /hold the line/i })).toBeVisible();
 
   // The header's live clock replaced a hardcoded "TUESDAY / 06 SEP / 09:24"
@@ -86,7 +87,7 @@ test("Home reflects a real picked task and Session shows real, non-fake coaching
 
   // Home's "01 / TASK SIGNAL" card and "02 / TODAY'S LOAD" counter must now
   // reflect this real picked block -- not the old static "Two Sum" card.
-  await page.getByRole("navigation", { name: "Signal deck navigation" }).getByRole("button", { name: /deck/i }).click();
+  await openSignalDeckDestination(page, "Deck");
   await expect(page.getByText(taskText!).first()).toBeVisible();
   await expect(page.getByText("0/1", { exact: false })).toBeVisible();
 

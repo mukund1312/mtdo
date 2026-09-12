@@ -1,4 +1,5 @@
 import { test, expect, type Page } from "@playwright/test";
+import { openSignalDeckDestination } from "./helpers/signal-deck";
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -98,7 +99,7 @@ function seedWeeklyEngineDemo(userId: string): boolean {
 }
 
 async function openReviewDeck(page: Page) {
-  await page.locator(".a02-dock button").filter({ hasText: "Review" }).click();
+  await openSignalDeckDestination(page, "Review");
   // The 6-week pulse's own outer section, always rendered regardless of
   // whether the weekly-engine panel below it has a route to show yet --
   // the panel's own testid only exists in its "ready, has a route" branch.
