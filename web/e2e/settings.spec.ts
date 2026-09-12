@@ -60,6 +60,20 @@ test("Settings shows an honest empty state for planning mode when there is no ac
   await expect(page.getByRole("radiogroup", { name: /planning mode/i })).toHaveCount(0);
 });
 
+test("Focus clock preference persists locally", async ({ page }) => {
+  await page.goto("/architecture-02/settings");
+  await page.getByRole("button", { name: "Focus" }).click();
+
+  const clockPreference = page.getByRole("switch", { name: /show clock in focus mode/i });
+  await expect(clockPreference).toBeChecked();
+  await clockPreference.uncheck();
+  await expect(clockPreference).not.toBeChecked();
+
+  await page.reload();
+  await page.getByRole("button", { name: "Focus" }).click();
+  await expect(page.getByRole("switch", { name: /show clock in focus mode/i })).not.toBeChecked();
+});
+
 // Phase 2's frontend piece: Settings -> AI is a real status panel backed by
 // GET /api/ai/status, not a static mock -- and the "More" dock button
 // (previously dead, no onClick) now actually navigates there.

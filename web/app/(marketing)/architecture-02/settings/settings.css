@@ -96,6 +96,16 @@
   font-family: "DM Mono", monospace;
 }
 
+.a02-settings-toggle { display:flex; align-items:center; justify-content:space-between; gap:18px; margin-top:18px; padding-top:16px; border-top:1px solid var(--line); cursor:pointer; }
+.a02-settings-toggle > span { display:grid; gap:5px; }
+.a02-settings-toggle strong { color:var(--ink); font-size:13px; font-weight:500; }
+.a02-settings-toggle small { color:var(--dim); font-size:11px; line-height:1.55; }
+.a02-settings-toggle input { position:relative; width:42px; height:24px; flex:0 0 auto; margin:0; appearance:none; border:1px solid var(--line); border-radius:999px; background:rgba(255,255,255,.07); cursor:pointer; transition:background .16s ease,border-color .16s ease; }
+.a02-settings-toggle input::after { position:absolute; top:3px; left:3px; width:16px; height:16px; border-radius:50%; background:var(--dim); content:""; transition:transform .16s ease,background .16s ease; }
+.a02-settings-toggle input:checked { border-color:rgba(215,255,82,.65); background:rgba(215,255,82,.16); }
+.a02-settings-toggle input:checked::after { background:var(--acid); transform:translateX(18px); }
+.a02-settings-toggle input:focus-visible { outline:2px solid var(--aqua); outline-offset:3px; }
+
 .a02-settings-action,.a02-settings-secondary,.a02-settings-danger { display:inline-flex; min-height:36px; align-items:center; justify-content:center; margin-top:17px; padding:0 12px; border:1px solid rgba(87,231,255,.55); border-radius:7px; background:rgba(87,231,255,.1); color:var(--aqua); cursor:pointer; font:10px "DM Mono",monospace; letter-spacing:.04em; text-decoration:none; }
 .a02-settings-action:hover,.a02-settings-action:focus-visible { border-color:var(--aqua); background:rgba(87,231,255,.18); outline:none; }
 .a02-settings-secondary { margin:0; border-color:var(--line); background:transparent; color:var(--ink); }

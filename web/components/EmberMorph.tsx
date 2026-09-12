@@ -36,6 +36,7 @@ export interface EmberMorphProps {
   children?: ReactNode;
   onExitComplete?: () => void;
   className?: string;
+  showClock?: boolean;
 }
 
 const BLOOM_EXIT_MS = 420;
@@ -70,9 +71,11 @@ export function EmberMorph({
   children,
   onExitComplete,
   className,
+  showClock = true,
 }: EmberMorphProps) {
   const reducedMotion = useReducedMotion();
   const exitHandledFor = useRef<string | null>(null);
+  const [now, setNow] = useState(() => new Date());
 
   const isIdle = trigger.phase === "idle";
   const isExiting = trigger.phase === "exiting";
@@ -90,6 +93,14 @@ export function EmberMorph({
     return () => window.clearTimeout(timeout);
   }, [isExiting, onExitComplete, reducedMotion, sessionId]);
 
+  useEffect(() => {
+    if (!showClock) return;
+    const update = () => setNow(new Date());
+    update();
+    const interval = window.setInterval(update, 30_000);
+    return () => window.clearInterval(interval);
+  }, [showClock]);
+
   if (isIdle) return null;
 
   const plannedDurationS = Math.max(1, trigger.plannedDurationS);
@@ -103,6 +114,7 @@ export function EmberMorph({
   const ringOffset = ringCircumference * (1 - progress);
   const status = isActive ? trigger.status ?? "active" : "complete";
   const statusLabel = status === "paused" ? "Paused" : status === "complete" ? "Time is up" : "In session";
+  const wallClock = new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit" }).format(now);
   const shellClassName = [
     styles.shell,
     !isExiting && styles.entering,
@@ -124,10 +136,13 @@ export function EmberMorph({
       <header className={styles.header}>
         <span className={styles.wordmark}>mtdo</span>
         <span className={styles.deckId}>MTDO / ARCHITECTURE 02 — SIGNAL DECK</span>
-        <span className={`${styles.liveStatus} ${status === "paused" ? styles.pausedStatus : ""}`}>
-          <span className={styles.liveDot} aria-hidden="true" />
-          {statusLabel}
-        </span>
+        <div className={styles.headerStatus}>
+          {showClock && <time className={styles.wallClock}>{wallClock}</time>}
+          <span className={`${styles.liveStatus} ${status === "paused" ? styles.pausedStatus : ""}`}>
+            <span className={styles.liveDot} aria-hidden="true" />
+            {statusLabel}
+          </span>
+        </div>
       </header>
 
       <div className={styles.frame}>

@@ -88,11 +88,23 @@
   align-items: center;
   gap: 8px;
   /* "the running timer is --live; it is the canonical use of Ember" (DESIGN.md) */
-  justify-self: end;
   color: #d7ff52;
   font: 10px "DM Mono", monospace;
   letter-spacing: 0.1em;
   text-transform: uppercase;
+}
+
+.headerStatus {
+  display: inline-flex;
+  align-items: center;
+  justify-self: end;
+  gap: 15px;
+}
+
+.wallClock {
+  color: #8e93bd;
+  font: 10px "DM Mono", monospace;
+  letter-spacing: 0.08em;
 }
 
 .liveDot {
