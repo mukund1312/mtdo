@@ -823,6 +823,110 @@ building new confirmation UI) and can be added later without touching anything b
 ---
 
 
+## 2026-09-13 — Spotify: a real OAuth backend for the Listen deck (migrations/0024)
+
+The Listen deck has been a fake player over hardcoded `MockTrack` data since it was built. This
+session replaced the backend half with a real Authorization Code + PKCE integration, at the same
+security tier as Phase 6's Calendar work. Four decisions are worth recording; a fifth item is a
+permanent constraint rather than a decision.
+
+### The encryption envelope was extracted, not duplicated
+
+`lib/calendar/crypto.ts`'s `encryptRefreshToken`/`decryptRefreshToken`/`parseEncryptionKey` were
+checked before assuming anything, and they turned out to be **entirely generic** — they encrypt a
+bare string under a `Buffer` key, with nothing calendar-shaped in them except the wording of three
+error messages. So they moved to `lib/crypto/token-envelope.ts` (`encryptToken`/`decryptToken`,
+plus an `EnvelopeLabels` argument carrying the caller's wording), and `lib/calendar/crypto.ts`
+became a thin labelled wrapper preserving its exact public API — including the error strings its
+own test asserts on character-for-character, which is how the move was kept provably behaviour-
+preserving.
+
+This follows this codebase's own precedent: `lib/safe-redirect.ts` was extracted on exactly this
+reasoning a day earlier, when a second hand-rolled copy of an open-redirect guard was judged worse
+than one shared module. That argument is strictly stronger for AES-GCM — two independent
+implementations of authenticated encryption is how one of them quietly ends up wrong.
+
+`CalendarCryptoError` is now a re-export of `TokenEnvelopeError` under its old name rather than a
+subclass. Deliberate: every caller's correct response to it is identical ("ask the user to
+reconnect"), so a per-provider error type would be a distinction no handler acts on.
+
+### ...but the KEY is separate: `SPOTIFY_TOKEN_ENCRYPTION_KEY`, not the calendar's
+
+Sharing the *implementation* and sharing the *key* are different questions with different answers.
+Sharing code is a duplication question; sharing a key is a blast-radius question. One key per
+third-party credential store means each can be rotated on its own schedule, and a key disclosed
+through one integration does not decrypt the other's tokens. The cost is one more line in
+`.env.example`.
+
+### The access token is cached in the table; the calendar's deliberately is not
+
+This is the sharpest departure from the Calendar template, and it is driven by a real difference in
+the consumer rather than by taste. `calendar_connections` stores no access token at all: the
+calendar mints one per explicit, user-initiated sync — a handful a day — so caching would buy
+nothing and add a credential to protect. The Spotify Web Playback SDK is the opposite. Its
+`getOAuthToken` callback fires on the SDK's own schedule — initialisation, device transfer, token
+expiry, every reconnect after a network blip — so "refresh on every call" would turn ordinary
+listening into a stream of token requests to Spotify, with the rate-limiting and latency that
+implies on a callback the SDK is blocking on. Caching (`access_token_encrypted` +
+`access_token_expires_at`, with a 60-second expiry skew) bounds it to roughly one refresh per hour
+per user.
+
+**The cost, accepted with eyes open:** a cached token can be revoked on Spotify's side — the user
+disconnects the app from their own Spotify account — and this server will keep serving it until it
+expires. The blast radius is bounded by the one-hour lifetime, and the failure self-heals: a
+revoked token fails at the SDK, the SDK asks for another, and *that* call refreshes, hits
+`invalid_grant`, and correctly reports `reconnectRequired`. So the window is at most one callback,
+not an hour of confusion.
+
+### `music_connections`, not `spotify_connections`
+
+`calendar_connections` established the shape: one row per (user, provider), provider as a
+CHECK-constrained column rather than baked into the table name. The Listen deck's own data model
+already names three providers (`apple`, `spotify`, `local` in `listen-data.ts`), so a second music
+provider is a *named, visible* possibility here in a way a second calendar provider was not.
+Naming the table after the category makes adding Apple Music later a one-line CHECK change rather
+than a second table with a duplicated encryption column and a duplicated service-role posture to
+get right twice. Only `spotify` is implemented, and the CHECK says so.
+
+### PERMANENT CONSTRAINT, not a bug and not a TODO: playback requires Spotify Premium
+
+The Web Playback SDK requires a Spotify **Premium** account (mobile-only Premium tiers excluded).
+A free-tier listener cannot get in-browser playback through this integration. **There is no
+app-side workaround** — it is a Spotify platform restriction, and no amount of backend work
+changes it. This is recorded here so a future reader does not spend time looking for the bug.
+
+What the backend does about it is report the real signal honestly: `product` is captured from
+`/v1/me` at connect time and surfaced as `connection.premium` (`true` / `false` / `null` for "tier
+unknown") on the status route, so the deck can render a first-class "Spotify Premium required"
+state rather than a player that silently never produces sound. `null` and `false` are kept
+distinct on purpose — "we couldn't read your tier" and "your tier can't play" are different things
+to put on a screen.
+
+**Known staleness, named rather than hidden:** `product` is a connect-time snapshot, so a user who
+upgrades to Premium afterwards reads as `free` until they reconnect. Re-reading `/v1/me` on every
+status call was rejected — a per-page-load request to Spotify for a field that changes roughly
+never — and reconnecting is the remedy.
+
+### Two smaller judgment calls
+
+- **`?next=` is supported from v1** (the calendar only grew it later). Spotify's natural caller is
+  the Listen deck on `/architecture-02`, not the Settings screen the callback defaults to, so a
+  caller-specified destination is genuinely needed rather than speculative. Same
+  `safeNextPath()` validation, same cookie shape.
+- **No playback control on the server.** There is deliberately no play/pause/seek route and no
+  call to Spotify's Web API player endpoints — playback happens entirely in the browser through
+  the SDK. So nothing unattended can start audio on a user's account, structurally rather than by
+  convention. The same shape as §3e's "AI may only ever *suggest* a slot" rule.
+
+### A harness bug found by writing the tests
+
+`supabase/tests/01_harness.sql`'s `t.raises()` caught only three SQLSTATE classes (privilege,
+invalid-parameter, feature-not-supported). A constraint assertion did not *fail* under it — it
+**escaped the handler and aborted the entire run** with a raw `ERROR`, which is how this was found.
+Extended to also catch `23505`/`23514`/`23503`. Deliberately still a list rather than `when
+others`, which would swallow the "expected an error, got none" failure raised just above it and
+turn a clear message into a confusing errcode mismatch on `P0001`.
+
 ## Open, not yet decided
 
 - Whether the founder-facing analytics need anything beyond PostHog (deferred until W2 has real

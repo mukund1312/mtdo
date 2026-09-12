@@ -478,6 +478,54 @@ export type Database = {
           },
         ]
       }
+      music_connections: {
+        Row: {
+          access_token_encrypted: string | null
+          access_token_expires_at: string | null
+          connected_at: string
+          display_name: string | null
+          id: string
+          product: string | null
+          provider: string
+          provider_account_id: string | null
+          refresh_token_encrypted: string
+          refresh_token_expires_at: string | null
+          scopes: string[]
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          access_token_encrypted?: string | null
+          access_token_expires_at?: string | null
+          connected_at?: string
+          display_name?: string | null
+          id?: string
+          product?: string | null
+          provider?: string
+          provider_account_id?: string | null
+          refresh_token_encrypted: string
+          refresh_token_expires_at?: string | null
+          scopes?: string[]
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          access_token_encrypted?: string | null
+          access_token_expires_at?: string | null
+          connected_at?: string
+          display_name?: string | null
+          id?: string
+          product?: string | null
+          provider?: string
+          provider_account_id?: string | null
+          refresh_token_encrypted?: string
+          refresh_token_expires_at?: string | null
+          scopes?: string[]
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
       notes: {
         Row: {
           body: string | null

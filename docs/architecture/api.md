@@ -25,6 +25,10 @@ mtdo/
 │   │                      # client, Route Handlers ONLY (its own header has the rules)
 │   ├── lib/calendar/      # Google Calendar seam (§3e): config/crypto/google/connection.
 │   │                      # connection.ts is the only module that touches calendar_connections
+│   ├── lib/music/spotify/ # Spotify playback seam (§3i): config/pkce/spotify/connection.
+│   │                      # connection.ts is the only module that touches music_connections
+│   ├── lib/crypto/        # token-envelope.ts — the ONE AES-256-GCM envelope, shared by
+│   │                      # lib/calendar/ and lib/music/spotify/ (decisions.md 2026-09-13)
 │   ├── lib/plan-generation/  # pure prompt/parse/persist helpers for onboarding plan generation (§2)
 │   ├── lib/copy.ts        # the web↔terminal vocabulary dictionary (DESIGN.md §Vocabulary)
 │   └── package.json
@@ -296,15 +300,16 @@ actually call them (7, 8), not speculatively here.
 
 ## 3. How the app talks to the database
 
-Most tables are read and written directly with the anon-key client under RLS. **Ten are not**
+Most tables are read and written directly with the anon-key client under RLS. **Eleven are not**
 (`focus_sessions`, `activity_events`, `daily_rollups`, `ai_generations`, `tutor_messages`,
 `tutor_memory_summaries`, `calendar_connections`, `calendar_event_links`, `weekly_plans`,
-`weekly_plan_changes`), and this is the part
-that is easy to get wrong: they are read-only — or, for `tutor_messages` and
-`calendar_connections`, **no-access** — to clients, and their writes go through
-`security definer` RPCs or a service-role backend. (This count said "five" until Phase 6 and was
-already stale by two: `ai_generations` landed in Phase 2 and `tutor_memory_summaries` predates
-both; Phase 7 adds the two weekly-engine tables. `schema.md` §6's table has always been the authoritative list.) Calling `.insert()` on them does not fail
+`weekly_plan_changes`, `music_connections`), and this is the part
+that is easy to get wrong: they are read-only — or, for `tutor_messages`,
+`calendar_connections` and `music_connections`, **no-access** — to clients, and their writes go
+through `security definer` RPCs or a service-role backend. (This count said "five" until Phase 6
+and was already stale by two: `ai_generations` landed in Phase 2 and `tutor_memory_summaries`
+predates both; Phase 7 adds the two weekly-engine tables, and `music_connections` arrived with
+Spotify on 2026-09-13. `schema.md` §6's table has always been the authoritative list.) Calling `.insert()` on them does not fail
 silently — it returns a `42501` permission error — but the fix is to use the RPC, never to add a
 policy or a grant. `schema.md` §6 has the full privilege table.
 
@@ -322,6 +327,7 @@ policy or a grant. `schema.md` §6 has the full privilege table.
 | `from('daily_rollups').insert/update(...)` | *not available* — derived by `recompute_daily_rollups()`, service role only (D13); see §3a |
 | `from('blocks').update({ date, position })` (a **cross-date** move) | `rpc('schedule_block', { p_block_id, p_date, p_start_at, p_end_at })` — a client-side cross-date move fails at COMMIT, not at UPDATE, because `blocks_slot_key` is DEFERRABLE; see §3d. A **same-day** reorder stays an ordinary `update`. |
 | `from('calendar_connections').select(...)` | *not available to clients at all* — service-role only, the token never reaches a browser (§3e) |
+| `from('music_connections').select(...)` | *not available to clients at all* — service-role only. A browser gets a short-lived access token from `GET /api/music/spotify/token` and never the refresh token (§3i) |
 | `from('calendar_event_links').insert/update/delete(...)` | `POST /api/calendar/sync` (§3e). Reads are an ordinary RLS-filtered `select`. |
 | `from('weekly_plans').insert(...)` | `POST /api/plan/weekly-review` (§3g), which calls `rpc('save_weekly_plan', ...)`. Reads are an ordinary RLS-filtered `select`. |
 | `from('weekly_plan_changes').update({ status })` | `rpc('apply_weekly_plan_change', { p_change_id, p_decision, p_new_value })` or `rpc('accept_all_weekly_plan_changes', { p_weekly_plan_id })` (§3g) — a direct update is `42501`, and accepting is what *applies* the change, not just what records it |
@@ -1213,6 +1219,76 @@ wall-clock meaning so a reader is never silently comparing two different quantit
   "focus_s": 1200,          // pause-aware, capped at planned — USE THIS
   "total_paused_s": 600, "extended_s": 600 }
 ```
+
+## 3i. Spotify playback — the Listen deck's real backend (migrations/0024)
+
+**This section is the locked contract.** The Listen deck's `Spotify.Player` wiring is built
+against it, not against the route files. Every shape below is exact.
+
+**It is entirely optional, and nothing in the core loop depends on it.** A user who never
+connects Spotify has a fully working board, focus timer, scheduler and calendar. The Listen
+deck's other two providers (`apple`, `local` in `listen-data.ts`) are untouched by any of this —
+only `spotify` is real.
+
+**THE PREMIUM CONSTRAINT IS PERMANENT, NOT A BUG.** The Spotify Web Playback SDK requires a
+Spotify **Premium** account (mobile-only Premium tiers excluded). A free-tier listener cannot get
+in-browser playback through this integration, and there is no app-side workaround — it is a
+Spotify platform restriction. The backend's job is to report the real signal; `status`'s
+`connection.premium` carries it (`true` / `false` / `null` for "tier unknown"), and the deck must
+render that as a first-class, honest state rather than a player that silently never plays.
+`product` is a **connect-time snapshot** — a user who upgrades later reads stale until they
+reconnect (decisions.md 2026-09-13).
+
+**Table (`schema.md` has the full shape).** `music_connections` — **service-role only**: RLS
+enabled with *no policies* **and** every privilege revoked from `anon`/`authenticated`. Both
+`refresh_token_encrypted` and `access_token_encrypted` are AES-256-GCM ciphertext in a
+`v1:<iv>:<tag>:<ct>` envelope, encrypted **in the Route Handler**
+(`web/lib/crypto/token-envelope.ts`, `SPOTIFY_TOKEN_ENCRYPTION_KEY`), not by the database.
+
+**Configuration, and what happens without it.** `SPOTIFY_CLIENT_ID`,
+`SPOTIFY_TOKEN_ENCRYPTION_KEY` and `SUPABASE_SERVICE_ROLE_KEY` (optionally
+`SPOTIFY_OAUTH_REDIRECT_URI`) — all documented in `web/.env.example`. **There is deliberately no
+`SPOTIFY_CLIENT_SECRET`**: this is Authorization Code with **PKCE**, which does not use one, and
+requiring it would leave a correctly-configured deployment permanently reporting "unconfigured".
+**None of these exist in this environment**; no Spotify developer app has been created for mtdo
+yet. That is a supported state, and it is the state every route below was actually exercised in.
+`resolveSpotifyConfig()` (`web/lib/music/spotify/config.ts`) is the single check, modelled on
+`resolveCalendarConfig()` (§3e): a present-but-wrong-length encryption key counts as *not
+configured*.
+
+| Route | Contract |
+|---|---|
+| `GET /api/music/spotify/status` | Auth-gated, `no-store`. `200 { configured, connected, connection, missing[], provider: "spotify" }`. `connection` is `null` or `{ connectedAt, displayName, expired, premium, product, refreshTokenExpiresAt, scopes[] }` — **no token field of any kind**. Unconfigured is a **200** naming the absent variables, never an error. `401` no session. `500` only if the connection read itself fails. |
+| `GET /api/music/spotify/connect` | Auth-gated. Redirects (307) to `accounts.spotify.com/authorize` with `code_challenge_method=S256`, and sets **three** httpOnly `SameSite=Lax` cookies scoped to `/api/music/spotify`: `mtdo-spotify-oauth-state` (CSRF), `mtdo-spotify-oauth-verifier` (the PKCE verifier — no calendar equivalent), and, only when `?next=<path>` is given, `mtdo-spotify-oauth-next` (validated same-origin via `lib/safe-redirect.ts`). **503 `{ configured: false, missing }`** when unconfigured. |
+| `GET /api/music/spotify/callback` | Verifies the state cookie (CSRF), reads and shape-validates the PKCE verifier, exchanges the code, stores the encrypted connection. Redirects to the `next`-cookie destination if set, else `/architecture-02/settings`, always with `?spotify=<outcome>`; the target is built from this app's own origin and a validated/constant path, never from anything Spotify round-tripped back. Deletes all three OAuth cookies on **every** outcome. Outcomes: `connected`, `declined`, `state-mismatch`, `missing-verifier`, `no-code`, `no-refresh-token`, `exchange-failed`, `not-configured`, `no-session`, `spotify-error`. |
+| `GET /api/music/spotify/token` | **The one the SDK's `getOAuthToken` callback fetches.** Auth-gated, `no-store` on every path. `200 { access_token, expires_in }` (seconds) — serves the cached token, or transparently refreshes server-side first. `401` no session. `409 { connected: false, error }` never connected → offer **Connect**. `409 { connected: true, error, reconnectRequired: true }` the authorization died → offer **Reconnect**. `502 { error }` Spotify is down → **retry, do not re-OAuth**. `503 { configured: false, missing }`. |
+| `POST /api/music/spotify/disconnect` | Deletes the connection row. `200 { disconnected: true }`, **idempotent** — disconnecting twice is a 200 both times. `401` no session. `503 { configured: false, missing }`. `500` only if the delete fails. Much simpler than the calendar's disconnect because Spotify playback creates nothing on the user's account to clean up. |
+
+**Call-site contract — read these four.**
+
+1. **`GET /api/music/spotify/token` is the only token source, and it is called repeatedly, not
+   once.** Wire it straight into `getOAuthToken: cb => fetch(...).then(r => r.json()).then(d =>
+   cb(d.access_token))`. Do **not** cache the token in component state and reuse it past its
+   life: the endpoint already caches server-side and refreshes lazily, so calling it whenever the
+   SDK asks is both correct and cheap.
+2. **The refresh token never reaches the browser, under any circumstance.** Only the short-lived
+   access token is ever in a response body. Nothing in the frontend should ever have a variable
+   holding a Spotify refresh token; if one appears, something is wrong upstream.
+3. **`409` and `502` mean opposite things — do not collapse them.** `409` with
+   `reconnectRequired` means the six-month authorization is genuinely dead and the user must redo
+   OAuth. `502` means Spotify had a bad moment; sending the user through consent again for that
+   is both wrong and annoying. Retry `502`, never auto-retry a `409`.
+4. **Spotify refresh tokens expire, and that is normal.** Six months from the original
+   authorization, and refreshing an access token does **not** extend it. Every long-lived
+   connection ends in `reconnectRequired` eventually — it is an expected end-state to design a UI
+   for, not an error condition to treat as exceptional.
+
+**Scopes.** `streaming user-read-email user-read-private` only — the three the Web Playback SDK
+requires, and nothing else. No playlist, library, follow or user-modify scope: this app plays
+audio, it does not read or alter the user's Spotify account. There is deliberately **no playback
+control on the server** — no play/pause/seek route and no call to Spotify's Web API player
+endpoints — so nothing unattended can start audio on a user's account. The scopes Spotify
+actually *granted* are stored on the connection row, not the ones requested.
 
 ## 4. The EmberMorph component contract
 
