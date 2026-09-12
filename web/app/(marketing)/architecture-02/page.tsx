@@ -7,7 +7,7 @@ import { SignalDeckAccountControl } from "./account-control";
 import { CalendarDeck } from "./calendar-deck";
 import { GoalsDeck } from "./goals-deck";
 import { ListenDeck } from "./listen-deck";
-import { SignalDeckListenProvider, useSignalDeckListen } from "./listen-state";
+import { useSignalDeckListen } from "./listen-state";
 import { fetchProfileTimezone } from "./profile-timezone";
 import { formatDuration, utcDateRange, utcToday } from "./product-data";
 import { ProgressDeck } from "./progress-deck";
@@ -45,13 +45,11 @@ export default function ArchitectureTwoPage() {
   // requires it for static prerendering (PR #133's fix; this branch was cut
   // before that landed, so its own version of this file dropped the
   // boundary entirely -- merging it as-is would have silently reintroduced
-  // the prerender crash). SignalDeckListenProvider nests inside, same as any
-  // other context provider would.
+  // the prerender crash). The shared Listen provider lives in RootLayout so
+  // the one native audio element survives a Focus-session route transition.
   return (
     <Suspense fallback={null}>
-      <SignalDeckListenProvider>
-        <ArchitectureTwoDeck />
-      </SignalDeckListenProvider>
+      <ArchitectureTwoDeck />
     </Suspense>
   );
 }

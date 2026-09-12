@@ -1,5 +1,6 @@
 import type { Metadata, Viewport } from "next";
 import { FeedbackWidget } from "@/components/FeedbackWidget";
+import { SignalDeckListenProvider } from "@/app/(marketing)/architecture-02/listen-state";
 import "./styles/tokens.css";
 import "./globals.css";
 
@@ -32,7 +33,7 @@ export default function RootLayout({
         <link rel="stylesheet" href={SATOSHI_HREF} />
       </head>
       <body>
-        {children}
+        <SignalDeckListenProvider>{children}</SignalDeckListenProvider>
         <FeedbackWidget />
       </body>
     </html>
