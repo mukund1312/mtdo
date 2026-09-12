@@ -77,6 +77,7 @@ test("onboarding wizard: intent -> rhythm -> build a route end-to-end", async ({
   const task = (await routeItem.locator("b").textContent())?.trim();
   expect(task).toBeTruthy();
   await routeItem.click();
+  await routeMenu.getByRole("button", { name: /add selected \(1\)/i }).click();
   await expect(routeMenu).toBeHidden();
 
   const addedBlock = page.locator(".a02-live-block").filter({ hasText: task! });

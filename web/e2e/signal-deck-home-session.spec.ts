@@ -82,6 +82,7 @@ test("Home reflects a real picked task and Session shows real, non-fake coaching
   const taskText = (await routeItem.locator("b").textContent())?.trim();
   expect(taskText).toBeTruthy();
   await routeItem.click();
+  await routeMenu.getByRole("button", { name: /add selected \(1\)/i }).click();
   await expect(routeMenu).toBeHidden();
   await expect(page.locator(".a02-live-block").filter({ hasText: taskText! })).toBeVisible();
 
