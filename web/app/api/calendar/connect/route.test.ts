@@ -106,4 +106,28 @@ describe("GET /api/calendar/connect", () => {
     const local = (await GET(request("http://localhost:3000/api/calendar/connect"))) as NextResponse;
     expect(local.cookies.get("mtdo-calendar-oauth-state")?.secure).toBe(false);
   });
+
+  it("sets the next-destination cookie, validated same-origin, when ?next is given", async () => {
+    configureAll();
+    const response = (await GET(
+      request("https://mtdo.example/api/calendar/connect?next=%2Farchitecture-02%3Fauth%3Dconfirmed"),
+    )) as NextResponse;
+    const cookie = response.cookies.get("mtdo-calendar-oauth-next");
+    expect(cookie?.value).toBe("/architecture-02?auth=confirmed");
+    expect(cookie?.httpOnly).toBe(true);
+  });
+
+  it("rejects an off-origin ?next rather than storing an open-redirect target", async () => {
+    configureAll();
+    const response = (await GET(
+      request("https://mtdo.example/api/calendar/connect?next=https%3A%2F%2Fevil.example%2Fphish"),
+    )) as NextResponse;
+    expect(response.cookies.get("mtdo-calendar-oauth-next")?.value).toBe("/");
+  });
+
+  it("sets no next-destination cookie for a plain Connect click with no ?next", async () => {
+    configureAll();
+    const response = (await GET(request())) as NextResponse;
+    expect(response.cookies.get("mtdo-calendar-oauth-next")).toBeUndefined();
+  });
 });

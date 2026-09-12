@@ -9,6 +9,62 @@ Add each session's PROGRESS.md entry to the same branch as the code it describes
 
 ---
 
+## [frontend] 2026-09-13 (PR pending) — A brand-new Google signup now chains into Calendar connect
+
+Founder asked whether a user logging in with Google could "directly sync" their calendar through
+that same login -- for a non-technical audience unlikely to ever find the Connect button buried in
+Settings. Answer, backed by a code check, not a guess: no, not as one grant -- Google requires a
+distinct consent screen for `calendar.events` scope regardless of how the app is built. Presented
+two real options (request both scopes in one `signInWithOAuth` call, vs. chain the two already-
+built flows back-to-back right after signup); founder picked the second, lower-risk one. Full
+reasoning for the choice: decisions.md, 2026-09-13.
+
+**What changed, concretely:**
+- `lib/safe-redirect.ts` (new) -- `safeNextPath()` extracted out of `app/auth/callback/route.ts`
+  (moved verbatim, comment and all) so `/api/calendar/connect` can reuse the identical
+  open-redirect guard instead of a second hand-rolled copy.
+- `lib/calendar/config.ts` -- new `OAUTH_NEXT_COOKIE` constant, same reasoning as the existing
+  `OAUTH_STATE_COOKIE` for living here rather than in a route file (Next's route-export
+  validation rejects a stray export alongside `GET`).
+- `app/api/calendar/connect/route.ts` -- accepts an optional `?next=`, validates it with
+  `safeNextPath()`, stores it in the new cookie (same path/httpOnly/sameSite/secure attributes as
+  the CSRF state cookie). Absent entirely for a plain "Connect" click from Settings -- existing
+  behavior for every current call site is unchanged.
+- `app/api/calendar/callback/route.ts` -- reads that cookie on every outcome (success, decline,
+  every error branch, not just the happy path) and redirects there instead of the hardcoded
+  Settings path when present; falls back to Settings when absent. Deletes both OAuth cookies
+  regardless of outcome.
+- `app/auth/callback/route.ts` -- after a successful code exchange, if the caller set
+  `promptCalendar=1` *and* `resolveCalendarConfig()` says Google Calendar is actually configured,
+  redirects into `/api/calendar/connect?next=<original next>` instead of landing directly.
+  Unconfigured is a silent skip (same posture as every other calendar surface), not an error shown
+  to a user who never asked for calendar integration.
+- `app/(marketing)/architecture-02/account-control.tsx` -- the Google **signup** path only (never
+  GitHub, never plain login) appends `&promptCalendar=1` to its `redirectTo`.
+
+**Known, accepted gap, written up rather than silently left:** the onboarding landing page's own
+`auth=confirmed` handler strips all query params (`router.replace`) the instant it opens the
+welcome modal, so the `?calendar=<outcome>` status never gets a visible toast on that first landing
+-- the user can still see the real connection state any time via Settings → Calendar. Out of scope
+for what was asked (chain the flow; don't build new confirmation UI); a small, separate follow-up
+if wanted later.
+
+**Verified:** two new unit test files (`app/api/calendar/callback/route.test.ts`,
+`app/auth/callback/route.test.ts` -- neither route had one before) plus additions to the existing
+`app/api/calendar/connect/route.test.ts`, covering: the next-cookie set/validated/absent-by-default,
+every callback outcome honoring it (including the 401/no-session path), the auth-callback chain
+firing only on signup+configured+successful-exchange and falling through unchanged in every other
+case. 216/216 unit tests pass (repo-wide, confirming nothing else broke). `tsc`/`eslint` clean, a
+real production build succeeds. Real Google OAuth cannot be exercised in any test (browser or
+unit) without live credentials, which don't exist in this environment -- unit-level route tests
+mocking the Supabase client are this system's established, and only available, verification tier
+for these exact routes (matching the pre-existing `connect/route.test.ts`). Re-ran the existing
+`settings.spec.ts`/`signal-deck-home-session.spec.ts`/`fixed-layer-safety.spec.ts` e2e suites
+(10/10) against a real production build to confirm the "Calendar reports not configured cleanly"
+behavior these changes route around is still intact end to end.
+
+---
+
 ## [frontend] 2026-09-12 (PR pending) — Calendar: editable duration, real overlap lanes, category colour, per-event notes
 
 Phase 6 calendar follow-up, built directly against the founder's own words rather than a

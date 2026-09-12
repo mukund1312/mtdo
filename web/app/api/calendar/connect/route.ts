@@ -10,8 +10,9 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { randomBytes } from "node:crypto";
 import { createClient } from "@/lib/supabase/server";
-import { OAUTH_STATE_COOKIE, resolveCalendarConfig } from "@/lib/calendar/config";
+import { OAUTH_NEXT_COOKIE, OAUTH_STATE_COOKIE, resolveCalendarConfig } from "@/lib/calendar/config";
 import { buildAuthUrl } from "@/lib/calendar/google";
+import { safeNextPath } from "@/lib/safe-redirect";
 
 export async function GET(request: NextRequest) {
   const supabase = await createClient();
@@ -44,15 +45,27 @@ export async function GET(request: NextRequest) {
   const state = randomBytes(32).toString("base64url");
 
   const response = NextResponse.redirect(buildAuthUrl(resolved.config, state));
-  response.cookies.set(OAUTH_STATE_COOKIE, state, {
+  const cookieOptions = {
     httpOnly: true,
     maxAge: 600, // the consent screen is a one-shot, minutes-long interaction
     path: "/api/calendar",
     // `lax`, not `strict`: Google's redirect back is a cross-site top-level
     // GET navigation, and `strict` would withhold the cookie on exactly the
     // request that needs to read it.
-    sameSite: "lax",
+    sameSite: "lax" as const,
     secure: new URL(request.url).protocol === "https:",
-  });
+  };
+  response.cookies.set(OAUTH_STATE_COOKIE, state, cookieOptions);
+
+  // Optional: where to land the user once the Google round trip finishes
+  // (success, decline, or error), instead of /api/calendar/callback's
+  // default Settings destination. Only set by a caller that wants that --
+  // today, the signup-time calendar prompt in app/auth/callback/route.ts. A
+  // plain "Connect" click from Settings never sends `next`, so this cookie
+  // is absent and the callback's existing default is unchanged.
+  const next = new URL(request.url).searchParams.get("next");
+  if (next) {
+    response.cookies.set(OAUTH_NEXT_COOKIE, safeNextPath(next, new URL(request.url).origin), cookieOptions);
+  }
   return response;
 }

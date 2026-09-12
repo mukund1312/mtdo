@@ -14,26 +14,34 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { createServiceClient } from "@/lib/supabase/service";
-import { OAUTH_STATE_COOKIE, resolveCalendarConfig } from "@/lib/calendar/config";
+import { OAUTH_NEXT_COOKIE, OAUTH_STATE_COOKIE, resolveCalendarConfig } from "@/lib/calendar/config";
 import { storeConnection } from "@/lib/calendar/connection";
 import { exchangeCodeForTokens } from "@/lib/calendar/google";
 
 const SETTINGS_PATH = "/architecture-02/settings";
 
-function back(origin: string, outcome: string): NextResponse {
-  const destination = new URL(SETTINGS_PATH, origin);
+// `destinationPath` is never caller-supplied directly -- it's either the
+// constant SETTINGS_PATH, or a value /api/calendar/connect already validated
+// with safeNextPath() before setting OAUTH_NEXT_COOKIE. Still built via the
+// URL object rather than string concatenation, matching
+// app/auth/callback/route.ts's own reasoning.
+function back(origin: string, outcome: string, destinationPath: string): NextResponse {
+  const destination = new URL(destinationPath, origin);
   destination.searchParams.set("calendar", outcome);
-  // Always built from this app's own `origin` and a constant path -- never
-  // from anything Google round-tripped back. app/auth/callback/route.ts has
-  // the full write-up of why a caller-supplied redirect target is an open
-  // redirect waiting to happen; the cheapest defence is not having one.
   const response = NextResponse.redirect(destination);
   response.cookies.delete(OAUTH_STATE_COOKIE);
+  response.cookies.delete(OAUTH_NEXT_COOKIE);
   return response;
 }
 
 export async function GET(request: NextRequest) {
   const { origin, searchParams } = new URL(request.url);
+  // Read once, up front: every `back()` call below needs it, including the
+  // earliest failure paths, and it must come from the cookie set the moment
+  // /api/calendar/connect redirected here -- never from anything Google
+  // round-tripped back (searchParams), which is exactly the open-redirect
+  // shape app/auth/callback/route.ts's safeNextPath() write-up covers.
+  const destinationPath = request.cookies.get(OAUTH_NEXT_COOKIE)?.value || SETTINGS_PATH;
 
   const supabase = await createClient();
   const {
@@ -41,13 +49,13 @@ export async function GET(request: NextRequest) {
     error: userError,
   } = await supabase.auth.getUser();
   if (userError || !user) {
-    return back(origin, "no-session");
+    return back(origin, "no-session", destinationPath);
   }
 
   // The user declining consent is a normal outcome, not an error to log.
   const googleError = searchParams.get("error");
   if (googleError) {
-    return back(origin, googleError === "access_denied" ? "declined" : "google-error");
+    return back(origin, googleError === "access_denied" ? "declined" : "google-error", destinationPath);
   }
 
   // CSRF check. A mismatch means this callback did not originate from the
@@ -57,24 +65,24 @@ export async function GET(request: NextRequest) {
   const state = searchParams.get("state");
   if (!expectedState || !state || state !== expectedState) {
     console.error("[calendar/callback] OAuth state mismatch -- refusing the exchange.");
-    return back(origin, "state-mismatch");
+    return back(origin, "state-mismatch", destinationPath);
   }
 
   const code = searchParams.get("code");
   if (!code) {
-    return back(origin, "no-code");
+    return back(origin, "no-code", destinationPath);
   }
 
   const resolved = resolveCalendarConfig(origin);
   if (!resolved.configured) {
     // Reachable if the server is reconfigured mid-flow. Honest outcome, no
     // crash -- the same posture the whole calendar surface takes.
-    return back(origin, "not-configured");
+    return back(origin, "not-configured", destinationPath);
   }
 
   const service = createServiceClient();
   if (!service) {
-    return back(origin, "not-configured");
+    return back(origin, "not-configured", destinationPath);
   }
 
   try {
@@ -85,7 +93,7 @@ export async function GET(request: NextRequest) {
       // create a row that silently stops working within the hour -- refusing
       // is the honest response.
       console.error("[calendar/callback] Google returned no refresh_token; refusing to store a connection that expires in an hour.");
-      return back(origin, "no-refresh-token");
+      return back(origin, "no-refresh-token", destinationPath);
     }
     await storeConnection(service, user.id, resolved.config, {
       refreshToken: grant.refreshToken,
@@ -95,8 +103,8 @@ export async function GET(request: NextRequest) {
     // Deliberately logs the error object, which carries no token: the grant
     // is never included in a thrown message (lib/calendar/google.ts).
     console.error("[calendar/callback] token exchange or storage failed:", err);
-    return back(origin, "exchange-failed");
+    return back(origin, "exchange-failed", destinationPath);
   }
 
-  return back(origin, "connected");
+  return back(origin, "connected", destinationPath);
 }

@@ -29,6 +29,15 @@ export const GOOGLE_CALENDAR_SCOPES = ["https://www.googleapis.com/auth/calendar
  * a stray named export there is a build error, not a shared constant. */
 export const OAUTH_STATE_COOKIE = "mtdo-calendar-oauth-state";
 
+/** Name of the httpOnly cookie carrying an optional post-connect destination
+ * between /api/calendar/connect and /api/calendar/callback. Absent when
+ * /api/calendar/connect is reached the plain way (a "Connect" button on
+ * Settings) -- the callback falls back to SETTINGS_PATH in that case, same
+ * as before this cookie existed. Set only when a caller (the signup-time
+ * calendar prompt in app/auth/callback/route.ts) wants the user to land
+ * somewhere else once the Google round trip finishes, success or not. */
+export const OAUTH_NEXT_COOKIE = "mtdo-calendar-oauth-next";
+
 export type CalendarConfig = {
   clientId: string;
   clientSecret: string;
