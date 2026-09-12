@@ -173,6 +173,19 @@ immediately after hit the identical rate-limit signature again (this time also f
 entirely unrelated pre-existing "Review" test), consistent with this session's own repeated local
 rate-limit exhaustion rather than a second real bug -- CI is the tiebreaker.
 
+**CI's second run on that fix showed the same shared-rate-limit signature again** (`settings.spec.ts`
+calendar tests, `phase6b-calendar-editing.spec.ts`, `signal-deck-home-session.spec.ts` all failed
+or flaked with the identical "401 / element not found" pattern, none of them files this session
+touched), plus two of the new `spotify-listen.spec.ts` tests. Rather than treat that as pure noise
+a second time, `spotify-listen.spec.ts` was rewritten to `test.describe.serial` with one shared
+`browser.newPage()`/anonymous session for all four tests instead of four separate fresh sign-ins --
+the exact pattern and exact justification `phase6b-calendar-editing.spec.ts` already established
+("cutting sign-ins from 4 to 1"). This doesn't fix the shared CI-wide rate limit (that's
+infrastructure this PR doesn't own), but it is a real reduction in this file's own contribution to
+it, and it's the correct, established response rather than re-running CI and hoping. Re-verified
+4/4 in an uncontended isolated run against a fresh production-build server (also ~35% faster: one
+sign-in instead of four).
+
 ---
 
 ## [backend] 2026-09-13 (PR pending) — Spotify: a real OAuth + token backend behind the Listen deck
