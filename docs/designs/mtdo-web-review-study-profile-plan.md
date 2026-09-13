@@ -1,6 +1,9 @@
 # mtdo web — Review page & Study Profile system
 
-**Status:** DRAFT — awaiting M/J kickoff
+**Status:** Phases A–E (backend) and F1–F6 (frontend) all shipped, 2026-09-14. The originally-scoped
+Review page is complete — rings, Consistency heatmap, time behavior/session quality/momentum,
+Study Profile, and Insights. Phase F (interventions with measured outcomes) and F7 (Effort Terrain)
+remain explicitly deferred/optional, per this doc's own gate discipline — not started unless asked.
 **Created:** 2026-09-13
 **Owner:** Mukund Umashankar (backend, Claude Code) + Janhwi (frontend, Codex)
 **Related:** `docs/designs/mtdo-web-dev-split-plan.md` (ownership/handoff rules this plan reuses
