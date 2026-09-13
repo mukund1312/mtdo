@@ -1376,6 +1376,11 @@ export type Database = {
           isSetofReturn: false
         }
       }
+      study_profile: { Args: { p_window_days?: number }; Returns: Json }
+      study_profile_confidence: {
+        Args: { p_sample_size: number }
+        Returns: string
+      }
       tutor_context: {
         Args: { p_conversation_id: string; p_recent_limit?: number }
         Returns: {
