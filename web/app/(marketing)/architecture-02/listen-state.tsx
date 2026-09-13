@@ -84,7 +84,7 @@ type ListenState = {
   // no mock, no demo timeout. `apple`/`local` never touch any of this.
   spotifyStatus: SpotifyStatus | null;
   spotifyStatusState: SpotifyStatusState;
-  refreshSpotifyStatus: () => Promise<void>;
+  refreshSpotifyStatus: () => Promise<boolean>;
   /** href for a real `<a>` navigation to GET /api/music/spotify/connect. */
   spotifyConnectHref: string;
   disconnectSpotify: () => Promise<void>;
@@ -258,27 +258,53 @@ export function SignalDeckListenProvider({ children }: { children: ReactNode }) 
   }, [currentTrack, musicPlaying]);
 
   // --- Real Spotify: status -------------------------------------------
-  const refreshSpotifyStatus = useCallback(async () => {
+  // A caller-invoked refresh (the panel's own "Try again" button) never
+  // retries silently -- a user clicking that button wants one real attempt
+  // and an honest result. The *first*, mount-time fetch below is the one
+  // exception: it retries once on failure, because that fetch races the
+  // anonymous session's auth cookie attaching to the very first request
+  // after a fresh page load (the same race settings.spec.ts's own comments
+  // document and guard against with an explicit reload) -- a real user's
+  // first paint hitting this is indistinguishable from Spotify's status
+  // endpoint being genuinely down, and treating it as a hard, permanent
+  // error either way was the actual bug: it needlessly showed "Couldn't
+  // check Spotify's status" for a fully recoverable, one-off timing issue.
+  const refreshSpotifyStatus = useCallback(async (): Promise<boolean> => {
     setSpotifyStatusState("loading");
     try {
       const response = await fetch("/api/music/spotify/status", { cache: "no-store" });
       if (!response.ok) {
         setSpotifyStatusState("error");
-        return;
+        return false;
       }
       const body = (await response.json()) as SpotifyStatus;
       setSpotifyStatus(body);
       setSpotifyStatusState("ready");
+      return true;
     } catch (err) {
       console.error("[listen] failed to load Spotify status:", err);
       setSpotifyStatusState("error");
+      return false;
     }
   }, []);
 
   useEffect(() => {
-    const timer = window.setTimeout(() => void refreshSpotifyStatus(), 0);
-    return () => window.clearTimeout(timer);
-  }, [refreshSpotifyStatus]);
+    let cancelled = false;
+    const timer = window.setTimeout(async () => {
+      const ok = await refreshSpotifyStatus();
+      if (!ok && !cancelled) {
+        // One retry, short delay -- long enough for the auth cookie from
+        // this same page load to have settled, short enough a real user
+        // never perceives it as a second, separate loading state.
+        window.setTimeout(() => void refreshSpotifyStatus(), 400);
+      }
+    }, 0);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- mount-time only, refreshSpotifyStatus is stable ([] deps)
+  }, []);
 
   // Derived, not synced via an effect: `connections.spotify` is always just
   // a reflection of the real status, so it's computed at render time rather

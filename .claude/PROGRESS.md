@@ -9,6 +9,50 @@ Add each session's PROGRESS.md entry to the same branch as the code it describes
 
 ---
 
+## [frontend] 2026-09-13 (PR #170, fix before merge) — `spotify-listen.spec.ts`'s one non-flaky CI failure was a real bug, not more rate-limit noise
+
+PR #170's CI failed four times. Three of the four failures spread across files this PR
+doesn't touch (`settings.spec.ts`, `signal-deck-home-session.spec.ts`), matched this
+session's well-documented Supabase anonymous-auth rate limit exactly, and self-healed on
+retry within the same run -- genuinely environmental, correctly not chased further. But on
+the fourth run, GitHub's own summary distinguished the two kinds cleanly: those two were
+marked **"flaky"** (failed then recovered), while `spotify-listen.spec.ts`'s first test was
+marked **"1 failed"** -- it failed on all three attempts, never recovered. That distinction
+is what turned this from "assume flakiness again" into "go read the actual code."
+
+**Real root cause, found by reading `listen-state.tsx`, not by re-running CI again.**
+`refreshSpotifyStatus()` fires once, `setTimeout(..., 0)` after the provider mounts, to load
+`GET /api/music/spotify/status`. Any non-2xx response -- including a transient one -- set
+`spotifyStatusState` to a **permanent** `"error"`, with no retry. `settings.spec.ts`'s own
+comments already document the exact race this collided with: the anonymous session's auth
+cookie is not guaranteed to be attached to the very first request fired immediately after
+`page.goto()` on a real production server, and every other test in this suite that depends
+on an authenticated first-request already guards against it with one `page.reload()`. This
+provider's status fetch was the one authenticated call in this codebase that fired on mount
+with no such guard -- fine on a fast, idle server, a real race on a loaded CI runner.
+
+**Fixed in the app, not just the test** -- a real user's first Listen-deck paint can hit
+this exact race on a slow connection, and permanently showing "Couldn't check Spotify's
+status" for a fully recoverable timing hiccup was the actual bug users would have seen, not
+a CI-only artifact. `refreshSpotifyStatus()` now returns whether it succeeded; the
+mount-time effect retries once, 400ms later, only on that first call -- long enough for the
+same page's auth cookie to have settled, short enough a user never perceives a second
+loading state. The panel's own "Try again" button still does exactly one honest attempt, no
+silent retry -- a user clicking it explicitly wants to know if it's still failing, not to
+have a retry hidden from them.
+
+Also added the same `page.reload()` guard to `spotify-listen.spec.ts`'s `beforeAll`,
+matching `settings.spec.ts`'s established pattern -- belt-and-suspenders alongside the app
+fix, not a substitute for it.
+
+**Verified:** the previously-timing-out test now passes in 795ms (was hitting its full
+20s timeout before). Full `spotify-listen.spec.ts` 4/4, `settings.spec.ts` +
+`signal-deck-home-session.spec.ts` 8/8 (confirming the shared `listen-state.tsx` change
+didn't regress anything else consuming that hook), 340/340 vitest, `tsc`/`eslint` clean,
+fresh production build.
+
+---
+
 ## [frontend] 2026-09-13 (PR pending) — Spotify: the real Web Playback SDK player behind the Listen deck
 
 Built against the backend session's merged contract (PR #169, `7a92ad2`, `docs/architecture/

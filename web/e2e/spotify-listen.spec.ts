@@ -28,7 +28,15 @@ test.describe.serial("Spotify: Listen deck and Settings honesty states", () => {
   test.beforeAll(async ({ browser }) => {
     page = await browser.newPage();
     // Establishes the anonymous session (proxy.ts) once for every test below.
+    // The reload matters: settings.spec.ts's own comments document this same
+    // race elsewhere in this suite -- the first response after page.goto()
+    // isn't guaranteed to have the session's auth cookie attached yet on a
+    // real production server, so an authenticated fetch made immediately
+    // after (like the Spotify status panel's own mount-time call) can race
+    // it. One reload here is cheaper than every downstream test having to
+    // account for a possibly-unauthenticated first request.
     await page.goto("/architecture-02");
+    await page.reload();
   });
 
   test.afterAll(async () => {
