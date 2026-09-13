@@ -28,6 +28,37 @@
   font-family: "Space Grotesk", Arial, sans-serif;
 }
 
+:global(html[data-a02-theme="light"]) .page {
+  --void: #f5f5fa;
+  --void2: #fff;
+  --ink: #17172a;
+  --dim: #66667d;
+  --line: #c4bef4;
+  --ultra: #6957e8;
+  --acid: #8bbd12;
+  --coral: #d95f57;
+  --aqua: #008ca7;
+  color-scheme: light;
+}
+
+:global(html[data-a02-theme="light"]) .page,
+:global(html[data-a02-theme="light"]) .page :is(button, input, textarea) {
+  transition: background-color .18s ease, color .18s ease, border-color .18s ease, box-shadow .18s ease;
+}
+
+:global(html[data-a02-theme="light"]) .setup,
+:global(html[data-a02-theme="light"]) .taskPanel,
+:global(html[data-a02-theme="light"]) .coachRail,
+:global(html[data-a02-theme="light"]) .extensionDialog {
+  border-color: var(--line);
+  background: linear-gradient(145deg, #fff, #e9e7ff);
+  box-shadow: 0 18px 50px rgba(43, 39, 95, .13);
+}
+
+:global(html[data-a02-theme="light"]) .setupFields input,
+:global(html[data-a02-theme="light"]) .extensionField input,
+:global(html[data-a02-theme="light"]) .leftoverField textarea { background: rgba(255,255,255,.86); }
+
 .preparing {
   display: grid;
   justify-items: center;
@@ -449,3 +480,31 @@
     transition: none;
   }
 }
+
+/* Must follow the Focus module's original dark declarations. These are not
+   opacity changes: daylight Focus needs its own readable paper surfaces. */
+:global(html[data-a02-theme="light"]) .taskPanel,
+:global(html[data-a02-theme="light"]) .coachRail {
+  border-color:#c4bef4;
+  background:linear-gradient(145deg,#fff,#e9e7ff);
+  box-shadow:0 18px 50px rgba(43,39,95,.13);
+}
+:global(html[data-a02-theme="light"]) .taskPanel h1,
+:global(html[data-a02-theme="light"]) .coachRail h2,
+:global(html[data-a02-theme="light"]) .steps li,
+:global(html[data-a02-theme="light"]) .coachPrompt p { color:#17172a; }
+:global(html[data-a02-theme="light"]) .taskPanel > p:not(.cardEyebrow),
+:global(html[data-a02-theme="light"]) .coachCopy,
+:global(html[data-a02-theme="light"]) .steps span,
+:global(html[data-a02-theme="light"]) .coachPrompt span { color:#66667d; }
+:global(html[data-a02-theme="light"]) .cardEyebrow,
+:global(html[data-a02-theme="light"]) .coachMark { color:#008ca7; }
+:global(html[data-a02-theme="light"]) .steps,
+:global(html[data-a02-theme="light"]) .steps li,
+:global(html[data-a02-theme="light"]) .coachPrompt { border-color:#d8d4ee; }
+:global(html[data-a02-theme="light"]) .pauseButton { background:#e2f8fb; border-color:#8ed8e5; color:#07586a; }
+:global(html[data-a02-theme="light"]) .abandonButton { border-color:#c4bef4; color:#585775; }
+:global(html[data-a02-theme="light"]) .abandonButton:hover:not(:disabled) { color:#17172a; border-color:#008ca7; background:#e2f8fb; }
+:global(html[data-a02-theme="light"]) .extensionDialog { background:rgba(245,245,250,.66); }
+:global(html[data-a02-theme="light"]) .extensionDialog > div { border-color:#c4bef4; background:linear-gradient(145deg,#fff,#e9e7ff); box-shadow:0 24px 80px rgba(43,39,95,.22); }
+@media (prefers-reduced-motion:reduce){:global(html[data-a02-theme="light"]) .page,:global(html[data-a02-theme="light"]) .page :is(button,input,textarea){transition:none}}

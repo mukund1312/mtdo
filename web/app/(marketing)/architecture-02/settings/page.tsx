@@ -6,9 +6,11 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { PlanningModeSelector } from "../planning-mode-selector";
 import { DockStyleChooser } from "../dock-style-chooser";
+import { ThemeChooser } from "../theme-chooser";
 import { isPlanningMode, type PlanningMode } from "../planning-mode";
 import "../signal-deck.css";
 import "../planning-mode-selector.css";
+import "../theme-chooser.css";
 import "./settings.css";
 import "../fixed-layer-safety.css";
 
@@ -233,7 +235,7 @@ export default function SignalDeckSettingsPage() {
 
         <div className="a02-settings-content">
           {activeSection === "general" && <GeneralSettings />}
-          {activeSection === "appearance" && <section className="a02-product-state a02-settings-card" aria-label="Appearance settings"><DockStyleChooser /></section>}
+          {activeSection === "appearance" && <section className="a02-product-state a02-settings-card" aria-label="Appearance settings"><ThemeChooser /><DockStyleChooser /></section>}
           {activeSection === "account" && <AccountSettings />}
           {activeSection === "help" && <HelpSettings />}
 

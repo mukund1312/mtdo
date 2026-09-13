@@ -10,6 +10,29 @@
   background: #0b0e29;
 }
 
+:global(html[data-a02-theme="light"]) .shell {
+  --border: #c4bef4;
+  --dim: #66667d;
+  background: #f5f5fa;
+  color: #17172a;
+}
+
+:global(html[data-a02-theme="light"]) .grid {
+  opacity: 1;
+  background-image:
+    radial-gradient(circle at 64% 19%, rgba(105, 87, 232, 0.13), transparent 27%),
+    radial-gradient(circle at 22% 77%, rgba(0, 175, 200, 0.08), transparent 22%),
+    linear-gradient(#e2e2ec 1px, transparent 1px),
+    linear-gradient(90deg, #e2e2ec 1px, transparent 1px);
+}
+
+:global(html[data-a02-theme="light"]) .wordmark::after,
+:global(html[data-a02-theme="light"]) .liveStatus { color: #8bbd12; }
+:global(html[data-a02-theme="light"]) .timerToggle,
+:global(html[data-a02-theme="light"]) .sandglassToggle { color: #66667d; }
+:global(html[data-a02-theme="light"]) .sandglassToggle:hover,
+:global(html[data-a02-theme="light"]) .sandglassToggle:focus-visible { color: #17172a; }
+
 .grid,
 .bloom {
   position: fixed;
@@ -436,3 +459,12 @@
     animation: none;
   }
 }
+
+:global(html[data-a02-theme="light"]) .sandglass { border-color:#c4bef4; color:#8bbd12; background:radial-gradient(circle at 50% 32%,rgba(105,87,232,.18),rgba(255,255,255,.84) 68%); box-shadow:0 10px 24px rgba(43,39,95,.1); }
+:global(html[data-a02-theme="light"]) .sandglassFrame { stroke:#585775; }
+:global(html[data-a02-theme="light"]) .ringTrack { stroke:#c4bef4; }
+:global(html[data-a02-theme="light"]) .ringProgress { stroke:#8bbd12; }
+:global(html[data-a02-theme="light"]) .ringMark { background:#b8f52a; box-shadow:0 0 18px rgba(139,189,18,.28); }
+:global(html[data-a02-theme="light"]) .timerLabel,
+:global(html[data-a02-theme="light"]) .elapsed { color:#66667d; }
+:global(html[data-a02-theme="light"]) .timer { background:linear-gradient(180deg,#17172a 8%,#6957e8 110%); background-clip:text; -webkit-background-clip:text; }
