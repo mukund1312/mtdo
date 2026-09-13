@@ -129,10 +129,9 @@ test.describe.serial("Spotify: Listen deck and Settings honesty states", () => {
   // never a fetch() -- exists and points at the right route once the server
   // reports it's actually configured. Confirmed via GET /api/music/spotify/status
   // intercepted with the exact locked contract shape (api.md §3i); nothing
-  // about the real OAuth hop itself is exercised or claimed to be. Run last:
-  // it's the only test in this file that mocks a response, and the shared
-  // page is torn down (afterAll) right after, so nothing downstream can
-  // inherit this route handler.
+  // about the real OAuth hop itself is exercised or claimed to be. Not the
+  // last mocking test anymore (see the playlist-browse test below) -- calls
+  // its own page.unroute() so the next test starts clean either way.
   test("Spotify Connect is a real link to /api/music/spotify/connect once configured", async () => {
     await page.route("**/api/music/spotify/status", async (route) => {
       await route.fulfill({
@@ -151,5 +150,84 @@ test.describe.serial("Spotify: Listen deck and Settings honesty states", () => {
     await expect(connectLink).toHaveAttribute("href", /^\/api\/music\/spotify\/connect/);
 
     await page.unroute("**/api/music/spotify/status");
+  });
+
+  // Phase 1's playlist browser (PR #172's backend, this PR's frontend): pure
+  // frontend-against-mocked-fetch, the same technique the test above uses --
+  // genuinely testable without a live Premium account/device, unlike actual
+  // audible playback. Run last: the shared page is torn down (afterAll)
+  // right after, so nothing downstream can inherit these route handlers.
+  test("Playlist browser lists playlists, drills into tracks, and fires a real play request", async () => {
+    await page.route("**/api/music/spotify/status", async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          configured: true,
+          connected: true,
+          connection: {
+            connectedAt: new Date().toISOString(),
+            displayName: "Test Listener",
+            expired: false,
+            premium: true,
+            product: "premium",
+            refreshTokenExpiresAt: null,
+            scopes: [],
+          },
+          missing: [],
+          provider: "spotify",
+        }),
+      });
+    });
+    await page.route("**/api/music/spotify/playlists", async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          items: [{ id: "p1", name: "Deep Focus", trackCount: 2, imageUrl: null, uri: "spotify:playlist:p1" }],
+          next: null,
+        }),
+      });
+    });
+    await page.route("**/api/music/spotify/playlists/p1/tracks", async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          items: [
+            { uri: "spotify:track:t1", name: "Two Sum", artists: ["Test Artist"], album: "Test Album", imageUrl: null, durationMs: 210000 },
+          ],
+          next: null,
+        }),
+      });
+    });
+    let playRequestBody: unknown = null;
+    await page.route("**/api/music/spotify/player/play", async (route) => {
+      playRequestBody = route.request().postDataJSON();
+      await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ ok: true }) });
+    });
+
+    await page.goto("/architecture-02?deck=listen");
+    await closeWalkthroughIfPresent(page);
+    await page.locator(".a02-listen-source").filter({ hasText: "Spotify" }).click();
+
+    await expect(page.getByText("YOUR PLAYLISTS")).toBeVisible({ timeout: 20_000 });
+    await expect(page.getByText("Deep Focus")).toBeVisible();
+
+    await page.getByRole("button", { name: "Open Deep Focus" }).click();
+    await expect(page.getByText("Two Sum")).toBeVisible();
+    await expect(page.getByRole("button", { name: "← Playlists" })).toBeVisible();
+
+    await page.getByRole("button", { name: "Play Two Sum" }).click();
+    await expect.poll(() => playRequestBody).toEqual({ contextUri: "spotify:playlist:p1", offset: { uri: "spotify:track:t1" } });
+
+    await page.getByRole("button", { name: "← Playlists" }).click();
+    await expect(page.getByText("YOUR PLAYLISTS")).toBeVisible();
+    await expect(page.getByText("Deep Focus")).toBeVisible();
+
+    await page.unroute("**/api/music/spotify/status");
+    await page.unroute("**/api/music/spotify/playlists");
+    await page.unroute("**/api/music/spotify/playlists/p1/tracks");
+    await page.unroute("**/api/music/spotify/player/play");
   });
 });

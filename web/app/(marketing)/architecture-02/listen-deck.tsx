@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { formatPlaybackTime, MUSIC_PROVIDERS, RADIO_STATION_DETAILS, providerById, type MockTrack, type MusicProvider, type MusicProviderId, type RadioStation } from "./listen-data";
-import { useSignalDeckListen } from "./listen-state";
+import { useSignalDeckListen, type SpotifyPlaylistSummary, type SpotifyTrackSummary } from "./listen-state";
 
 type ConnectionModalProvider = MusicProvider | null;
 
@@ -252,16 +252,125 @@ function SpotifyPanel() {
       <SpotifyDisconnectButton />
     </div>
     {listen.spotifyPlayerState === "error" && <p className="a02-listen-empty-result">{listen.spotifyPlayerError ?? "The Spotify player hit an error."}</p>}
-    {listen.spotifyPlayerState !== "error" && !listen.currentTrack?.isReal && <div className="a02-provider-empty">
-      <i className="a02-provider-mark is-acid">◉</i><span>SPOTIFY</span>
-      <h2>{listen.spotifyPlayerState === "ready" ? "Waiting for playback" : "Starting the Spotify player…"}</h2>
-      <p>
-        {listen.spotifyPlayerState === "ready"
-          ? "This app doesn't start playback itself -- open Spotify on your phone, desktop, or web player, hit play, then pick \"mtdo\" from the device (Connect) menu."
-          : "Loading the Spotify Web Playback SDK."}
+    {listen.spotifyPlayerState === "loading" && <p className="a02-listen-empty-result">Loading the Spotify Web Playback SDK…</p>}
+    {listen.spotifyPlayerState === "ready" && listen.spotifyWaitingForTransfer && !listen.currentTrack?.isReal && (
+      <p className="a02-listen-empty-result">
+        Nothing playing yet -- pick a track below, or open Spotify elsewhere, hit play, then choose &quot;mtdo&quot; from its device menu.
       </p>
-    </div>}
+    )}
+    <SpotifyPlaylistBrowser />
   </div>;
+}
+
+/**
+ * The control center's library browser (Phase 1, PR #172's routes): a
+ * playlist list that drills into a track list on click. Reuses the same
+ * `.a02-listen-library-heading`/`.a02-listen-tracks` markup and classes the
+ * demo providers already use above -- no new visual system, per the plan's
+ * "stay in Signal Deck's existing idiom" decision.
+ */
+function SpotifyPlaylistBrowser() {
+  const listen = useSignalDeckListen();
+
+  if (listen.selectedSpotifyPlaylist) {
+    return <SpotifyTrackBrowser playlist={listen.selectedSpotifyPlaylist} />;
+  }
+
+  if (listen.spotifyPlaylistsState === "loading" && listen.spotifyPlaylists.length === 0) {
+    return <p className="a02-listen-empty-result">Loading your playlists…</p>;
+  }
+  if (listen.spotifyPlaylistsState === "error") {
+    return <div className="a02-listen-empty-result">
+      Couldn&apos;t load your playlists.
+      <button type="button" className="a02-listen-primary" onClick={() => void listen.fetchSpotifyPlaylists()}>Try again</button>
+    </div>;
+  }
+  if (listen.spotifyPlaylistsState === "ready" && listen.spotifyPlaylists.length === 0) {
+    return <p className="a02-listen-empty-result">No playlists found on this Spotify account.</p>;
+  }
+
+  return <>
+    <div className="a02-listen-library-heading"><div><span>YOUR PLAYLISTS</span><b>{listen.spotifyPlaylists.length} playlist{listen.spotifyPlaylists.length === 1 ? "" : "s"}</b></div></div>
+    {/* Reuses .a02-listen-tracks' exact 5-column grid (index/art/title/time/icon)
+        rather than inventing a new layout -- each row fills all five slots so
+        it lines up with that fixed grid-template-columns instead of collapsing
+        into its first 3 columns. */}
+    <ol className="a02-listen-tracks">
+      {listen.spotifyPlaylists.map((playlist, index) => <li key={playlist.id}>
+        <button type="button" onClick={() => listen.openSpotifyPlaylist(playlist)} aria-label={`Open ${playlist.name}`}>
+          <span>{String(index + 1).padStart(2, "0")}</span>
+          <PlaylistArt playlist={playlist} />
+          <div><b>{playlist.name}</b><small>{playlist.trackCount} track{playlist.trackCount === 1 ? "" : "s"}</small></div>
+          <time aria-hidden="true"></time>
+          <i>→</i>
+        </button>
+      </li>)}
+    </ol>
+  </>;
+}
+
+function SpotifyTrackBrowser({ playlist }: { playlist: SpotifyPlaylistSummary }) {
+  const listen = useSignalDeckListen();
+
+  return <>
+    <div className="a02-listen-library-heading">
+      <div><span>{playlist.name.toUpperCase()}</span><b>{listen.spotifyPlaylistTracks.length} track{listen.spotifyPlaylistTracks.length === 1 ? "" : "s"}</b></div>
+      <button type="button" onClick={listen.closeSpotifyPlaylist}>← Playlists</button>
+    </div>
+    {listen.spotifyPlayError && <p className="a02-listen-empty-result" role="alert">{listen.spotifyPlayError}</p>}
+    {listen.spotifyPlaylistTracksState === "loading" && listen.spotifyPlaylistTracks.length === 0 && <p className="a02-listen-empty-result">Loading tracks…</p>}
+    {listen.spotifyPlaylistTracksState === "error" && <div className="a02-listen-empty-result">
+      Couldn&apos;t load this playlist&apos;s tracks.
+      <button type="button" className="a02-listen-primary" onClick={() => listen.openSpotifyPlaylist(playlist)}>Try again</button>
+    </div>}
+    {listen.spotifyPlaylistTracksState === "ready" && listen.spotifyPlaylistTracks.length === 0 && <p className="a02-listen-empty-result">This playlist is empty.</p>}
+    {listen.spotifyPlaylistTracksState === "ready" && listen.spotifyPlaylistTracks.length > 0 && <SpotifyTrackList tracks={listen.spotifyPlaylistTracks} contextUri={playlist.uri} />}
+  </>;
+}
+
+/** Extracts the bare id from a Spotify URI (`spotify:track:<id>` -> `<id>`).
+ * Needed because `normalizeSpotifyTrack()` stores the SDK's own `track.id`
+ * (a bare id, not a URI) on `currentTrack.id` -- comparing a full URI
+ * against that directly would never match, even for the track that's
+ * actually playing. */
+function spotifyIdFromUri(uri: string): string {
+  return uri.split(":").at(-1) ?? uri;
+}
+
+function SpotifyTrackList({ tracks, contextUri }: { tracks: SpotifyTrackSummary[]; contextUri: string }) {
+  const listen = useSignalDeckListen();
+  const currentId = listen.currentTrack?.isReal ? listen.currentTrack.id : null;
+  const requesting = listen.spotifyPlayRequestState === "requesting";
+  return <ol className="a02-listen-tracks">
+    {tracks.map((track, index) => {
+      const isCurrent = currentId !== null && currentId === spotifyIdFromUri(track.uri);
+      return <li key={track.uri} className={isCurrent ? "is-current" : ""}>
+        <button type="button" disabled={requesting} onClick={() => void listen.playSpotifyTrack(track, contextUri)} aria-label={`Play ${track.name}`}>
+          <span>{String(index + 1).padStart(2, "0")}</span>
+          <SpotifyTrackArt track={track} />
+          <div><b>{track.name}</b><small>{track.artists.join(", ")}{track.album ? ` · ${track.album}` : ""}</small></div>
+          <time>{formatPlaybackTime(Math.round(track.durationMs / 1000))}</time>
+          <i>{isCurrent ? "Ⅱ" : "▶"}</i>
+        </button>
+      </li>;
+    })}
+  </ol>;
+}
+
+function PlaylistArt({ playlist }: { playlist: SpotifyPlaylistSummary }) {
+  if (playlist.imageUrl) {
+    // eslint-disable-next-line @next/next/no-img-element
+    return <img src={playlist.imageUrl} alt="" aria-hidden="true" className="a02-track-art is-real" />;
+  }
+  return <i aria-hidden="true" className="a02-track-art is-acid"><span>{playlist.name.slice(0, 1)}</span></i>;
+}
+
+function SpotifyTrackArt({ track }: { track: SpotifyTrackSummary }) {
+  if (track.imageUrl) {
+    // eslint-disable-next-line @next/next/no-img-element
+    return <img src={track.imageUrl} alt="" aria-hidden="true" className="a02-track-art is-real" />;
+  }
+  return <i aria-hidden="true" className="a02-track-art is-acid"><span>{track.name.slice(0, 1)}</span></i>;
 }
 
 function SpotifyDisconnectButton() {
