@@ -18,21 +18,56 @@
 import { parseEncryptionKey } from "@/lib/crypto/token-envelope";
 
 /**
- * Least privilege, and every one of these three is genuinely required by the
- * Web Playback SDK:
- *   - `streaming`          -- the actual right to play audio in the browser.
- *   - `user-read-email`    -- required alongside `streaming` by Spotify.
- *   - `user-read-private`  -- likewise, and it is what carries the account's
- *                             product tier ('premium' / 'free'), which is the
- *                             only honest signal available for the Premium
- *                             requirement below.
+ * Least privilege, but no longer just the three the Web Playback SDK itself
+ * needs -- Phase 1 of the music control center (playlists, real queue, real
+ * device switching) added four more, each earning its place:
+ *   - `streaming`                    -- the actual right to play audio in
+ *                                        the browser.
+ *   - `user-read-email`              -- required alongside `streaming` by
+ *                                        Spotify.
+ *   - `user-read-private`            -- likewise, and it is what carries the
+ *                                        account's product tier ('premium' /
+ *                                        'free'), the only honest signal for
+ *                                        the Premium requirement below.
+ *   - `playlist-read-private`        -- list + read the user's own private
+ *                                        playlists (the control center's
+ *                                        library browser).
+ *   - `playlist-read-collaborative`  -- same, for playlists the user
+ *                                        collaborates on but doesn't own.
+ *   - `user-read-playback-state`     -- read the real queue and the list of
+ *                                        Spotify Connect devices.
+ *   - `user-modify-playback-state`   -- play a chosen track and transfer
+ *                                        playback to a chosen device.
  *
- * Notably absent: any playlist, library, follow or user-modify scope. This app
- * plays audio; it does not read or alter the user's Spotify account. Widening
- * this list later is a re-consent, which is why the GRANTED scopes are stored
- * on the connection row rather than assumed.
+ * STILL notably absent: any playlist-modify, library-modify, follow, or
+ * search scope. This app is a player and a browser of what the user already
+ * has, not an editor of their Spotify account -- creating/editing playlists
+ * is a deliberately separate, not-yet-built feature. Widening this list is a
+ * re-consent, which is why GRANTED scopes are stored on the connection row
+ * rather than assumed -- see hasRequiredScopes() below, which is how the
+ * frontend tells an under-scoped pre-Phase-1 connection apart from a fresh
+ * one, without waiting for a live 403.
  */
-export const SPOTIFY_SCOPES = ["streaming", "user-read-email", "user-read-private"] as const;
+export const SPOTIFY_SCOPES = [
+  "streaming",
+  "user-read-email",
+  "user-read-private",
+  "playlist-read-private",
+  "playlist-read-collaborative",
+  "user-read-playback-state",
+  "user-modify-playback-state",
+] as const;
+
+/** True only when `granted` (a connection's stored, as-granted scope list --
+ * never assumed) is a superset of everything this app currently requests.
+ * Used to catch a pre-Phase-1 connection (granted only the original three)
+ * proactively, in listen-state.tsx, rather than discovering the gap only
+ * when a playlist/queue/device call comes back 403. */
+export function hasRequiredScopes(granted: string[] | null | undefined): boolean {
+  if (!granted) return false;
+  const grantedSet = new Set(granted);
+  return SPOTIFY_SCOPES.every((scope) => grantedSet.has(scope));
+}
 
 /**
  * PERMANENT PLATFORM CONSTRAINT, not a bug and not a TODO: the Spotify Web

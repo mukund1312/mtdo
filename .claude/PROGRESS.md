@@ -9,6 +9,61 @@ Add each session's PROGRESS.md entry to the same branch as the code it describes
 
 ---
 
+## [backend] 2026-09-13 (PR pending) — Spotify music control center Phase 1, PR 1: playlist/queue/device backend
+
+First of three PRs (plan: `~/.claude/plans/adaptive-sleeping-turing.md`) turning the Listen
+deck's Spotify panel from a bare connection-status screen into a real music command center:
+browse playlists, play a track, see the real queue, switch Spotify Connect devices. This PR is
+backend + scopes only -- no frontend changes, PRs 2 and 3 build the UI on top of these routes.
+
+**Scope widened, a real breaking change for anyone already connected.** `SPOTIFY_SCOPES`
+(`lib/music/spotify/config.ts`) grew from the original three the Web Playback SDK needs
+(`streaming`, `user-read-email`, `user-read-private`) to seven, adding `playlist-read-private`,
+`playlist-read-collaborative`, `user-read-playback-state`, `user-modify-playback-state`. Every
+already-connected account -- including the one real one connected this session -- will show
+reconnect-required on next visit. That's expected, not a bug; `hasRequiredScopes()` (same file)
+lets the frontend (PR 2) detect an under-scoped stored connection proactively rather than waiting
+for a live 403.
+
+**Six new Web API calls in `lib/music/spotify/spotify.ts`**: `listPlaylists`,
+`getPlaylistTracks`, `getQueue`, `getDevices`, `playTrack`, `transferPlayback` -- plain `fetch`
+against `api.spotify.com/v1`, same style as the file's existing OAuth calls, routed through one
+new `spotifyApiRequest()` helper that handles the 403-means-reconnect and 204-means-honest-empty
+cases once instead of six times. **The file's header comment changed** with this PR: playback
+control used to be described as "structurally absent... nothing unattended can start audio;" that
+guarantee now holds a different way -- `playTrack`/`transferPlayback` exist, but are only ever
+called from a real user click in `listen-deck.tsx` (PRs 2/3), never a background job or AI
+suggestion. Worth reading if touching this file again; the old comment would now be actively
+misleading.
+
+**Six new thin route files** under `app/api/music/spotify/` (`playlists`, `playlists/[id]/tracks`,
+`player/queue`, `player/devices`, `player/play`, `player/transfer`), each copying `token/route.ts`
+line for line in shape: auth check -> `resolveSpotifyConfig` -> `acquireAccessToken` -> call the
+lib function -> `no-store` JSON, same 409/409/502 status mapping for
+not-connected/reconnect-required/upstream-error.
+
+**Caught by CI-parity testing, not by the unit suite:** `connect/route.test.ts` had a second
+hardcoded 3-scope literal the config.test.ts fix didn't touch -- it asserted the exact
+authorize-URL `scope` query param. Fixed by deriving the assertion from `SPOTIFY_SCOPES` itself
+so it can't drift out of sync with the source again.
+
+**Local e2e verification needed an extra step this session specifically:** this machine's
+`.env.local` now has real Spotify credentials (added earlier this session for manual testing), so
+`spotify-listen.spec.ts`'s "reports not configured" tests -- accurate for CI, which has no real
+credentials -- failed locally against a genuinely-configured server. Verified for real by
+temporarily stripping just `SPOTIFY_CLIENT_ID`/`SPOTIFY_TOKEN_ENCRYPTION_KEY` from a copy of
+`.env.local` (not the Supabase/service-role vars, which the whole app needs just to boot) for one
+isolated run, then restoring the real file. 4/4 passed, including the extended "routes degrade
+cleanly" test now covering all six new routes.
+
+**Files changed:** `web/lib/music/spotify/config.ts`, `web/lib/music/spotify/spotify.ts`, six new
+route files under `web/app/api/music/spotify/`, `web/lib/music/spotify/spotify.test.ts` (new, 66
+unit tests total across the module now), `web/lib/music/spotify/config.test.ts`,
+`web/app/api/music/spotify/connect/route.test.ts`, `web/e2e/spotify-listen.spec.ts`. No
+schema/migration changes -- `music_connections` already stores `scopes` as granted, not assumed.
+
+---
+
 ## [frontend] 2026-09-13 (PR #170, fix before merge) — `spotify-listen.spec.ts`'s one non-flaky CI failure was a real bug, not more rate-limit noise
 
 PR #170's CI failed four times. Three of the four failures spread across files this PR

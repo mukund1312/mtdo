@@ -5,7 +5,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { randomBytes } from "node:crypto";
 
-import { SPOTIFY_SCOPES, resolveSpotifyConfig } from "./config";
+import { SPOTIFY_SCOPES, hasRequiredScopes, resolveSpotifyConfig } from "./config";
 
 const ENV_VARS = [
   "SPOTIFY_CLIENT_ID",
@@ -107,10 +107,41 @@ describe("resolveSpotifyConfig", () => {
 });
 
 describe("SPOTIFY_SCOPES", () => {
-  it("requests exactly the three scopes the Web Playback SDK needs, and nothing more", () => {
-    // Least privilege, asserted rather than assumed: no playlist, library,
-    // follow or user-modify scope. This app plays audio; it does not read or
-    // alter the user's Spotify account.
-    expect([...SPOTIFY_SCOPES]).toEqual(["streaming", "user-read-email", "user-read-private"]);
+  it("requests the SDK's original three plus Phase 1's playlist/queue/device scopes, and nothing more", () => {
+    // Least privilege, asserted rather than assumed: still no playlist-modify,
+    // library, follow, or search scope. This app plays audio and browses what
+    // the user already has; it does not edit their Spotify account.
+    expect([...SPOTIFY_SCOPES]).toEqual([
+      "streaming",
+      "user-read-email",
+      "user-read-private",
+      "playlist-read-private",
+      "playlist-read-collaborative",
+      "user-read-playback-state",
+      "user-modify-playback-state",
+    ]);
+  });
+});
+
+describe("hasRequiredScopes", () => {
+  it("is false for a pre-Phase-1 connection that only granted the original three scopes", () => {
+    expect(hasRequiredScopes(["streaming", "user-read-email", "user-read-private"])).toBe(false);
+  });
+
+  it("is true once every currently-requested scope has been granted", () => {
+    expect(hasRequiredScopes([...SPOTIFY_SCOPES])).toBe(true);
+  });
+
+  it("is true even with extra granted scopes beyond what's currently requested", () => {
+    expect(hasRequiredScopes([...SPOTIFY_SCOPES, "user-read-recently-played"])).toBe(true);
+  });
+
+  it("is false for null or undefined -- never connected, or scopes not yet loaded", () => {
+    expect(hasRequiredScopes(null)).toBe(false);
+    expect(hasRequiredScopes(undefined)).toBe(false);
+  });
+
+  it("is false for an empty grant", () => {
+    expect(hasRequiredScopes([])).toBe(false);
   });
 });
