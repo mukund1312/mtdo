@@ -6,6 +6,8 @@ import { ProgressDeck } from "./progress-deck";
 import { ReviewRings } from "./review-rings";
 import { ReviewTimeBehavior } from "./review-time-behavior";
 import { ReviewStudyProfile } from "./review-study-profile";
+import { ReviewInsights } from "./review-insights";
+import { useStudyProfile } from "./use-study-profile";
 
 type ReviewRange = "today" | "week" | "month" | "6weeks" | "year";
 
@@ -19,6 +21,10 @@ const RANGES: Array<{ id: ReviewRange; label: string }> = [
 
 export function ReviewDeck() {
   const [range, setRange] = useState<ReviewRange>("today");
+  // Owned here, not inside ReviewStudyProfile/ReviewInsights individually --
+  // both cards read the same study_profile() result, so the RPC is called
+  // exactly once per page load, not once per card. See use-study-profile.ts.
+  const studyProfile = useStudyProfile();
 
   return (
     <>
@@ -51,7 +57,8 @@ export function ReviewDeck() {
           <ReviewRings />
           <ProgressDeck />
           <ReviewTimeBehavior />
-          <ReviewStudyProfile />
+          <ReviewStudyProfile {...studyProfile} />
+          <ReviewInsights {...studyProfile} />
         </>
       ) : (
         <section className="a02-review a02-review-coming-soon" aria-live="polite">
