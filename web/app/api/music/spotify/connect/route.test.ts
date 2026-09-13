@@ -8,6 +8,7 @@ import { randomBytes } from "node:crypto";
 import { NextRequest, type NextResponse } from "next/server";
 
 import { deriveCodeChallenge, isValidCodeVerifier } from "@/lib/music/spotify/pkce";
+import { SPOTIFY_SCOPES } from "@/lib/music/spotify/config";
 
 const { mockGetUser } = vi.hoisted(() => ({ mockGetUser: vi.fn() }));
 vi.mock("@/lib/supabase/server", () => ({
@@ -84,7 +85,7 @@ describe("GET /api/music/spotify/connect", () => {
     const location = new URL(response.headers.get("location")!);
     expect(location.origin + location.pathname).toBe("https://accounts.spotify.com/authorize");
     expect(location.searchParams.get("response_type")).toBe("code");
-    expect(location.searchParams.get("scope")).toBe("streaming user-read-email user-read-private");
+    expect(location.searchParams.get("scope")).toBe(SPOTIFY_SCOPES.join(" "));
     // 'plain' would put the verifier itself into the user's browser history
     // and Spotify's logs, defeating the point of PKCE.
     expect(location.searchParams.get("code_challenge_method")).toBe("S256");

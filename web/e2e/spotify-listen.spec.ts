@@ -97,6 +97,32 @@ test.describe.serial("Spotify: Listen deck and Settings honesty states", () => {
 
     const disconnect = await page.request.post("/api/music/spotify/disconnect");
     expect(disconnect.status()).toBe(503);
+
+    // Phase 1 (playlists/queue/devices/playback-control) routes must degrade
+    // identically -- same resolveSpotifyConfig() gate every other route uses.
+    const playlists = await page.request.get("/api/music/spotify/playlists");
+    expect(playlists.status()).toBe(503);
+    expect((await playlists.json()).configured).toBe(false);
+
+    const playlistTracks = await page.request.get("/api/music/spotify/playlists/does-not-matter/tracks");
+    expect(playlistTracks.status()).toBe(503);
+    expect((await playlistTracks.json()).configured).toBe(false);
+
+    const queue = await page.request.get("/api/music/spotify/player/queue");
+    expect(queue.status()).toBe(503);
+    expect((await queue.json()).configured).toBe(false);
+
+    const devices = await page.request.get("/api/music/spotify/player/devices");
+    expect(devices.status()).toBe(503);
+    expect((await devices.json()).configured).toBe(false);
+
+    const play = await page.request.post("/api/music/spotify/player/play", { data: { uris: ["spotify:track:1"] } });
+    expect(play.status()).toBe(503);
+    expect((await play.json()).configured).toBe(false);
+
+    const transfer = await page.request.post("/api/music/spotify/player/transfer", { data: { deviceId: "d1" } });
+    expect(transfer.status()).toBe(503);
+    expect((await transfer.json()).configured).toBe(false);
   });
 
   // The real Connect affordance -- a plain <a href> real top-level navigation,
