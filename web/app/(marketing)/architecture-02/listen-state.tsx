@@ -143,6 +143,11 @@ type ListenState = {
    * never sets it directly, so there is exactly one source of truth for
    * "what's actually playing." */
   playSpotifyTrack: (track: SpotifyTrackSummary, contextUri: string) => Promise<void>;
+  /** Task-tied soundtracks (Phase 2): plays a whole playlist from its own
+   * start. Shares `spotifyPlayRequestState`/`spotifyPlayError` with
+   * playSpotifyTrack -- both are "the one thing currently trying to start
+   * playback," never simultaneous. */
+  playSpotifyPlaylist: (contextUri: string) => Promise<void>;
   spotifyPlayRequestState: "idle" | "requesting";
   spotifyPlayError: string | null;
 
@@ -502,24 +507,40 @@ export function SignalDeckListenProvider({ children }: { children: ReactNode }) 
     setSpotifyPlaylistTracksState("idle");
   }, []);
 
-  const playSpotifyTrack = useCallback(async (track: SpotifyTrackSummary, contextUri: string) => {
+  // Shared by playSpotifyTrack and playSpotifyPlaylist below -- both just
+  // choose a different `postSpotifyPlay` payload, the request lifecycle and
+  // error handling are identical. "No active device" is a real, common case
+  // (no scope gap now that PR 3 added device transfer -- it just means
+  // nothing is currently active anywhere) so it gets its own honest message
+  // rather than folding into a generic failure.
+  const runSpotifyPlayRequest = useCallback(async (opts: { contextUri: string; offset?: { uri: string } }) => {
     setSpotifyPlayRequestState("requesting");
     setSpotifyPlayError(null);
-    const result = await postSpotifyPlay({ contextUri, offset: { uri: track.uri } });
+    const result = await postSpotifyPlay(opts);
     setSpotifyPlayRequestState("idle");
     if (result.ok) return;
     if (result.kind === "reconnect-required" || result.kind === "not-connected") {
       handleSpotifyApiFailure(result.kind);
       return;
     }
-    // "No active device" is the common, expected case until PR 3 adds device
-    // transfer -- an honest, specific message rather than a generic failure.
     setSpotifyPlayError(
       result.kind === "no-active-device"
         ? "No active Spotify device. Open Spotify somewhere and press play once, or pick \"mtdo\" from its device menu, then try again."
         : "Couldn't start playback. Try again in a moment.",
     );
   }, [handleSpotifyApiFailure]);
+
+  const playSpotifyTrack = useCallback(async (track: SpotifyTrackSummary, contextUri: string) => {
+    await runSpotifyPlayRequest({ contextUri, offset: { uri: track.uri } });
+  }, [runSpotifyPlayRequest]);
+
+  // Task-tied soundtracks (Phase 2): plays a whole playlist from its own
+  // start, no specific track -- the Session screen's "Suggested soundtrack"
+  // card's only action. Bare `contextUri`, no `offset`/`uris`, is already
+  // supported by the play route (PR #172); nothing new on the backend.
+  const playSpotifyPlaylist = useCallback(async (contextUri: string) => {
+    await runSpotifyPlayRequest({ contextUri });
+  }, [runSpotifyPlayRequest]);
 
   const refreshSpotifyQueue = useCallback(async () => {
     setSpotifyQueueState("loading");
@@ -938,6 +959,7 @@ export function SignalDeckListenProvider({ children }: { children: ReactNode }) 
     openSpotifyPlaylist,
     closeSpotifyPlaylist,
     playSpotifyTrack,
+    playSpotifyPlaylist,
     spotifyPlayRequestState,
     spotifyPlayError,
     rightColumnTab,
@@ -951,7 +973,7 @@ export function SignalDeckListenProvider({ children }: { children: ReactNode }) 
     transferSpotifyPlayback,
     spotifyTransferRequestState,
     spotifyTransferError,
-  }), [activeProviderId, closeSpotifyPlaylist, connect, connections, currentTrack, currentTrackProviderId, disconnect, disconnectSpotify, favoriteStations, fetchSpotifyPlaylists, mode, musicPlaying, nextTrack, openSpotifyPlaylist, pauseRadio, playSpotifyTrack, position, previousTrack, queue, radioError, radioPlayback, refreshSpotifyDevices, refreshSpotifyQueue, refreshSpotifyStatus, repeat, rightColumnTab, seekOrSetPosition, selectedSpotifyPlaylist, selectedStation, selectStation, setTrack, shuffle, spotifyConnectHref, spotifyDevices, spotifyDevicesState, spotifyDisconnectError, spotifyDisconnecting, spotifyPlayError, spotifyPlayerError, spotifyPlayerState, spotifyPlayRequestState, spotifyPlaylists, spotifyPlaylistsState, spotifyPlaylistTracks, spotifyPlaylistTracksState, spotifyQueue, spotifyQueueState, spotifyReconnectRequired, spotifyStatus, spotifyStatusState, spotifyTransferError, spotifyTransferRequestState, spotifyWaitingForTransfer, stationAtOffset, toggleMusic, toggleRadio, transferSpotifyPlayback, volume]);
+  }), [activeProviderId, closeSpotifyPlaylist, connect, connections, currentTrack, currentTrackProviderId, disconnect, disconnectSpotify, favoriteStations, fetchSpotifyPlaylists, mode, musicPlaying, nextTrack, openSpotifyPlaylist, pauseRadio, playSpotifyPlaylist, playSpotifyTrack, position, previousTrack, queue, radioError, radioPlayback, refreshSpotifyDevices, refreshSpotifyQueue, refreshSpotifyStatus, repeat, rightColumnTab, seekOrSetPosition, selectedSpotifyPlaylist, selectedStation, selectStation, setTrack, shuffle, spotifyConnectHref, spotifyDevices, spotifyDevicesState, spotifyDisconnectError, spotifyDisconnecting, spotifyPlayError, spotifyPlayerError, spotifyPlayerState, spotifyPlayRequestState, spotifyPlaylists, spotifyPlaylistsState, spotifyPlaylistTracks, spotifyPlaylistTracksState, spotifyQueue, spotifyQueueState, spotifyReconnectRequired, spotifyStatus, spotifyStatusState, spotifyTransferError, spotifyTransferRequestState, spotifyWaitingForTransfer, stationAtOffset, toggleMusic, toggleRadio, transferSpotifyPlayback, volume]);
 
   return <ListenContext.Provider value={value}>{children}<audio ref={radioAudioRef} data-testid="signal-deck-radio-audio" preload="none" /></ListenContext.Provider>;
 }

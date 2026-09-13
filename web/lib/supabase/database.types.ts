@@ -720,6 +720,39 @@ export type Database = {
           },
         ]
       }
+      soundtrack_preferences: {
+        Row: {
+          created_at: string
+          id: string
+          spotify_playlist_id: string
+          spotify_playlist_name: string
+          spotify_playlist_uri: string
+          topic_type: string
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          spotify_playlist_id: string
+          spotify_playlist_name: string
+          spotify_playlist_uri: string
+          topic_type: string
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          spotify_playlist_id?: string
+          spotify_playlist_name?: string
+          spotify_playlist_uri?: string
+          topic_type?: string
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
       tutor_conversations: {
         Row: {
           created_at: string
@@ -1180,6 +1213,7 @@ export type Database = {
           isSetofReturn: false
         }
       }
+      review_daily_summary: { Args: { p_date?: string }; Returns: Json }
       save_weekly_plan: {
         Args: {
           p_changes: Json
