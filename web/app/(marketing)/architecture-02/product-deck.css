@@ -68,7 +68,7 @@
 .a02-record-card dt { color:var(--dim); font-size:8px; }
 .a02-record-card dd { margin:6px 0 0; font:900 25px/.9 "Archivo Black",sans-serif; letter-spacing:-.08em; }
 .a02-record-card footer { color:var(--dim); }
-.a02-composer { position:relative; width:min(560px,100%); padding:47px 28px 24px; border:1px solid rgba(137,117,255,.78); border-radius:14px; background:#151940; box-shadow:0 28px 90px rgba(0,0,0,.65); }
+.a02-composer { position:relative; width:min(560px,100%); max-height:calc(100dvh - 50px); overflow-y:auto; padding:47px 28px 24px; border:1px solid rgba(137,117,255,.78); border-radius:14px; background:#151940; box-shadow:0 28px 90px rgba(0,0,0,.65); }
 .a02-composer h2 { margin:13px 0 26px; font:900 clamp(38px,7vw,58px)/.8 "Archivo Black",sans-serif; letter-spacing:-.1em; text-transform:uppercase; }
 .a02-composer h2 em { color:var(--acid); font-style:normal; }
 .a02-composer label { display:flex; flex-direction:column; gap:7px; margin-top:14px; color:var(--dim); font:9px "DM Mono",monospace; letter-spacing:.08em; }
