@@ -206,11 +206,22 @@ suite: 188/188.
 focus-seconds cap instead of calling `session_focus_seconds()` (0023) — which subtracts
 `total_paused_s` before capping — so a paused session's full wall-clock time was counted toward
 Focus/Effort in production. Caught because Phase C also needed that function and would have
-propagated the same mistake a third time. Fixed in `migrations/0027`, with regression assertions
+propagated the same mistake a third time. Fixed in `migrations/0030` (renumbered from an earlier
+`0027` that collided with `review_consistency()`'s own renumbering — see the "Migration numbering"
+note below), with regression assertions
 using a genuinely-paused session added to both existing test files (see `api.md` §3j/§3k for the
 full note).
 
 **Janhwi can start F4 (Time behavior + Session quality) against this contract now.**
+
+**Migration numbering, 2026-09-13:** two concurrent PRs both claimed migration number `0026` —
+this plan's `review_consistency()` and an unrelated soundtrack-preferences PR merging around the
+same time. Resolved (PR #181, not this session's work) by renumbering `review_consistency()` to
+`0027`; this session's own `migrations/0027_review_focus_...` pause-seconds fix (written before
+that renumbering landed) then collided with the *new* `0027` and was itself renumbered to `0030`
+once caught — `api.md` §3j/§3k/§3l/§3m and every test file already reference the final numbers.
+No functions or data were affected either time; both were pure filename renumbers, verified by diff
+before renaming.
 
 ### Phase D — Study Profile
 

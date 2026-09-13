@@ -196,7 +196,7 @@ begin
   perform t.eq('8c ...and plan_id is A''s own plan, not B''s', v_out->>'plan_id', v_plan_a::text);
 end $test$;
 
--- ===== 0027 regression: focus time subtracts paused time, via ===============
+-- ===== 0030 regression: focus time subtracts paused time, via ===============
 -- session_focus_seconds() (0023), never a re-spelled cap. t.sess() doesn't
 -- expose total_paused_s, so this session is inserted directly.
 do $test$
@@ -215,7 +215,7 @@ begin
     values (v_uid, v_plan, v_cat, '2026-09-01', 0, 'block', 'todo', 30) returning id into v_block;
 
   -- Planned 30m (1800s), wall clock 30m (08:00-08:30), but 10m (600s) of that
-  -- was paused. Real focus time is 20m -- the pre-0027 bug would have
+  -- was paused. Real focus time is 20m -- the pre-0030 bug would have
   -- reported the full 30m (elapsed capped at planned, ignoring the pause).
   insert into public.focus_sessions
     (user_id, block_id, started_at, completed_at, planned_duration_s, total_paused_s, state)
