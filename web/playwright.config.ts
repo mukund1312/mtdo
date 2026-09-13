@@ -19,10 +19,22 @@ export default defineConfig({
   workers: process.env.CI ? 1 : undefined,
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 2 : 0,
-  reporter: process.env.CI ? "github" : "list",
+  // "github" alone writes nothing to disk -- CI's own "Upload Playwright
+  // report on failure" step has been uploading an empty directory this
+  // whole time (silently: actions/upload-artifact only warns, doesn't fail
+  // the job), so every past CI failure investigation had no trace/video/
+  // screenshot to look at, only the text assertion error. Add "html" so a
+  // real report (with embedded traces) actually lands in playwright-report/.
+  reporter: process.env.CI ? [["github"], ["html", { open: "never" }]] : "list",
   use: {
     baseURL,
     trace: "on-first-retry",
+    // Belt-and-suspenders alongside the trace: a screenshot and video are
+    // readable at a glance without opening the trace viewer, useful for a
+    // quick first look at what was actually on screen when a CI-only
+    // failure happened that hasn't reproduced locally.
+    screenshot: "only-on-failure",
+    video: "retain-on-failure",
   },
   projects: [
     { name: "chromium", use: { ...devices["Desktop Chrome"] } },
