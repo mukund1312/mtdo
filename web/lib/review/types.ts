@@ -109,3 +109,210 @@ export function asReviewDailySummary(value: unknown): ReviewDailySummary {
   }
   return value as unknown as ReviewDailySummary;
 }
+
+// ---------------------------------------------------------------------------
+// review_consistency() -- the Effort Score behind the Consistency heatmap
+// (migrations/0027, schema mtdo.review_consistency.v1). Same narrowing
+// precedent as above.
+//
+// THE ONE RULE THAT MATTERS: `effort_score`/`level` are `null` ONLY when the
+// user has no active plan at all ("no goal to measure this day against").
+// Whenever an active plan exists, a day with nothing computable is a REAL
+// `0` -- the heatmap's emptiest real level, not a missing-data state. Do not
+// render `0` and `null` the same way.
+
+export interface ConsistencyDay {
+  date: string;
+  focus_percentage: number | null;
+  execute_percentage: number | null;
+  /** Plan-scoped by necessity -- null for any ISO week the CURRENT active plan has no block in, even if a since-retired plan was active that week. See api.md sec3k. */
+  progress_percentage: number | null;
+  /** null only when the caller has no active plan at all. A real 0 otherwise. */
+  effort_score: number | null;
+  /** least(4, floor(effort_score / 20)) -- 0-4. Same null rule as effort_score. */
+  level: 0 | 1 | 2 | 3 | 4 | null;
+}
+
+export interface ReviewConsistency {
+  schema_version: "mtdo.review_consistency.v1";
+  from: string;
+  to: string;
+  timezone: string;
+  /** The caller's current active plan, or null if they have none -- not necessarily the plan that was active on every day below. */
+  plan_id: string | null;
+  computed_at: string;
+  metric_version: "effort_v1";
+  days: ConsistencyDay[];
+}
+
+export const REVIEW_CONSISTENCY_SCHEMA = "mtdo.review_consistency.v1";
+
+export class ReviewConsistencyError extends Error {}
+
+export function asReviewConsistency(value: unknown): ReviewConsistency {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new ReviewConsistencyError("review_consistency() returned no object.");
+  }
+  const obj = value as Record<string, unknown>;
+  if (obj.schema_version !== REVIEW_CONSISTENCY_SCHEMA) {
+    throw new ReviewConsistencyError(
+      `Unexpected review_consistency schema ${String(obj.schema_version)}; expected ${REVIEW_CONSISTENCY_SCHEMA}.`,
+    );
+  }
+  if (!Array.isArray(obj.days)) {
+    throw new ReviewConsistencyError("review_consistency() returned a malformed body -- days is not an array.");
+  }
+  return value as unknown as ReviewConsistency;
+}
+
+// ---------------------------------------------------------------------------
+// review_time_patterns() -- when you work best, and what session length
+// works (migrations/0028, schema mtdo.review_time_patterns.v1).
+//
+// SCOPE: session_completion_rate is a SESSION outcome (completed vs
+// abandoned), never a task/Execute rate -- do not read it alongside
+// ExecuteRing.percentage as if they were the same number (api.md sec3l).
+//
+// best_hour/best_weekday/best_duration_bucket are null unless a bucket has
+// at least min_sample_size sessions. Never infer a "best" from fewer.
+
+export interface TimeBucket {
+  session_count: number;
+  completed_session_count: number;
+  session_completion_rate: number | null;
+  avg_focus_minutes: number | null;
+  total_focus_minutes?: number;
+}
+
+export interface HourBucket extends TimeBucket {
+  hour: number; // 0-23
+  total_focus_minutes: number;
+}
+
+/** isodow: 1 = Monday .. 7 = Sunday, same vocabulary iso_week_start() uses. */
+export interface WeekdayBucket extends TimeBucket {
+  weekday: 1 | 2 | 3 | 4 | 5 | 6 | 7;
+  total_focus_minutes: number;
+}
+
+export type DurationBucketLabel = "<15m" | "15-30m" | "30-45m" | "45-60m" | "60-90m" | "90m+";
+
+export interface DurationBucket {
+  bucket: DurationBucketLabel;
+  session_count: number;
+  completed_session_count: number;
+  session_completion_rate: number | null;
+  avg_focus_minutes: number | null;
+}
+
+export interface BestHour {
+  hour: number;
+  sample_size: number;
+  session_completion_rate: number | null;
+}
+
+export interface BestWeekday {
+  weekday: 1 | 2 | 3 | 4 | 5 | 6 | 7;
+  sample_size: number;
+  session_completion_rate: number | null;
+}
+
+export interface BestDurationBucket {
+  bucket: DurationBucketLabel;
+  sample_size: number;
+  session_completion_rate: number | null;
+}
+
+export interface ReviewTimePatterns {
+  schema_version: "mtdo.review_time_patterns.v1";
+  from: string;
+  to: string;
+  timezone: string;
+  computed_at: string;
+  min_sample_size: number;
+  hourly: HourBucket[];
+  weekday: WeekdayBucket[];
+  duration_buckets: DurationBucket[];
+  /** null unless some hour has >= min_sample_size sessions. */
+  best_hour: BestHour | null;
+  best_weekday: BestWeekday | null;
+  best_duration_bucket: BestDurationBucket | null;
+}
+
+export const REVIEW_TIME_PATTERNS_SCHEMA = "mtdo.review_time_patterns.v1";
+
+export class ReviewTimePatternsError extends Error {}
+
+export function asReviewTimePatterns(value: unknown): ReviewTimePatterns {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new ReviewTimePatternsError("review_time_patterns() returned no object.");
+  }
+  const obj = value as Record<string, unknown>;
+  if (obj.schema_version !== REVIEW_TIME_PATTERNS_SCHEMA) {
+    throw new ReviewTimePatternsError(
+      `Unexpected review_time_patterns schema ${String(obj.schema_version)}; expected ${REVIEW_TIME_PATTERNS_SCHEMA}.`,
+    );
+  }
+  if (!Array.isArray(obj.hourly) || !Array.isArray(obj.weekday) || !Array.isArray(obj.duration_buckets)) {
+    throw new ReviewTimePatternsError("review_time_patterns() returned a malformed body.");
+  }
+  return value as unknown as ReviewTimePatterns;
+}
+
+// ---------------------------------------------------------------------------
+// review_momentum() -- a SMOOTHED score across recent weeks, not a raw
+// streak (migrations/0029, schema mtdo.review_momentum.v1). Pure composition
+// over review_consistency() -- see that RPC's own doc comment above.
+
+export interface ReviewMomentumOk {
+  schema_version: "mtdo.review_momentum.v1";
+  from: string;
+  to: string;
+  window_days: number;
+  timezone: string;
+  computed_at: string;
+  status: "ok";
+  metric_version: "momentum_v1";
+  momentum_score: number;
+  /** Only real if the active-day run reaches all the way to today; otherwise 0. */
+  current_streak: number;
+  longest_streak: number;
+  active_days_rate: number;
+}
+
+export interface ReviewMomentumNoPlan {
+  schema_version: "mtdo.review_momentum.v1";
+  from: string;
+  to: string;
+  window_days: number;
+  timezone: string;
+  computed_at: string;
+  status: "no_active_plan";
+  metric_version: "momentum_v1";
+  momentum_score: null;
+  current_streak: null;
+  longest_streak: null;
+  active_days_rate: null;
+}
+
+export type ReviewMomentum = ReviewMomentumOk | ReviewMomentumNoPlan;
+
+export const REVIEW_MOMENTUM_SCHEMA = "mtdo.review_momentum.v1";
+
+export class ReviewMomentumError extends Error {}
+
+export function asReviewMomentum(value: unknown): ReviewMomentum {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new ReviewMomentumError("review_momentum() returned no object.");
+  }
+  const obj = value as Record<string, unknown>;
+  if (obj.schema_version !== REVIEW_MOMENTUM_SCHEMA) {
+    throw new ReviewMomentumError(
+      `Unexpected review_momentum schema ${String(obj.schema_version)}; expected ${REVIEW_MOMENTUM_SCHEMA}.`,
+    );
+  }
+  if (obj.status !== "ok" && obj.status !== "no_active_plan") {
+    throw new ReviewMomentumError(`Unexpected review_momentum status ${String(obj.status)}.`);
+  }
+  return value as unknown as ReviewMomentum;
+}

@@ -1,4 +1,5 @@
 import { test, expect, type Page } from "@playwright/test";
+import { dragAndDrop } from "./helpers/drag";
 import { openSignalDeckDestination } from "./helpers/signal-deck";
 
 // Test 1 below creates a real, persisted plan via the AI-driven wizard (a
@@ -98,7 +99,7 @@ test("onboarding wizard: intent -> rhythm -> build a route end-to-end", async ({
 
   const addedBlock = page.locator(".a02-live-block").filter({ hasText: task! });
   await expect(addedBlock).toBeVisible();
-  await addedBlock.dragTo(page.locator(".a02-today-lane--in_progress"));
+  await dragAndDrop(page, addedBlock, page.locator(".a02-today-lane--in_progress"));
   await expect(page.locator(".a02-today-lane--in_progress")).toContainText(task!);
 });
 

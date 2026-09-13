@@ -140,6 +140,17 @@ jobs:
           path: web/playwright-report/
           retention-days: 14
 
+      # playwright-report/ links to trace/video/screenshot files by relative
+      # path into test-results/ -- without this, the report above downloads
+      # but every trace link inside it 404s. Same trigger, same retention.
+      - name: Upload Playwright traces/videos on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-test-results
+          path: web/test-results/
+          retention-days: 14
+
   supabase-tests:
     needs: changes
     if: needs.changes.outputs.supabase == 'true'

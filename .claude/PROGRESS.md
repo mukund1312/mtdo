@@ -9,6 +9,151 @@ Add each session's PROGRESS.md entry to the same branch as the code it describes
 
 ---
 
+## [backend] 2026-09-13 (PR pending) — fix a real migration-number collision at 0026
+
+Two different, independently-merged PRs both claimed migration number `0026`: this session's own
+`0026_soundtrack_preferences.sql` (PR #180, merged and already applied to the linked project) and
+a parallel Review/Study Profile effort's `0026_review_consistency.sql` (merged separately, around
+the same time, never applied to remote). Both landed on `main` with the identical numeric prefix.
+
+**Caught immediately after merging PR #180**, via `supabase migration list` showing two rows both
+reading `"local":"0026"` -- one with a real `"remote":"0026"` (mine, already applied), one with
+`"remote":""` (the other, not yet applied anywhere). That gap is what made the fix safe: since the
+review migration had never actually run against the shared dev database under the `0026` name,
+renumbering its *file* to `0027` didn't orphan any already-applied migration-tracking row.
+
+**Fix:** `git mv supabase/migrations/0026_review_consistency.sql
+supabase/migrations/0027_review_consistency.sql`, plus five real prose references to the old
+number that needed updating alongside it -- `docs/designs/mtdo-web-review-study-profile-plan.md`,
+`docs/designs/review-frontend-briefs.md` (two spots), `docs/architecture/api.md` §3k's own
+heading, and `web/lib/review/types.ts`'s header comment. `supabase/tests/18_review_consistency.sql`
+lives in a separate, non-colliding numbering namespace (test files, not migrations) -- only its
+own internal comment referencing "migrations/0026" needed the same bump, not its filename.
+Applied `0027` to the linked project via `supabase db push`, regenerated types, and ran the full
+local SQL suite (`supabase/tests/run.sh`) end to end -- both `review_daily_summary` and
+`review_consistency`'s own assertions pass unchanged under the new number.
+
+**Not this session's migration to rename in the first place** -- it belongs to unrelated,
+already-merged work -- but left uncorrected it would have made the next `supabase db push` from
+anyone ambiguous about which `0026` file a given applied-migration row actually refers to. Purely
+mechanical: no schema/logic in either file changed, only the shared filename collision.
+
+**Files changed:** `supabase/migrations/0027_review_consistency.sql` (renamed from `0026_...`),
+`web/lib/supabase/database.types.ts` (regenerated), and the five doc/comment references above.
+
+---
+
+## [backend] 2026-09-13 (PR pending) — Task-tied soundtracks, PR A: schema + client plumbing
+---
+
+## [backend] 2026-09-13 (PR pending) — Task-tied soundtracks, PR A: schema + client plumbing
+
+First of three PRs (plan: `~/.claude/plans/adaptive-sleeping-turing.md`) for Phase 2 of the
+Spotify work: when a user opens a task whose category has a "topic type" (DSA, Backend,
+Database, System design -- the manual-setup UI's own fixed `<select>` options, though not
+DB-enforced), the Session screen will suggest a Spotify playlist mapped to that type, with a Play
+button the user clicks -- never auto-play. This PR is schema + typed client functions only, no UI.
+
+**`supabase/migrations/0026_soundtrack_preferences.sql`** (new table, applied to the linked
+project via `supabase db push` -- this also picked up `0025_review_daily_summary.sql`, from PR
+#177, which had been merged to `main` but not yet applied to the remote DB). Maps
+`(user_id, topic_type)` -> a chosen playlist (id/name/uri stored directly, no re-fetch needed to
+render it). Two decisions made explicit and verified against the real schema before committing:
+keyed on `topic_type`, not `plan_categories.id` (the only cross-plan-category signal that survives
+a user editing their route, and already selected by the session screen's own block query with no
+new join); an ordinary client-writable table under owner-only RLS, not service-role-gated like
+`music_connections` -- a chosen playlist is a preference the user picked, not a credential, the
+same posture `blocks.notes` already has. Types regenerated via the documented
+`supabase gen types typescript --linked` command.
+
+**New `web/lib/preferences/soundtrack-preferences.ts`** (list/get/save/clear, plain functions
+taking a Supabase client -- explicitly NOT following `lib/preferences/focus-timer.ts`/
+`focus-sandglass.ts`'s `localStorage`-hook shape, since this needs to survive a fresh browser) and
+**`web/lib/preferences/active-plan-topic-types.ts`** (`listActiveTopicTypes` -- the distinct topic
+types the user's *active* plan's categories actually use, so Settings' mapping UI in PR B never
+offers a type the user's own route has no category for; reuses `today-deck.tsx`'s existing
+active-plan lookup pattern, no new RPC).
+
+**Also added `playSpotifyPlaylist(uri)`** to `listen-state.tsx`, next to the existing
+`playSpotifyTrack` -- plays a whole playlist from its own start (bare `contextUri`, no
+`offset`/`uris`), already supported by PR #172's play route with zero backend change needed.
+Extracted the shared request-lifecycle/error-handling from `playSpotifyTrack` into
+`runSpotifyPlayRequest` rather than duplicating it, and fixed a stale comment along the way
+("until PR 3 adds device transfer" -- PR 3 shipped already).
+
+**Lesson applied from PR #176's own CI miss:** ran `npm run lint` locally this time, not just
+typecheck -- clean, no repeat of that gap.
+
+**Files changed:** `supabase/migrations/0026_soundtrack_preferences.sql` (new),
+`web/lib/supabase/database.types.ts` (regenerated), `web/lib/preferences/soundtrack-preferences.ts`
+(new, + test), `web/lib/preferences/active-plan-topic-types.ts` (new, + test),
+`web/app/(marketing)/architecture-02/listen-state.tsx`.
+
+**Verification:** `npm run typecheck`, `npm run lint`, and `npm run test` all clean (368/368 unit
+tests, 10 new). Migration applied cleanly to the linked project; generated types compile.
+
+---
+
+## [frontend] 2026-09-13 (PR pending) — Spotify music control center Phase 1, PR 3: Now Playing / Queue / Device tabs
+
+Third and last PR of Phase 1 (plan: `~/.claude/plans/adaptive-sleeping-turing.md`). Adds the
+column-3 tab switcher on top of PR #172's backend: `UnifiedMusicPlayer`'s transport controls stay
+visible above regardless of tab, and a `role="tablist"` segmented control below it (reusing the
+Music/Radio tab's own `.a02-listen-tabs` pattern) switches between Now Playing (thin by design --
+the player above already covers it), Queue (real upcoming tracks), and Device (real Spotify
+Connect devices, click to transfer playback). Queue/Device data fetches lazily on first tab open,
+not eagerly on connect like the playlist browser -- unlike playlists, a user may never open these
+tabs in a session, and both hit Spotify's Web API on every load.
+
+**Caught by CI, not locally -- a real process gap for this PR.** `web-build` failed on
+`react-hooks/set-state-in-effect`: the tab-fetch effect called `refreshSpotifyQueue()`/
+`refreshSpotifyDevices()` directly in the effect body, and both synchronously call `setState` as
+their first line. This file's own established convention (the mount-time status fetch, the SDK
+init effect) already defers exactly this shape inside `window.setTimeout(..., 0)` -- missed here
+because, unlike PRs #172 and #175, `npm run lint` was never run locally for this PR before
+pushing, only typecheck and tests. Fixed by wrapping the effect body in the same deferred-timer
+pattern already used twice elsewhere in this file. Worth remembering: this project's CI `web-build`
+job runs lint as a real gate, not just typecheck -- run `npm run lint` locally too, not only
+`npm run typecheck`, before pushing a PR that touches `.tsx`/hook code.
+
+**A real CSS collision found and fixed, not a bug in new code -- old code silently defeated
+new content.** The Queue tab's "Now playing: X" hint, first written as `<small>` inside the
+existing `.a02-listen-queue header`, rendered with `display:none` and no visible error anywhere --
+`listen-deck-polish.css`'s own "Final Signal Deck Listen consistency and accessibility pass"
+(pre-existing, unrelated to this PR) explicitly hides `.a02-listen-queue header small`, written
+back when that header only ever contained a bare "UP NEXT" span. Diagnosed via a disposable debug
+spec injecting a `MutationObserver` and reading `getComputedStyle` directly -- `count()` and even
+the DOM snapshot found the element fine, only computed style revealed the real cause. Fixed with a
+dedicated `.a02-listen-queue-now` class instead of touching the existing accessibility-pass rule,
+which was presumably reviewed and correct for what it originally covered.
+
+**Also deliberately honest, not a placeholder:** queued tracks in the Queue tab render as
+disabled buttons -- Spotify's Web API doesn't offer "skip to this specific queued item" in a form
+Phase 1 built a route for, so a clickable-looking-but-dead row would have been the exact kind of
+fake affordance this project's own conventions avoid. Device rows follow the same rule: the
+already-active device's row is disabled (nothing to transfer to itself), and a device Spotify
+returned with a null `id` can't be transferred to at all (no id to send), so that row disables
+too rather than firing a request certain to fail.
+
+**Files changed:** new `web/app/(marketing)/architecture-02/spotify-player.ts` (client fetch
+wrappers for queue/devices/transfer, same discriminated-union pattern as `spotify-playlists.ts`).
+`listen-state.tsx` (queue/device/tab state and fetchers), `listen-deck.tsx`
+(`SpotifyRightColumnTabs`/`SpotifyQueueTab`/`SpotifyDeviceTab`), `listen-deck.css` (the one new
+class), `e2e/spotify-listen.spec.ts` (new mocked test covering both tabs and the transfer POST).
+
+**Verification:** `npm run typecheck` clean, 358/358 unit tests, and
+`npx playwright test e2e/spotify-listen.spec.ts` 6/6 -- verified with Spotify vars temporarily
+stripped from `.env.local` again for a genuinely-unconfigured run (same collision as PRs #172/#175
+document; restored the real file afterward).
+
+**Phase 1 is now complete across all three PRs**: playlist browse + play, real queue, real device
+switching -- the Listen deck's Spotify panel is a real music command center, not a bare connection
+status screen. Phase 2 ideas (search, playlist creation/editing, task-tied soundtracks, any
+DESIGN.md/Ember Graphite migration) were explicitly out of scope for this phase and remain
+unstarted.
+
+---
+
 ## [frontend] 2026-09-13 (PR pending) — Spotify music control center Phase 1, PR 2: playlist browse + play
 
 Second of three PRs (plan: `~/.claude/plans/adaptive-sleeping-turing.md`). Builds the Listen

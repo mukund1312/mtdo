@@ -155,7 +155,9 @@ function MusicWorkspace({ activeProvider, query, filteredTracks, onQueryChange, 
 
     <section className="a02-listen-player-column">
       <UnifiedMusicPlayer provider={activeProvider} />
-      {activeProvider.id !== "spotify" && <QueuePanel tracks={listen.queue} currentTrackId={listen.currentTrack?.id} onPlay={listen.setCurrentTrack} />}
+      {activeProvider.id === "spotify"
+        ? <SpotifyRightColumnTabs />
+        : <QueuePanel tracks={listen.queue} currentTrackId={listen.currentTrack?.id} onPlay={listen.setCurrentTrack} />}
     </section>
   </div>;
 }
@@ -415,6 +417,94 @@ function Artwork({ track, large = false }: { track: MockTrack; large?: boolean }
 
 function QueuePanel({ tracks, currentTrackId, onPlay }: { tracks: MockTrack[]; currentTrackId?: string; onPlay: (track: MockTrack) => void }) {
   return <section className="a02-listen-queue"><header><span>UP NEXT</span></header>{tracks.map((track) => <button type="button" key={track.id} onClick={() => onPlay(track)} className={track.id === currentTrackId ? "is-current" : ""}><span>⋮⋮</span><b>{track.title}</b><i>{track.id === currentTrackId ? "playing" : formatPlaybackTime(track.duration)}</i></button>)}</section>;
+}
+
+/**
+ * The control center's Now Playing / Queue / Device tab switcher (Phase 1,
+ * PR 3). `UnifiedMusicPlayer` above already owns transport controls and
+ * stays visible regardless of which tab is selected here -- this switches
+ * only what renders below it. Reuses the existing `.a02-listen-tabs`
+ * role="tablist" pattern (already used for the Music/Radio switch above),
+ * not a new segmented-control style.
+ */
+function SpotifyRightColumnTabs() {
+  const listen = useSignalDeckListen();
+  const tabs: { id: "now-playing" | "queue" | "device"; label: string }[] = [
+    { id: "now-playing", label: "Now Playing" },
+    { id: "queue", label: "Queue" },
+    { id: "device", label: "Device" },
+  ];
+  return <section className="a02-listen-queue" aria-label="Spotify playback details">
+    <div className="a02-listen-tabs" role="tablist" aria-label="Spotify playback view">
+      {tabs.map((tab) => <button
+        key={tab.id}
+        type="button"
+        role="tab"
+        id={`spotify-tab-${tab.id}`}
+        aria-controls={`spotify-panel-${tab.id}`}
+        aria-selected={listen.rightColumnTab === tab.id}
+        className={listen.rightColumnTab === tab.id ? "is-active" : ""}
+        onClick={() => listen.setRightColumnTab(tab.id)}
+      >{tab.label}</button>)}
+    </div>
+    {listen.rightColumnTab === "now-playing" && <div id="spotify-panel-now-playing" role="tabpanel" aria-labelledby="spotify-tab-now-playing" className="a02-listen-empty-result">Playback controls are above.</div>}
+    {listen.rightColumnTab === "queue" && <div id="spotify-panel-queue" role="tabpanel" aria-labelledby="spotify-tab-queue"><SpotifyQueueTab /></div>}
+    {listen.rightColumnTab === "device" && <div id="spotify-panel-device" role="tabpanel" aria-labelledby="spotify-tab-device"><SpotifyDeviceTab /></div>}
+  </section>;
+}
+
+function SpotifyQueueTab() {
+  const listen = useSignalDeckListen();
+  if (listen.spotifyQueueState === "loading" && listen.spotifyQueue.queue.length === 0) {
+    return <p className="a02-listen-empty-result">Loading your queue…</p>;
+  }
+  if (listen.spotifyQueueState === "error") {
+    return <div className="a02-listen-empty-result">Couldn&apos;t load your queue.<button type="button" className="a02-listen-primary" onClick={() => void listen.refreshSpotifyQueue()}>Try again</button></div>;
+  }
+  const { currentlyPlaying, queue } = listen.spotifyQueue;
+  if (!currentlyPlaying && queue.length === 0) {
+    return <p className="a02-listen-empty-result">Nothing queued right now.</p>;
+  }
+  return <>
+    {/* Reuses .a02-listen-queue's own header/button styling -- this renders
+        inside the <section className="a02-listen-queue"> in
+        SpotifyRightColumnTabs. A plain <small> here would be invisible:
+        listen-deck-polish.css's accessibility pass hides
+        ".a02-listen-queue header small" (written before this hint existed),
+        so this uses a dedicated class instead of colliding with that rule. */}
+    <header><span>UP NEXT</span>{currentlyPlaying && <span className="a02-listen-queue-now">Now: {currentlyPlaying.name}</span>}</header>
+    {queue.map((track) => <button type="button" key={track.uri} disabled><span>⋮⋮</span><b>{track.name}</b><i>{formatPlaybackTime(Math.round(track.durationMs / 1000))}</i></button>)}
+  </>;
+}
+
+function SpotifyDeviceTab() {
+  const listen = useSignalDeckListen();
+  if (listen.spotifyDevicesState === "loading" && listen.spotifyDevices.length === 0) {
+    return <p className="a02-listen-empty-result">Loading your devices…</p>;
+  }
+  if (listen.spotifyDevicesState === "error") {
+    return <div className="a02-listen-empty-result">Couldn&apos;t load your devices.<button type="button" className="a02-listen-primary" onClick={() => void listen.refreshSpotifyDevices()}>Try again</button></div>;
+  }
+  if (listen.spotifyDevicesState === "ready" && listen.spotifyDevices.length === 0) {
+    return <p className="a02-listen-empty-result">No devices found. Open Spotify somewhere and press play once, then check again.</p>;
+  }
+  const transferring = listen.spotifyTransferRequestState === "requesting";
+  return <>
+    <header><span>PLAYING ON</span></header>
+    {listen.spotifyTransferError && <p className="a02-listen-empty-result" role="alert">{listen.spotifyTransferError}</p>}
+    {listen.spotifyDevices.map((device) => <button
+      key={device.id ?? device.name}
+      type="button"
+      className={device.isActive ? "is-current" : ""}
+      disabled={transferring || device.isActive || !device.id}
+      onClick={() => device.id && void listen.transferSpotifyPlayback(device.id)}
+      aria-label={`Switch playback to ${device.name}`}
+    >
+      <span>{device.isActive ? "●" : "○"}</span>
+      <b>{device.name}</b>
+      <i>{device.isActive ? "active" : device.type}</i>
+    </button>)}
+  </>;
 }
 
 function RadioWorkspace() {
