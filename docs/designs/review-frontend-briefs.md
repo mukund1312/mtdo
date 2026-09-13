@@ -211,7 +211,16 @@ Profile/Insights are F4–F6, still locked).
 
 ---
 
-## F4 — Time behavior + Session quality + Momentum (ready now, backend Phase C locked 2026-09-13)
+## F4 — Time behavior + Session quality + Momentum — **BUILT, 2026-09-13 (PR #193)**
+
+Built by Mukund (Claude Code) while Janhwi was unavailable. `review-time-behavior.tsx` adds three
+cards to the Today tab: When You Work Best, Session Quality, Momentum — sourced from
+`review_time_patterns()`/`review_momentum()`. `streak.ts`'s `computeStreaks()` (Home deck,
+`weekly-review.tsx`) deliberately left untouched — narrower scope than an earlier draft of this
+brief; see the PR for why. **F1–F4 are now all shipped — the full Rings + Consistency heatmap +
+Time behavior/Session quality/Momentum surface of the Review page is live.**
+
+## F4 — Time behavior + Session quality + Momentum, original brief text (kept for reference, backend Phase C locked 2026-09-13)
 
 **Depends on:** `review_time_patterns()` and `review_momentum()` (`migrations/0028`/`0029`,
 `api.md` §3l/§3m) — merged, tested (188/188 full suite), typed in `web/lib/review/types.ts`.
