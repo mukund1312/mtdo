@@ -190,15 +190,27 @@ Verification section below.
 
 **Janhwi can start F3 (Consistency heatmap) against this contract now.**
 
-### Phase C — Time-of-day and session-length analytics
+### Phase C — Time-of-day and session-length analytics — **CONTRACT LOCKED, 2026-09-13**
 
-- `review_time_patterns(p_start date, p_end date)`: buckets `focus_sessions` by hour and by
-  duration range, returns completion rate / focus efficiency per bucket **only when
-  `sample_size >= 5`** (the brief's own minimum-sample rule), else `status: "insufficient_data"`.
-- `review_momentum()`: a smoothed score across recent weeks (not a raw streak) — the brief is
-  explicit this should degrade gracefully (91 → 88, never 145 → 0), and this project already has
-  the philosophical precedent for "don't let one bad signal overreact" in `pace_ratio` using a
-  ratio-of-sums instead of a mean.
+`migrations/0028_review_time_patterns.sql` (hour/weekday/duration-bucket breakdown,
+`min_sample_size = 5` gating every `best_*` field — never inferred from fewer),
+`migrations/0029_review_momentum.sql` (EWMA over `review_consistency()`'s daily Effort Score,
+decay 0.9/day, plus `current_streak`/`longest_streak`/`active_days_rate` — composition, not a
+second Effort Score formula). `docs/architecture/api.md` §3l/§3m, `web/lib/review/types.ts`
+(`ReviewTimePatterns`/`asReviewTimePatterns()`, `ReviewMomentum`/`asReviewMomentum()`),
+`supabase/tests/19_review_time_patterns.sql` + `20_review_momentum.sql` (30 assertions). Full
+suite: 188/188.
+
+**A real bug found and fixed along the way, not part of the original Phase C scope**:
+`review_daily_summary()` (0025) and `review_consistency()` (0026) had both re-spelled the
+focus-seconds cap instead of calling `session_focus_seconds()` (0023) — which subtracts
+`total_paused_s` before capping — so a paused session's full wall-clock time was counted toward
+Focus/Effort in production. Caught because Phase C also needed that function and would have
+propagated the same mistake a third time. Fixed in `migrations/0027`, with regression assertions
+using a genuinely-paused session added to both existing test files (see `api.md` §3j/§3k for the
+full note).
+
+**Janhwi can start F4 (Time behavior + Session quality) against this contract now.**
 
 ### Phase D — Study Profile
 

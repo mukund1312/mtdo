@@ -1,6 +1,6 @@
 # Review page frontend build briefs — for Janhwi (Codex)
 
-**Status:** ACTIVE — F1, F2, and F3 are ready to build now
+**Status:** ACTIVE — F1, F2, F3, and F4 are ready to build now
 **Owner:** Janhwi builds, Mukund (Claude Code) keeps this doc current before announcing a phase
 "contract locked" — same rule `wave1-frontend-briefs.md` and `mtdo-web-dev-split-plan.md` §3 already
 use.
@@ -180,11 +180,12 @@ surface — call it out explicitly in your PR description, don't merge it as if 
 4. Hover/focus tooltip (keyboard-accessible, same as the existing `title`/`aria-label` pattern):
    date, `effort_score`, and the day's `focus_percentage`/`execute_percentage`/`progress_percentage`
    — each rendered as "—" or "not enough data" when `null`, never `0%`.
-5. Summary row under the grid (active-day %, current streak, longest streak) — check whether
-   `streak.ts` (`computeStreaks()`, already imported by `progress-deck.tsx`) can keep working
-   unchanged against the new data (it currently reads `daily_rollups` rows) or needs the same swap;
-   if it needs real rework beyond a data-source change, stop and flag it back to Mukund rather than
-   guessing at streak semantics — that logic isn't part of this backend phase's contract.
+5. Summary row under the grid (active-day %, current streak, longest streak) — **resolved by
+   Phase C, F4 below**: `streak.ts`'s `computeStreaks()` is a client-side approximation
+   (`blocks_done > 0`, its own header admits it's not the terminal app's stricter "100% of that
+   day's blocks" definition) that `review_momentum()` now replaces with a real server-computed
+   `current_streak`/`longest_streak` (and a smoothed `momentum_score` on top). If F3 ships before
+   F4, keep `computeStreaks()` running for this summary row as an interim measure; F4 retires it.
 
 **Explicitly not this phase:** the Terrain toggle (F7, stretch, optional, heatmap stays default),
 Week/Month/Year tab content *beyond the heatmap itself* (Time Behavior/Session Quality/Study
@@ -192,17 +193,52 @@ Profile/Insights are F4–F6, still locked).
 
 ---
 
-## F4 onward — not contract-locked yet, do not start
+## F4 — Time behavior + Session quality + Momentum (ready now, backend Phase C locked 2026-09-13)
+
+**Depends on:** `review_time_patterns()` and `review_momentum()` (`migrations/0028`/`0029`,
+`api.md` §3l/§3m) — merged, tested (188/188 full suite), typed in `web/lib/review/types.ts`.
+
+**Goal:** three related sections, all sourced from these two RPCs:
+
+1. **"When you work best"** — call
+   `supabase.rpc("review_time_patterns", { p_start, p_end })` (window from F1's range selector),
+   narrow with `asReviewTimePatterns()`. Chart `hourly` as a bar/area chart in `--accent` (cyan) per
+   `review-visual-spec.md` §Time-of-day/session-quality — this section is "observed behavior," not
+   an achievement. Show `best_hour` prominently (e.g. "Best start time 08:00") **only when it is
+   non-null** — when null, render "Not enough sessions yet to identify a pattern" (this is the
+   `insufficient_data` state `review-visual-spec.md` already calls for; it will be the common state
+   for a new account, not an edge case to bolt on later). Same treatment for `best_weekday`.
+2. **Session quality** — `duration_buckets` as the `<15m/15-30m/30-45m/45-60m/60-90m/90m+`
+   distribution bars, `best_duration_bucket` as the "sweet spot" callout, same null-vs-insufficient
+   handling as above. **Do not label `session_completion_rate` as "completion rate" in a way that
+   could be confused with Execute's task completion** — call it "session completion" or similar in
+   the UI copy; they are genuinely different numbers (`api.md` §3l).
+3. **Momentum** — replaces `streak.ts`'s `computeStreaks()` (client-side, `blocks_done > 0`
+   approximation) with `supabase.rpc("review_momentum", { p_window_days: 42 })` /
+   `asReviewMomentum()`. Show `momentum_score` as the headline number (not a raw streak count —
+   the founder's brief is explicit that a smoothed number that dips gently reads healthier than one
+   that resets to zero), with `current_streak`/`longest_streak` as supporting stats underneath.
+   Branch on `status`: `"no_active_plan"` uses the same empty-state copy as F2's rings
+   ("Set up your route first…").
+
+**States:** `loading` → `ready` (including the `insufficient_data` sub-states per bucket, which are
+real, common states) → `error`.
+
+**Explicitly not this phase:** Study Profile panel (F5, needs Phase D), Insights card (F6, needs
+Phase E).
+
+---
+
+## F5 onward — not contract-locked yet, do not start
 
 | Phase | Depends on backend | Status |
 |---|---|---|
-| F4 — Time behavior + session quality | Backend Phase C | not started |
 | F5 — Study Profile panel | Backend Phase D | not started |
 | F6 — Insights card | Backend Phase E | not started |
 | F7 (stretch) — Effort Terrain toggle | F3 | not started, optional |
 
 This table is the single source of truth for "is it safe to start yet" — when a backend phase
-locks, this row gets updated with the RPC name and `api.md` section, the same way F2/F3's rows
+locks, this row gets updated with the RPC name and `api.md` section, the same way F2/F3/F4's rows
 above were updated. Building ahead of a locked row here reproduces the exact problem
 `wave1-frontend-briefs.md` was written to prevent (an ambiguous/early brief producing silently-wrong
 output).
