@@ -4,6 +4,7 @@ import { useState } from "react";
 
 import { ProgressDeck } from "./progress-deck";
 import { ReviewRings } from "./review-rings";
+import { ReviewTimeBehavior } from "./review-time-behavior";
 
 type ReviewRange = "today" | "week" | "month" | "6weeks" | "year";
 
@@ -48,6 +49,7 @@ export function ReviewDeck() {
         <>
           <ReviewRings />
           <ProgressDeck />
+          <ReviewTimeBehavior />
         </>
       ) : (
         <section className="a02-review a02-review-coming-soon" aria-live="polite">
