@@ -109,6 +109,11 @@ function seedWeeklyEngineDemo(userId: string): boolean {
 
 async function closeWalkthroughIfPresent(page: Page) {
   const close = page.getByRole("button", { name: /close walkthrough/i });
+  // See fixed-layer-safety.spec.ts's copy of this helper for why the wait
+  // matters: the walkthrough opens on a setTimeout(0) gated on auth
+  // resolving, never synchronously at mount, so an immediate check can race
+  // ahead of it.
+  await close.waitFor({ state: "visible", timeout: 2000 }).catch(() => {});
   if (await close.isVisible().catch(() => false)) await close.click();
 }
 

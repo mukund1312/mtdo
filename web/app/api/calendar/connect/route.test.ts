@@ -50,7 +50,13 @@ afterEach(() => {
 });
 
 describe("GET /api/calendar/connect", () => {
-  it("401s without a session", async () => {
+  it("reports an unavailable integration before anonymous auth has settled", async () => {
+    mockGetUser.mockResolvedValue({ data: { user: null }, error: null });
+    expect((await GET(request())).status).toBe(503);
+  });
+
+  it("401s without a session once Calendar is configured", async () => {
+    configureAll();
     mockGetUser.mockResolvedValue({ data: { user: null }, error: null });
     expect((await GET(request())).status).toBe(401);
   });

@@ -11,6 +11,11 @@ import { openSignalDeckDestination } from "./helpers/signal-deck";
 
 async function closeWalkthroughIfPresent(page: Page) {
   const close = page.getByRole("button", { name: /close walkthrough/i });
+  // See fixed-layer-safety.spec.ts's copy of this helper for why the wait
+  // matters: the walkthrough opens on a setTimeout(0) gated on auth
+  // resolving, never synchronously at mount, so an immediate check can race
+  // ahead of it.
+  await close.waitFor({ state: "visible", timeout: 2000 }).catch(() => {});
   if (await close.isVisible().catch(() => false)) await close.click();
 }
 
@@ -90,6 +95,7 @@ test("onboarding wizard: intent -> rhythm -> build a route end-to-end", async ({
   const task = (await routeItem.locator("b").textContent())?.trim();
   expect(task).toBeTruthy();
   await routeItem.click();
+  await routeMenu.getByRole("button", { name: /add selected \(1\)/i }).click();
   await expect(routeMenu).toBeHidden();
 
   const addedBlock = page.locator(".a02-live-block").filter({ hasText: task! });

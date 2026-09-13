@@ -16,7 +16,14 @@ function overlaps(first: Rect, second: Rect) {
 
 async function closeWalkthroughIfPresent(page: Page) {
   const close = page.getByRole("button", { name: /close walkthrough/i });
-  if (await close.count()) await close.click();
+  // The walkthrough opens via a setTimeout(0) inside an effect gated on the
+  // anonymous session resolving (architecture-02/page.tsx) -- never
+  // synchronously at mount. An immediate isVisible()/count() check can race
+  // ahead of it, wrongly conclude "not present", and then have the very next
+  // click intercepted by the dialog opening a moment later. Give it a bounded
+  // window to settle into one state or the other first.
+  await close.waitFor({ state: "visible", timeout: 2000 }).catch(() => {});
+  if (await close.isVisible().catch(() => false)) await close.click();
 }
 
 test.describe.serial("Fixed-layer safety", () => {

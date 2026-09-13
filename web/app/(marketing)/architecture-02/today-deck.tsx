@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState, type DragEvent } from "react";
+import { useCallback, useEffect, useRef, useState, type DragEvent } from "react";
 
 import { recordEvent } from "@/lib/analytics/record-event";
 import { createClient } from "@/lib/supabase/client";
@@ -77,7 +77,8 @@ export function TodayDeck({ onOpenBlock }: { onOpenBlock: (block: TodayBlock) =>
   const [menuItems, setMenuItems] = useState<CurriculumMenuItem[]>([]);
   const [composerOpen, setComposerOpen] = useState(false);
   const [composerError, setComposerError] = useState<string | null>(null);
-  const [pickingId, setPickingId] = useState<string | null>(null);
+  const [pickingIds, setPickingIds] = useState<Set<string>>(() => new Set());
+  const pickingMenuRef = useRef(false);
   const [draggedBlockId, setDraggedBlockId] = useState<string | null>(null);
   const [dropTarget, setDropTarget] = useState<BlockStatus | null>(null);
   const [timezone, setTimezone] = useState("UTC");
@@ -242,39 +243,64 @@ export function TodayDeck({ onOpenBlock }: { onOpenBlock: (block: TodayBlock) =>
     setComposerOpen(true);
   };
 
-  const pickMenuItem = async (item: CurriculumMenuItem) => {
-    if (pickingId) return;
-    setPickingId(item.curriculum_item_id);
+  const pickMenuItems = async (itemsToPick: CurriculumMenuItem[]) => {
+    if (itemsToPick.length === 0 || pickingMenuRef.current || pickingIds.size > 0) return;
+    pickingMenuRef.current = true;
     setComposerError(null);
     const supabase = createClient();
-    const { data, error } = await supabase.rpc("pick_curriculum_item", { p_item_id: item.curriculum_item_id });
-    if (error || !data || !isBlockStatus(data.status) || !isTaskPriority(data.priority)) {
-      console.error("[today] failed to pick route item:", databaseErrorMessage(error, "No row returned."));
-      setComposerError(databaseErrorMessage(error, "We could not add that route item. Your board is unchanged."));
-      setPickingId(null);
-      return;
+    const failedTasks: string[] = [];
+
+    try {
+      for (const item of itemsToPick) {
+        setPickingIds((current) => new Set(current).add(item.curriculum_item_id));
+        const { data, error } = await supabase.rpc("pick_curriculum_item", { p_item_id: item.curriculum_item_id });
+        if (error || !data || !isBlockStatus(data.status) || !isTaskPriority(data.priority)) {
+          console.error("[today] failed to pick route item:", databaseErrorMessage(error, "No row returned."));
+          failedTasks.push(item.task);
+          setPickingIds((current) => {
+            const next = new Set(current);
+            next.delete(item.curriculum_item_id);
+            return next;
+          });
+          continue;
+        }
+        const createdBlock: TodayBlock = {
+          category_id: data.category_id,
+          // pick_curriculum_item() returns the plain blocks row -- no
+          // plan_categories embed to read a label from, but the menu item this
+          // pick came from already carries its own category's label.
+          category_label: item.category_label,
+          claimed: data.claimed,
+          elapsed_seconds: data.elapsed_seconds,
+          estimated_minutes: data.estimated_minutes,
+          id: data.id,
+          notes: data.notes,
+          position: data.position,
+          priority: data.priority,
+          status: data.status,
+          text: data.text,
+        };
+        setBlocks((current) => [...current.filter((block) => block.id !== createdBlock.id), createdBlock]
+          .sort((a, b) => a.position - b.position));
+        setMenuItems((current) => current.filter((menuItem) => menuItem.curriculum_item_id !== item.curriculum_item_id));
+        setPickingIds((current) => {
+          const next = new Set(current);
+          next.delete(item.curriculum_item_id);
+          return next;
+        });
+      }
+
+      if (failedTasks.length > 0) {
+        const addedCount = itemsToPick.length - failedTasks.length;
+        setComposerError(addedCount > 0
+          ? `Added ${addedCount} item${addedCount === 1 ? "" : "s"}. We could not add ${failedTasks.join(", ")}.`
+          : "We could not add the selected route items. Your board is unchanged.");
+        return;
+      }
+      setComposerOpen(false);
+    } finally {
+      pickingMenuRef.current = false;
     }
-    const createdBlock: TodayBlock = {
-      category_id: data.category_id,
-      // pick_curriculum_item() returns the plain blocks row -- no
-      // plan_categories embed to read a label from, but the menu item this
-      // pick came from already carries its own category's label.
-      category_label: item.category_label,
-      claimed: data.claimed,
-      elapsed_seconds: data.elapsed_seconds,
-      estimated_minutes: data.estimated_minutes,
-      id: data.id,
-      notes: data.notes,
-      position: data.position,
-      priority: data.priority,
-      status: data.status,
-      text: data.text,
-    };
-    setBlocks((current) => [...current.filter((block) => block.id !== createdBlock.id), createdBlock]
-      .sort((a, b) => a.position - b.position));
-    setMenuItems((current) => current.filter((menuItem) => menuItem.curriculum_item_id !== item.curriculum_item_id));
-    setComposerOpen(false);
-    setPickingId(null);
   };
 
   // Categories to offer are whatever's actually on today's board -- no
@@ -311,7 +337,7 @@ export function TodayDeck({ onOpenBlock }: { onOpenBlock: (block: TodayBlock) =>
     })}</div>}
     {state === "ready" && blocks.length === 0 && <p className="a02-product-note">No blocks are scheduled for today. Add a route item to begin.</p>}
     {writeError && <p className="a02-product-write-error" role="alert">{writeError}</p>}
-    {composerOpen && <CurriculumMenu hasActiveRoute={hasActiveRoute} items={menuItems} error={composerError} pickingId={pickingId} onClose={() => setComposerOpen(false)} onPick={(item) => void pickMenuItem(item)} />}
+    {composerOpen && <CurriculumMenu hasActiveRoute={hasActiveRoute} items={menuItems} error={composerError} pickingIds={pickingIds} onClose={() => setComposerOpen(false)} onPick={(itemsToPick) => void pickMenuItems(itemsToPick)} />}
   </section>;
 }
 
@@ -334,6 +360,20 @@ function KanbanCard({ block, updating, onOpen, onDragEnd, onDragStart }: {
 
 function LoadingBlocks() { return <><div className="a02-work-unit a02-skeleton" /><div className="a02-work-unit a02-skeleton a02-skeleton--short" /></>; }
 
-function CurriculumMenu({ hasActiveRoute, items, error, pickingId, onClose, onPick }: { hasActiveRoute: boolean; items: CurriculumMenuItem[]; error: string | null; pickingId: string | null; onClose: () => void; onPick: (item: CurriculumMenuItem) => void }) {
-  return <section className="a02-record-overlay" role="dialog" aria-modal="true" aria-labelledby="route-menu-title"><section className="a02-composer"><button className="a02-lens-close" type="button" onClick={onClose}>ESC / close ×</button><span className="a02-eyebrow">TODAY / ROUTE MENU</span><h2 id="route-menu-title">Choose the<br /><em>next piece.</em></h2>{items.length > 0 ? <div className="a02-curriculum-menu">{items.map((item) => <button className="a02-curriculum-item" type="button" key={item.curriculum_item_id} onClick={() => onPick(item)} disabled={Boolean(pickingId)}><span>{item.category_label}</span><b>{item.task}</b>{menuPreview(item.meta) && <small>{menuPreview(item.meta)}</small>}<i>{pickingId === item.curriculum_item_id ? "Adding…" : "Add ↗"}</i></button>)}</div> : <p className="a02-composer-empty">{hasActiveRoute ? "Your route menu is clear for now. Time for a check-in before you extend it." : "Set up your route first, then return here for its first useful piece."}</p>}{error && <p className="a02-composer-error" role="alert">{error}</p>}<div className="a02-composer-actions"><button type="button" onClick={onClose}>Cancel</button></div></section></section>;
+function CurriculumMenu({ hasActiveRoute, items, error, pickingIds, onClose, onPick }: { hasActiveRoute: boolean; items: CurriculumMenuItem[]; error: string | null; pickingIds: Set<string>; onClose: () => void; onPick: (items: CurriculumMenuItem[]) => void }) {
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set());
+  const isPicking = pickingIds.size > 0;
+
+  const selectedItems = items.filter((item) => selectedIds.has(item.curriculum_item_id));
+  const toggleItem = (id: string) => {
+    if (isPicking) return;
+    setSelectedIds((current) => {
+      const next = new Set(current);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  return <section className="a02-record-overlay" role="dialog" aria-modal="true" aria-labelledby="route-menu-title"><section className="a02-composer"><button className="a02-lens-close" type="button" onClick={onClose} disabled={isPicking}>ESC / close ×</button><span className="a02-eyebrow">TODAY / ROUTE MENU</span><h2 id="route-menu-title">Choose the<br /><em>next pieces.</em></h2>{items.length > 0 ? <><p className="a02-composer-selection" id="route-menu-selection">Select one or more pieces to add together.</p><div className="a02-curriculum-menu" aria-describedby="route-menu-selection">{items.map((item) => { const selected = selectedIds.has(item.curriculum_item_id); return <button className="a02-curriculum-item" type="button" key={item.curriculum_item_id} onClick={() => toggleItem(item.curriculum_item_id)} aria-pressed={selected} disabled={isPicking}><span>{item.category_label}</span><b>{item.task}</b>{menuPreview(item.meta) && <small>{menuPreview(item.meta)}</small>}<i>{pickingIds.has(item.curriculum_item_id) ? "Adding…" : selected ? "Selected ✓" : "Select"}</i></button>; })}</div></> : <p className="a02-composer-empty">{hasActiveRoute ? "Your route menu is clear for now. Time for a check-in before you extend it." : "Set up your route first, then return here for its first useful piece."}</p>}{error && <p className="a02-composer-error" role="alert">{error}</p>}<div className="a02-composer-actions"><button type="button" onClick={onClose} disabled={isPicking}>Cancel</button>{items.length > 0 && <button className="a02-add" type="button" onClick={() => onPick(selectedItems)} disabled={selectedItems.length === 0 || isPicking}>{isPicking ? "Adding…" : `Add selected (${selectedItems.length})`}</button>}</div></section></section>;
 }

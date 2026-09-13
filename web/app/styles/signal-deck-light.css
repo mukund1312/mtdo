@@ -1,0 +1,138 @@
+/* Kept global on purpose: Architecture 02 panels are split across CSS files
+   and CSS modules. This is the one daylight translation layer they share. */
+html[data-a02-theme="light"] .a02-settings-content .a02-product-state,
+html[data-a02-theme="light"] .a02-goal-list,
+html[data-a02-theme="light"] .a02-goals-state,
+html[data-a02-theme="light"] .a02-listen-preview-note,
+html[data-a02-theme="light"] .a02-listen-sources,
+html[data-a02-theme="light"] .a02-listen-provider-panel,
+html[data-a02-theme="light"] .a02-unified-player,
+html[data-a02-theme="light"] .a02-listen-queue,
+html[data-a02-theme="light"] .a02-radio-player,
+html[data-a02-theme="light"] .a02-radio-stations,
+html[data-a02-theme="light"] .a02-view-switch,
+html[data-a02-theme="light"] .a02-time-lines,
+html[data-a02-theme="light"] .a02-month-grid {
+  background:rgba(255,255,255,.92);
+  box-shadow:0 10px 28px rgba(43,39,95,.07);
+}
+
+html[data-a02-theme="light"] .a02-goal-line { background:linear-gradient(145deg,#e9e7ff,#fff 72%); box-shadow:0 10px 28px rgba(43,39,95,.07); }
+html[data-a02-theme="light"] .a02-goal-list article,
+html[data-a02-theme="light"] .a02-listen-queue button,
+html[data-a02-theme="light"] .a02-radio-stations li button,
+html[data-a02-theme="light"] .a02-listen-tracks li button { border-color:#ddd9f2; }
+html[data-a02-theme="light"] .a02-listen-source.is-active { background:linear-gradient(90deg,rgba(105,87,232,.14),transparent); }
+html[data-a02-theme="light"] .a02-listen-modal { background:linear-gradient(145deg,#fff,#e9e7ff); box-shadow:15px 18px 0 rgba(105,87,232,.14); }
+html[data-a02-theme="light"] .a02-listen-modal-backdrop { background:rgba(245,245,250,.72); }
+html[data-a02-theme="light"] .a02-listen-search,
+html[data-a02-theme="light"] .a02-calendar-time-editor input,
+html[data-a02-theme="light"] .a02-settings-select select,
+html[data-a02-theme="light"] .a02-settings-form input { background:#fff; color-scheme:light; }
+
+html[data-a02-theme="light"] .a02-calendar-event--cat-ultra,
+html[data-a02-theme="light"] .a02-month-chip--cat-ultra { background:#e9e7ff; color:#332b78; }
+html[data-a02-theme="light"] .a02-calendar-event--cat-acid,
+html[data-a02-theme="light"] .a02-month-chip--cat-acid { background:#f2f9d9; color:#405800; }
+html[data-a02-theme="light"] .a02-calendar-event--cat-coral,
+html[data-a02-theme="light"] .a02-month-chip--cat-coral { background:#fdeae8; color:#873631; }
+html[data-a02-theme="light"] .a02-calendar-event--cat-aqua,
+html[data-a02-theme="light"] .a02-month-chip--cat-aqua { background:#e2f8fb; color:#07586a; }
+
+html[data-a02-theme="light"] .a02-wheel-trigger,
+html[data-a02-theme="light"] .a02-radial-menu-trigger,
+html[data-a02-theme="light"] .a02-radial-menu-icon { border-color:#c4bef4; background:rgba(255,255,255,.94); box-shadow:0 14px 35px rgba(43,39,95,.16); }
+html[data-a02-theme="light"] .a02-wheel-overlay { background:rgba(245,245,250,.66); backdrop-filter:blur(7px) brightness(.9) saturate(.85); }
+html[data-a02-theme="light"] .a02-wheel-outline { fill:rgba(255,255,255,.92); stroke:#c4bef4; }
+html[data-a02-theme="light"] .a02-wheel-sector { fill:rgba(233,231,255,.8); stroke:#c4bef4; }
+html[data-a02-theme="light"] .a02-wheel-sector.is-active { fill:rgba(213,208,255,.94); stroke:rgba(139,189,18,.7); }
+html[data-a02-theme="light"] .a02-wheel-sector.is-selected { fill:rgba(201,194,255,.96); stroke:#008ca7; }
+html[data-a02-theme="light"] .a02-wheel-inner { fill:rgba(255,255,255,.96); stroke:#c4bef4; }
+html[data-a02-theme="light"] .a02-wheel-icon { border-color:#c4bef4; background:#fff; box-shadow:0 6px 16px rgba(43,39,95,.1); }
+html[data-a02-theme="light"] .a02-wheel-node { color:#66667d; }
+html[data-a02-theme="light"] .a02-wheel-hint { color:#4f4d70; }
+
+html[data-a02-theme="light"] .a02-dock-preview { background:linear-gradient(135deg,#f8f7ff,#e9e7ff); border-color:#c4bef4; }
+html[data-a02-theme="light"] .a02-dock-preview::before { background-image:linear-gradient(#dedbef 1px,transparent 1px),linear-gradient(90deg,#dedbef 1px,transparent 1px); }
+html[data-a02-theme="light"] .a02-dock-preview-items>span { color:#66667d; }
+html[data-a02-theme="light"] .a02-dock-preview-items i,
+html[data-a02-theme="light"] .a02-dock-preview>b { border-color:#c4bef4; background:#fff; color:#17172a; }
+
+/* Field Guide and account surfaces sit above the page shell, so translate
+   their explicit midnight materials here rather than leaving them unreadable
+   when the underlying app is in daylight mode. */
+html[data-a02-theme="light"] .a02-tour-overlay,
+html[data-a02-theme="light"] .a02-confirmed-overlay,
+html[data-a02-theme="light"] .a02-account-overlay {
+  background:rgba(245,245,250,.72);
+  backdrop-filter:blur(14px) saturate(.86);
+}
+
+html[data-a02-theme="light"] .a02-tour-dialog {
+  border-color:#8172e8;
+  background:linear-gradient(125deg,#fff 0%,#e9e7ff 100%);
+  box-shadow:0 0 0 1px rgba(0,175,200,.14),0 34px 100px rgba(43,39,95,.24);
+}
+
+html[data-a02-theme="light"] .a02-tour-preview {
+  background:radial-gradient(circle at 40% 38%,rgba(105,87,232,.18),transparent 38%),linear-gradient(145deg,#f8f7ff,#e9e7ff 73%);
+}
+
+html[data-a02-theme="light"] .a02-tour-preview::before,
+html[data-a02-theme="light"] .a02-confirmed-dialog::before {
+  opacity:.65;
+  background:linear-gradient(rgba(67,61,128,.12) 1px,transparent 1px),linear-gradient(90deg,rgba(67,61,128,.12) 1px,transparent 1px);
+}
+
+html[data-a02-theme="light"] .a02-tour-copy p,
+html[data-a02-theme="light"] .a02-confirmed-dialog > p,
+html[data-a02-theme="light"] .a02-account-form > p { color:#585775; }
+
+html[data-a02-theme="light"] .a02-tour-route-preview > div,
+html[data-a02-theme="light"] .a02-tour-work-preview,
+html[data-a02-theme="light"] .a02-tour-review-preview {
+  border-color:#c4bef4;
+  background:rgba(255,255,255,.88);
+  box-shadow:0 10px 25px rgba(43,39,95,.08);
+}
+
+html[data-a02-theme="light"] .a02-tour-work-preview > div {
+  border-color:#ddd9f2;
+  background:#f8f7ff;
+}
+
+html[data-a02-theme="light"] .a02-tour-work-preview i,
+html[data-a02-theme="light"] .a02-tour-work-preview b {
+  border-color:#d8d4ee;
+  background:#fff;
+}
+
+html[data-a02-theme="light"] .a02-tour-focus-preview > div { background:rgba(255,255,255,.78); }
+html[data-a02-theme="light"] .a02-tour-review-preview i { background:#dedbef; }
+
+html[data-a02-theme="light"] .a02-confirmed-dialog {
+  border-color:#8172e8;
+  background:radial-gradient(circle at 84% 18%,rgba(0,175,200,.12),transparent 31%),radial-gradient(circle at 15% 100%,rgba(105,87,232,.16),transparent 45%),linear-gradient(125deg,#fff,#e9e7ff);
+  box-shadow:0 0 0 1px rgba(0,175,200,.14),0 34px 100px rgba(43,39,95,.24);
+}
+
+html[data-a02-theme="light"] .a02-account-trigger { background:rgba(255,255,255,.78); }
+html[data-a02-theme="light"] .a02-account-menu,
+html[data-a02-theme="light"] .a02-account-notice {
+  border-color:#8ed8e5;
+  background:#fff;
+  color:#17172a;
+  box-shadow:0 18px 55px rgba(43,39,95,.2);
+}
+
+html[data-a02-theme="light"] .a02-account-menu button,
+html[data-a02-theme="light"] .a02-account-menu a { border-bottom-color:#e1def1; }
+
+html[data-a02-theme="light"] .a02-account-dialog {
+  border-color:#8172e8;
+  background:radial-gradient(circle at 100% 0,rgba(0,175,200,.12),transparent 29%),linear-gradient(145deg,#fff,#e9e7ff);
+  box-shadow:0 28px 90px rgba(43,39,95,.27);
+}
+
+html[data-a02-theme="light"] .a02-account-form input,
+html[data-a02-theme="light"] .a02-account-oauth button { background:#fff; }

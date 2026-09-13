@@ -10,6 +10,29 @@
   background: #0b0e29;
 }
 
+:global(html[data-a02-theme="light"]) .shell {
+  --border: #c4bef4;
+  --dim: #66667d;
+  background: #f5f5fa;
+  color: #17172a;
+}
+
+:global(html[data-a02-theme="light"]) .grid {
+  opacity: 1;
+  background-image:
+    radial-gradient(circle at 64% 19%, rgba(105, 87, 232, 0.13), transparent 27%),
+    radial-gradient(circle at 22% 77%, rgba(0, 175, 200, 0.08), transparent 22%),
+    linear-gradient(#e2e2ec 1px, transparent 1px),
+    linear-gradient(90deg, #e2e2ec 1px, transparent 1px);
+}
+
+:global(html[data-a02-theme="light"]) .wordmark::after,
+:global(html[data-a02-theme="light"]) .liveStatus { color: #8bbd12; }
+:global(html[data-a02-theme="light"]) .timerToggle,
+:global(html[data-a02-theme="light"]) .sandglassToggle { color: #66667d; }
+:global(html[data-a02-theme="light"]) .sandglassToggle:hover,
+:global(html[data-a02-theme="light"]) .sandglassToggle:focus-visible { color: #17172a; }
+
 .grid,
 .bloom {
   position: fixed;
@@ -112,6 +135,27 @@
   text-transform: uppercase;
 }
 
+.sandglassToggle {
+  border: 0;
+  padding: 0;
+  color: #8e93bd;
+  background: transparent;
+  cursor: pointer;
+  font: 9px "DM Mono", monospace;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.sandglassToggle:hover,
+.sandglassToggle:focus-visible {
+  color: #e9ebff;
+  outline: none;
+}
+
+.sandglassToggle:focus-visible {
+  box-shadow: 0 2px #57e7ff;
+}
+
 .timerToggle:hover,
 .timerToggle:focus-visible {
   color: #e9ebff;
@@ -159,8 +203,74 @@
 
 .timerArea {
   display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 18px;
+}
+
+.timerReadout {
+  display: flex;
   align-items: center;
   gap: 22px;
+}
+
+.sandglass {
+  display: grid;
+  width: 68px;
+  height: 98px;
+  place-items: center;
+  border: 1px solid rgba(137, 117, 255, 0.32);
+  border-radius: 9px;
+  color: #d7ff52;
+  background: radial-gradient(circle at 50% 32%, rgba(137, 117, 255, 0.22), rgba(13, 16, 41, 0.56) 68%);
+  box-shadow: inset 0 1px rgba(255, 255, 255, 0.04);
+  transition: color 600ms ease, border-color 600ms ease, background 600ms ease;
+}
+
+.sandglass svg {
+  width: 48px;
+  height: 74px;
+  overflow: visible;
+}
+
+.sandglassFrame {
+  fill: none;
+  stroke: rgba(233, 235, 255, 0.72);
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.8;
+}
+
+.sandTop,
+.sandBottom,
+.sandDrop {
+  fill: currentColor;
+  transform-box: fill-box;
+}
+
+.sandTop {
+  transform-origin: center bottom;
+  transition: transform 850ms linear;
+}
+
+.sandBottom {
+  transform-origin: center bottom;
+  transition: transform 850ms linear;
+}
+
+.sandDrop {
+  opacity: 0;
+}
+
+.sandglassComplete {
+  border-color: rgba(87, 231, 255, 0.58);
+  color: #57e7ff;
+  background: radial-gradient(circle at 50% 68%, rgba(87, 231, 255, 0.2), rgba(15, 42, 58, 0.72) 68%);
+  animation: sandglass-flip 860ms cubic-bezier(0.22, 0.84, 0.32, 1) both;
+}
+
+.sandglassComplete .sandDrop {
+  animation: final-sand-drop 240ms ease-in 70ms both;
 }
 
 .ringWrap {
@@ -274,6 +384,18 @@
   }
 }
 
+@keyframes final-sand-drop {
+  0% { opacity: 0; transform: translateY(-5px); }
+  24% { opacity: 1; }
+  100% { opacity: 0; transform: translateY(8px); }
+}
+
+@keyframes sandglass-flip {
+  0%, 26% { transform: rotate(0deg); }
+  72% { transform: rotate(188deg); }
+  100% { transform: rotate(180deg); }
+}
+
 @media (max-width: 900px) {
   .frame {
     grid-template-columns: 1fr;
@@ -296,6 +418,9 @@
   .deckId {
     display: none;
   }
+
+  .headerStatus { gap: 9px; }
+  .timerToggle,.sandglassToggle { font-size: 8px; }
 
   .frame {
     min-height: calc(100dvh - 59px);
@@ -322,4 +447,24 @@
     animation: none;
     opacity: 0;
   }
+
+  .sandTop,
+  .sandBottom,
+  .sandglass {
+    transition: none;
+  }
+
+  .sandglassComplete,
+  .sandglassComplete .sandDrop {
+    animation: none;
+  }
 }
+
+:global(html[data-a02-theme="light"]) .sandglass { border-color:#c4bef4; color:#8bbd12; background:radial-gradient(circle at 50% 32%,rgba(105,87,232,.18),rgba(255,255,255,.84) 68%); box-shadow:0 10px 24px rgba(43,39,95,.1); }
+:global(html[data-a02-theme="light"]) .sandglassFrame { stroke:#585775; }
+:global(html[data-a02-theme="light"]) .ringTrack { stroke:#c4bef4; }
+:global(html[data-a02-theme="light"]) .ringProgress { stroke:#8bbd12; }
+:global(html[data-a02-theme="light"]) .ringMark { background:#b8f52a; box-shadow:0 0 18px rgba(139,189,18,.28); }
+:global(html[data-a02-theme="light"]) .timerLabel,
+:global(html[data-a02-theme="light"]) .elapsed { color:#66667d; }
+:global(html[data-a02-theme="light"]) .timer { background:linear-gradient(180deg,#17172a 8%,#6957e8 110%); background-clip:text; -webkit-background-clip:text; }
