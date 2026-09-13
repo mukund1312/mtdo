@@ -110,7 +110,7 @@ test("Home reflects a real picked task and Session shows real, non-fake coaching
   await expect(page).toHaveURL(/\/architecture-02\?deck=work$/);
 
   await page.getByRole("button", { name: /add from route/i }).click();
-  const routeMenu = page.getByRole("dialog", { name: /choose the next piece/i });
+  const routeMenu = page.getByRole("dialog", { name: /build your next set/i });
   const routeItem = routeMenu.locator(".a02-curriculum-item").first();
   await expect(routeItem).toBeVisible();
   const taskText = (await routeItem.locator("b").textContent())?.trim();

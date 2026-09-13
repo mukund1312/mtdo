@@ -87,7 +87,7 @@ test("onboarding wizard: intent -> rhythm -> build a route end-to-end", async ({
   // Pulling an item onto Today uses the lock-safe, idempotent picker RPC -- it
   // must become a real block, not a client-only card.
   await page.getByRole("button", { name: /add from route/i }).click();
-  const routeMenu = page.getByRole("dialog", { name: /choose the next piece/i });
+  const routeMenu = page.getByRole("dialog", { name: /build your next set/i });
   await expect(routeMenu).toBeVisible();
   const routeItem = routeMenu.locator(".a02-curriculum-item").first();
   await expect(routeItem).toBeVisible();
