@@ -160,30 +160,68 @@ default-date resolution, cross-user isolation). Full suite (`supabase/tests/run.
 `web/lib/planning/types.ts` (or a new `review/types.ts`) exports the TS mirror + narrowing helper,
 matching the `asWeeklyPerformance()` precedent.
 
-### Phase B — Effort Score + Consistency heatmap data
+### Phase B — Effort Score + Consistency heatmap data — **CONTRACT LOCKED, 2026-09-13**
 
-- `effort_score(p_date date)` (or folded into a `review_consistency(p_start date, p_end date)`
-  RPC returning one row per day) computing a 0–100 effort score from Phase A's three ring
-  percentages plus schedule adherence, each weight documented and versioned (`effort_v1`) —
-  **do not port the founder's example weights (40/30/20/10) uninspected**; compute them against
-  a couple of weeks of this user's own `daily_rollups` history first and pick weights that don't
-  let one dimension dominate, exactly as the founder's own brief (Phase 12) says to.
-- Returns intensity levels (0–4) pre-bucketed server-side, not raw scores the frontend has to
-  bucket itself — keeps the bucketing rule in one place, matching the "single canonical formula"
-  rule.
-- Replaces what mtdo-bugs #89's Progress heatmap currently colors by (raw minutes) — this is a
-  **migration of an existing, shipped feature**, not a net-new one; flag it as such in the PR so
-  review knows a live surface is changing, not just growing.
+`migrations/0027_review_consistency.sql`, `docs/architecture/api.md` §3k, `web/lib/review/types.ts`
+(`ReviewConsistency` + `asReviewConsistency()`), `supabase/tests/18_review_consistency.sql` (25
+assertions: a normal week, a genuinely-empty day inside an active plan (real 0, not null), no
+active plan at all, a goal switch — proving Progress does not misattribute a retired plan's week
+to the current one while Focus/Execute still see the real historical work — range validation,
+cross-user isolation). Full suite: 156/156.
 
-### Phase C — Time-of-day and session-length analytics
+**What shipped, differing from the original sketch above in one deliberate way:** Focus and
+Execute are **user-scoped across every plan the caller has ever had**, not re-filtered to whichever
+plan is active *today* — a date range (unlike Phase A's single "today") can span a goal switch, and
+naively filtering to the current plan would zero out real history under a retired one. Progress
+stays plan-scoped by necessity (it can only be computed via `weekly_performance()`) and is `NULL`
+for any week the current plan has no block in — under-covering rather than misattributing, the
+same direction of error §3f's `menu_offered_count` estimate already chose. Full reasoning in the
+migration's own header.
 
-- `review_time_patterns(p_start date, p_end date)`: buckets `focus_sessions` by hour and by
-  duration range, returns completion rate / focus efficiency per bucket **only when
-  `sample_size >= 5`** (the brief's own minimum-sample rule), else `status: "insufficient_data"`.
-- `review_momentum()`: a smoothed score across recent weeks (not a raw streak) — the brief is
-  explicit this should degrade gracefully (91 → 88, never 145 → 0), and this project already has
-  the philosophical precedent for "don't let one bad signal overreact" in `pace_ratio` using a
-  ratio-of-sums instead of a mean.
+**Weights are v1 and reasoned, not measured**, per the note below — `effort_v1`: Execute 45 /
+Focus 35 / Progress 20, renormalized over whichever components have a basis on a given day. Not
+yet checked against real `daily_rollups` distributions (no production data reachable from this
+session) — revisit once real usage exists, same "don't fake it" standard the rest of this plan
+holds to, applied here to weight *calibration* rather than to any single day's numbers.
+
+**Replaces mtdo-bugs #89's Progress heatmap** (currently colors by raw minutes) — flagged as
+changing a live surface in the PR, not merged as if purely additive, per this doc's own
+Verification section below.
+
+**Janhwi can start F3 (Consistency heatmap) against this contract now.**
+
+### Phase C — Time-of-day and session-length analytics — **CONTRACT LOCKED, 2026-09-13**
+
+`migrations/0028_review_time_patterns.sql` (hour/weekday/duration-bucket breakdown,
+`min_sample_size = 5` gating every `best_*` field — never inferred from fewer),
+`migrations/0029_review_momentum.sql` (EWMA over `review_consistency()`'s daily Effort Score,
+decay 0.9/day, plus `current_streak`/`longest_streak`/`active_days_rate` — composition, not a
+second Effort Score formula). `docs/architecture/api.md` §3l/§3m, `web/lib/review/types.ts`
+(`ReviewTimePatterns`/`asReviewTimePatterns()`, `ReviewMomentum`/`asReviewMomentum()`),
+`supabase/tests/19_review_time_patterns.sql` + `20_review_momentum.sql` (30 assertions). Full
+suite: 188/188.
+
+**A real bug found and fixed along the way, not part of the original Phase C scope**:
+`review_daily_summary()` (0025) and `review_consistency()` (0026) had both re-spelled the
+focus-seconds cap instead of calling `session_focus_seconds()` (0023) — which subtracts
+`total_paused_s` before capping — so a paused session's full wall-clock time was counted toward
+Focus/Effort in production. Caught because Phase C also needed that function and would have
+propagated the same mistake a third time. Fixed in `migrations/0030` (renumbered from an earlier
+`0027` that collided with `review_consistency()`'s own renumbering — see the "Migration numbering"
+note below), with regression assertions
+using a genuinely-paused session added to both existing test files (see `api.md` §3j/§3k for the
+full note).
+
+**Janhwi can start F4 (Time behavior + Session quality) against this contract now.**
+
+**Migration numbering, 2026-09-13:** two concurrent PRs both claimed migration number `0026` —
+this plan's `review_consistency()` and an unrelated soundtrack-preferences PR merging around the
+same time. Resolved (PR #181, not this session's work) by renumbering `review_consistency()` to
+`0027`; this session's own `migrations/0027_review_focus_...` pause-seconds fix (written before
+that renumbering landed) then collided with the *new* `0027` and was itself renumbered to `0030`
+once caught — `api.md` §3j/§3k/§3l/§3m and every test file already reference the final numbers.
+No functions or data were affected either time; both were pure filename renumbers, verified by diff
+before renaming.
 
 ### Phase D — Study Profile
 

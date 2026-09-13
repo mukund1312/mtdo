@@ -1,6 +1,6 @@
 # Review page frontend build briefs — for Janhwi (Codex)
 
-**Status:** ACTIVE — F1 and F2 are ready to build now
+**Status:** ACTIVE — F1, F2, F3, and F4 are ready to build now
 **Owner:** Janhwi builds, Mukund (Claude Code) keeps this doc current before announcing a phase
 "contract locked" — same rule `wave1-frontend-briefs.md` and `mtdo-web-dev-split-plan.md` §3 already
 use.
@@ -15,9 +15,10 @@ or `review-visual-spec.md`. If something genuinely isn't covered, that's a quest
 before building, not a judgment call mid-build.
 
 **Do not start a phase's screens before this doc says its backend contract is locked.** F1 has no
-backend dependency and is ready today. F2 depends on Phase A, which is contract-locked as of
-2026-09-13 (`migrations/0025_review_daily_summary.sql`, `api.md` §3j) — also ready today. F3
-onward are **not** ready yet; their row below says so explicitly and will be updated (not silently
+backend dependency and is ready today. F2 depends on Phase A (`migrations/0025_review_daily_summary.sql`,
+`api.md` §3j) and F3 depends on Phase B (`migrations/0027_review_consistency.sql`, `api.md` §3k) —
+both contract-locked as of 2026-09-13, both ready today. F4 onward are **not** ready yet; their row
+below says so explicitly and will be updated (not silently
 assumed) when their backend phase locks.
 
 ---
@@ -144,18 +145,100 @@ the heatmap recoloring (F3, needs Phase B), any insight/recommendation text (F6,
 
 ---
 
-## F3 onward — not contract-locked yet, do not start
+## F3 — Consistency heatmap (ready now, backend Phase B locked 2026-09-13)
+
+**Depends on:** `review_consistency()` (`migrations/0027`, `api.md` §3k) — merged, tested (156/156),
+typed in `web/lib/review/types.ts` (`ReviewConsistency`/`asReviewConsistency()`).
+
+**Goal:** replace `ProgressDeck`'s existing heatmap coloring (currently `heatLevel(focus_seconds)`
+from `product-data.ts`, raw minutes) with the server-computed Effort Score. **This changes a live
+surface — call it out explicitly in your PR description, don't merge it as if purely additive.**
+
+**What exists today, exactly (mirror this, don't redesign it):**
+- `progress-deck.tsx`'s heatmap renders one `<i className={`level-${n}`} title="…" aria-label="…" />`
+  per day, `n` from `heatLevel()` in `product-data.ts`, over a fixed `WINDOW_DAYS = 42` window built
+  by `utcDateRange()`.
+- CSS levels `level-0`…`level-4` already exist (check `progress-deck` or its `.css` sibling for the
+  current color ramp) — for this phase, **only the color values change** (cyan ramp → the lime ramp
+  `review-visual-spec.md` §Consistency heatmap specifies, i.e. levels 1–4 ramping toward
+  `var(--review-execute)`, level 0 the existing dark surface token), the cell/grid markup and
+  accessibility attributes (`title`, `aria-label`) stay structurally the same shape.
+
+**The actual change:**
+1. Replace the `daily_rollups` query + client-side `heatLevel()` call with one
+   `supabase.rpc("review_consistency", { p_start: windowDates[0], p_end: windowDates.at(-1) })`,
+   narrowed through `asReviewConsistency()`. Do not compute `level` client-side anymore — use the
+   `level` field the RPC already returns per day (`null` is a real state, see below).
+2. **Wire the window to F1's range selector** rather than the hardcoded 42 days: Week → 7 days,
+   Month → ~30, 6 Weeks → 42 (today's existing default), Year → 365. `review_consistency` caps at
+   400 days server-side, so Year is safe as-is.
+3. **`level: null`** (a day before the user had any active plan — see `api.md` §3k) renders
+   distinctly from `level: 0` (a real, active-plan-but-empty day) — e.g. a slightly different cell
+   treatment (lower opacity, or a subtle diagonal-hatch background) rather than identical styling.
+   Don't collapse these to the same visual — that's exactly the null-vs-zero distinction the whole
+   backend side of this plan is built around.
+4. Hover/focus tooltip (keyboard-accessible, same as the existing `title`/`aria-label` pattern):
+   date, `effort_score`, and the day's `focus_percentage`/`execute_percentage`/`progress_percentage`
+   — each rendered as "—" or "not enough data" when `null`, never `0%`.
+5. Summary row under the grid (active-day %, current streak, longest streak) — **resolved by
+   Phase C, F4 below**: `streak.ts`'s `computeStreaks()` is a client-side approximation
+   (`blocks_done > 0`, its own header admits it's not the terminal app's stricter "100% of that
+   day's blocks" definition) that `review_momentum()` now replaces with a real server-computed
+   `current_streak`/`longest_streak` (and a smoothed `momentum_score` on top). If F3 ships before
+   F4, keep `computeStreaks()` running for this summary row as an interim measure; F4 retires it.
+
+**Explicitly not this phase:** the Terrain toggle (F7, stretch, optional, heatmap stays default),
+Week/Month/Year tab content *beyond the heatmap itself* (Time Behavior/Session Quality/Study
+Profile/Insights are F4–F6, still locked).
+
+---
+
+## F4 — Time behavior + Session quality + Momentum (ready now, backend Phase C locked 2026-09-13)
+
+**Depends on:** `review_time_patterns()` and `review_momentum()` (`migrations/0028`/`0029`,
+`api.md` §3l/§3m) — merged, tested (188/188 full suite), typed in `web/lib/review/types.ts`.
+
+**Goal:** three related sections, all sourced from these two RPCs:
+
+1. **"When you work best"** — call
+   `supabase.rpc("review_time_patterns", { p_start, p_end })` (window from F1's range selector),
+   narrow with `asReviewTimePatterns()`. Chart `hourly` as a bar/area chart in `--accent` (cyan) per
+   `review-visual-spec.md` §Time-of-day/session-quality — this section is "observed behavior," not
+   an achievement. Show `best_hour` prominently (e.g. "Best start time 08:00") **only when it is
+   non-null** — when null, render "Not enough sessions yet to identify a pattern" (this is the
+   `insufficient_data` state `review-visual-spec.md` already calls for; it will be the common state
+   for a new account, not an edge case to bolt on later). Same treatment for `best_weekday`.
+2. **Session quality** — `duration_buckets` as the `<15m/15-30m/30-45m/45-60m/60-90m/90m+`
+   distribution bars, `best_duration_bucket` as the "sweet spot" callout, same null-vs-insufficient
+   handling as above. **Do not label `session_completion_rate` as "completion rate" in a way that
+   could be confused with Execute's task completion** — call it "session completion" or similar in
+   the UI copy; they are genuinely different numbers (`api.md` §3l).
+3. **Momentum** — replaces `streak.ts`'s `computeStreaks()` (client-side, `blocks_done > 0`
+   approximation) with `supabase.rpc("review_momentum", { p_window_days: 42 })` /
+   `asReviewMomentum()`. Show `momentum_score` as the headline number (not a raw streak count —
+   the founder's brief is explicit that a smoothed number that dips gently reads healthier than one
+   that resets to zero), with `current_streak`/`longest_streak` as supporting stats underneath.
+   Branch on `status`: `"no_active_plan"` uses the same empty-state copy as F2's rings
+   ("Set up your route first…").
+
+**States:** `loading` → `ready` (including the `insufficient_data` sub-states per bucket, which are
+real, common states) → `error`.
+
+**Explicitly not this phase:** Study Profile panel (F5, needs Phase D), Insights card (F6, needs
+Phase E).
+
+---
+
+## F5 onward — not contract-locked yet, do not start
 
 | Phase | Depends on backend | Status |
 |---|---|---|
-| F3 — Consistency heatmap (effort-score coloring, replaces `ProgressDeck`'s current raw-minutes heatmap) | Backend Phase B | not started |
-| F4 — Time behavior + session quality | Backend Phase C | not started |
 | F5 — Study Profile panel | Backend Phase D | not started |
 | F6 — Insights card | Backend Phase E | not started |
 | F7 (stretch) — Effort Terrain toggle | F3 | not started, optional |
 
 This table is the single source of truth for "is it safe to start yet" — when a backend phase
-locks, this row gets updated with the RPC name and `api.md` section, the same way F2's row above
-was updated today. Building ahead of a locked row here reproduces the exact problem
+locks, this row gets updated with the RPC name and `api.md` section, the same way F2/F3/F4's rows
+above were updated. Building ahead of a locked row here reproduces the exact problem
 `wave1-frontend-briefs.md` was written to prevent (an ambiguous/early brief producing silently-wrong
 output).
