@@ -1449,6 +1449,87 @@ full year, reusing the already-audited weekly formula rather than a new set-base
 **Focus time uses `session_focus_seconds()` (0023), fixed in migrations/0027** — see §3j's own note;
 this function had the identical re-spelled-cap bug, fixed in the same migration.
 
+## 3l. `review_time_patterns()` — when you work best, and what session length works (Phase C, migrations/0028)
+
+```sql
+public.review_time_patterns(p_start date, p_end date) returns jsonb
+```
+
+`authenticated`-callable, `security definer`, `stable`, `auth.uid()`-derived, no plan id —
+**user-scoped across every plan**, same reasoning as `review_consistency()` (§3k): when you focus
+best is a trait of the person, not one goal. Range capped at 400 days, same validation as §3k.
+
+**Scope: session-level behavior only.** `session_completion_rate` means a `focus_sessions` row
+ended in `state = 'completed'` rather than `'abandoned'` — it is **not** a task/Execute rate, and
+must never be read alongside `review_daily_summary()`'s `execute.percentage` as if they were the
+same number. Answering "when do I *finish tasks* best" would need joining every session back to a
+block and the ledger, a genuinely different question this function doesn't answer.
+
+**The minimum-sample rule is load-bearing, not a nicety.** `min_sample_size` (currently `5`) gates
+every `best_*` field: a hour/weekday/duration bucket below that count still appears in the full
+`hourly`/`weekday`/`duration_buckets` breakdowns (so a UI can show "3 sessions, too early to tell"),
+but is **never** eligible to be reported as `best_hour`/`best_weekday`/`best_duration_bucket`. All
+three are `null` — never a guess — when nothing clears the bar.
+
+**Return shape** (`mtdo.review_time_patterns.v1`, abbreviated):
+
+```jsonc
+{
+  "schema_version": "mtdo.review_time_patterns.v1",
+  "from": "2026-09-01", "to": "2026-09-01", "timezone": "UTC", "computed_at": "…",
+  "min_sample_size": 5,
+  "hourly": [ { "hour": 8, "session_count": 6, "completed_session_count": 6,
+                "session_completion_rate": 1.0, "avg_focus_minutes": 40.0,
+                "total_focus_minutes": 240.0 }, /* … all 24 hours, always */ ],
+  "weekday": [ /* all 7, isodow 1=Mon..7=Sun, same vocabulary iso_week_start() uses */ ],
+  "duration_buckets": [ { "bucket": "<15m", … }, "15-30m", "30-45m", "45-60m", "60-90m", "90m+" ],
+  "best_hour": { "hour": 8, "sample_size": 6, "session_completion_rate": 1.0 },
+  "best_weekday": { "weekday": 2, "sample_size": 8, "session_completion_rate": 0.75 },
+  "best_duration_bucket": { "bucket": "30-45m", "sample_size": 6, "session_completion_rate": 1.0 }
+}
+```
+
+**Why a single best hour, not a range** (`"08:00-10:30"` in the founder's original brief) — finding
+a genuine contiguous best *range* needs a smoothing/merging algorithm this migration doesn't attempt
+to justify from first principles. V1 reports the single peak hour; a frontend can present it as an
+hour-wide window without this function claiming a wider range it never actually computed.
+
+Focus time uses `session_focus_seconds()` (0023), same as §3j/§3k.
+
+## 3m. `review_momentum()` — a smoothed score, not a raw streak (Phase C, migrations/0029)
+
+```sql
+public.review_momentum(p_window_days integer default 42) returns jsonb
+```
+
+`authenticated`-callable, `security definer`, `stable`. **Pure composition over
+`review_consistency()`** — it asks that function for the trailing `p_window_days` (default 42,
+matching the existing 6-week heatmap window) of per-day Effort Scores and summarizes them; it does
+not compute a second Effort Score formula. `status: "no_active_plan"` (every field `null`) exactly
+mirrors `review_consistency()`'s own `plan_id: null` case.
+
+**Why not just a streak.** The founder's brief is explicit that missing one day should not collapse
+the whole signal (91 → 88, never 145 → 0). `momentum_score` is an exponentially-weighted average of
+the window's daily Effort Scores (`momentum_v1`: decay `0.9`/day, ~6.6-day half-life — reasoned, not
+yet measured against real usage, same standing caveat as `effort_v1`'s weights). `current_streak`
+and `longest_streak` are still reported alongside it (concrete, useful facts), computed the same way
+a "day with real activity" already means throughout this schema: `effort_score > 0`.
+
+**Return shape** (`mtdo.review_momentum.v1`):
+
+```jsonc
+{
+  "schema_version": "mtdo.review_momentum.v1",
+  "from": "2026-08-01", "to": "2026-09-13", "window_days": 42, "timezone": "UTC",
+  "computed_at": "…", "status": "ok", "metric_version": "momentum_v1",
+  "momentum_score": 78.0, "current_streak": 1, "longest_streak": 3, "active_days_rate": 0.8
+}
+```
+
+⚠️ `current_streak` is only real if its run of active days reaches all the way to the most recent
+day in the window (today) — a run that ended three days ago is history, not a current streak, and
+is reflected only in `longest_streak`.
+
 ## 4. The EmberMorph component contract
 
 `DESIGN.md` §Motion specifies the morph itself (`Graphite home → ember bloom → terminal focus
