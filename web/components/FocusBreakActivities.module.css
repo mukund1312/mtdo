@@ -9,6 +9,15 @@
   backdrop-filter: blur(9px) saturate(0.76);
 }
 
+:global(html[data-a02-theme="light"]) .surface { background: rgba(245,245,250,.68); }
+:global(html[data-a02-theme="light"]) .panel { border-color: #c4bef4; background: linear-gradient(145deg,#fff,#e9e7ff); box-shadow:0 24px 80px rgba(43,39,95,.18); }
+:global(html[data-a02-theme="light"]) .title,
+:global(html[data-a02-theme="light"]) .breathingInstruction { color:#17172a; }
+:global(html[data-a02-theme="light"]) .copy,
+:global(html[data-a02-theme="light"]) .breathingCount { color:#66667d; }
+:global(html[data-a02-theme="light"]) .eyebrow,
+:global(html[data-a02-theme="light"]) .remaining { color:#008ca7; }
+
 .panel {
   width: min(100%, 440px);
   padding: clamp(24px, 4vw, 36px);
@@ -270,3 +279,12 @@
   .stretchArms { animation: none; }
   .note { animation: none; }
 }
+
+:global(html[data-a02-theme="light"]) .surface { background: rgba(245,245,250,.68); }
+:global(html[data-a02-theme="light"]) .panel { border-color: #c4bef4; background: linear-gradient(145deg,#fff,#e9e7ff); box-shadow:0 24px 80px rgba(43,39,95,.18); }
+:global(html[data-a02-theme="light"]) .title,
+:global(html[data-a02-theme="light"]) .breathingInstruction { color:#17172a; }
+:global(html[data-a02-theme="light"]) .copy,
+:global(html[data-a02-theme="light"]) .breathingCount,
+:global(html[data-a02-theme="light"]) .remaining { color:#66667d; }
+:global(html[data-a02-theme="light"]) .eyebrow { color:#008ca7; }

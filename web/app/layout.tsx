@@ -1,7 +1,9 @@
 import type { Metadata, Viewport } from "next";
 import { FeedbackWidget } from "@/components/FeedbackWidget";
 import { SignalDeckListenProvider } from "@/app/(marketing)/architecture-02/listen-state";
+import { SignalDeckThemeProvider } from "@/app/(marketing)/architecture-02/theme-preference";
 import "./styles/tokens.css";
+import "./styles/signal-deck-light.css";
 import "./globals.css";
 
 // Satoshi via Fontshare, per DESIGN.md §Typography — one family across the
@@ -28,12 +30,17 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <html lang="en">
+    <html lang="en" suppressHydrationWarning>
       <head>
         <link rel="stylesheet" href={SATOSHI_HREF} />
+        <script
+          dangerouslySetInnerHTML={{
+            __html: "try{var t=localStorage.getItem('mtdo-theme');if(t==='light'||t==='dark'){document.documentElement.dataset.a02Theme=t;document.documentElement.style.colorScheme=t}}catch(e){}",
+          }}
+        />
       </head>
       <body>
-        <SignalDeckListenProvider>{children}</SignalDeckListenProvider>
+        <SignalDeckThemeProvider><SignalDeckListenProvider>{children}</SignalDeckListenProvider></SignalDeckThemeProvider>
         <FeedbackWidget />
       </body>
     </html>

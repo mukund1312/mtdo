@@ -175,3 +175,15 @@
   .triggerWaveActive i { animation: none; }
   .control { transition: none; }
 }
+
+:global(html[data-a02-theme="light"]) .trigger,
+:global(html[data-a02-theme="light"]) .panel { border-color:#c4bef4; color:#17172a; background:rgba(255,255,255,.92); box-shadow:0 16px 45px rgba(43,39,95,.17); }
+:global(html[data-a02-theme="light"]) .triggerCopy small,
+:global(html[data-a02-theme="light"]) .triggerChevron,
+:global(html[data-a02-theme="light"]) .artist,
+:global(html[data-a02-theme="light"]) .timeRow,
+:global(html[data-a02-theme="light"]) .openStudio,
+:global(html[data-a02-theme="light"]) .empty p { color:#66667d; }
+:global(html[data-a02-theme="light"]) .title,
+:global(html[data-a02-theme="light"]) .empty h3 { color:#17172a; }
+:global(html[data-a02-theme="light"]) .control:hover:not(:disabled) { color:#17172a; background:rgba(105,87,232,.14); }
