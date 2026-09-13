@@ -2,11 +2,12 @@
    takes over whatever grid area a single .a02-focus-node used to occupy;
    each card is absolutely positioned over the same box so Framer Motion's
    scale/y transforms are the only thing separating them visually. */
-.a02-card-stack { position: relative; min-height: 268px; }
-.a02-card-stack-item { position: absolute; inset: 0; transform-origin: top center; will-change: transform; }
+.a02-card-stack { position: relative; min-height: 268px; perspective: 1200px; transform-style: preserve-3d; touch-action: auto; outline: none; }
+.a02-card-stack:focus-visible { outline: 2px solid var(--aqua); outline-offset: 5px; border-radius: 16px; }
+.a02-card-stack-item { position: absolute; inset: 0; transform-origin: 50% 0; will-change: transform, opacity; }
 .a02-card-stack-item:not(:first-child) { pointer-events: none; }
-.a02-card-stack-item:first-child { cursor: grab; }
-.a02-card-stack-item:first-child:active { cursor: grabbing; }
+.a02-card-stack-item:first-child { cursor: pointer; }
+.a02-card-stack-departing { pointer-events: none; }
 
 /* Start Focus, as a real button nested inside the (now non-button) card div
    -- same position/color the single-card version's trailing <b> used, just

@@ -23,3 +23,9 @@ body {
 a {
   color: inherit;
 }
+.focus-completion-confetti {
+  position: fixed;
+  z-index: 12;
+  pointer-events: none;
+  inset: 0;
+ }
