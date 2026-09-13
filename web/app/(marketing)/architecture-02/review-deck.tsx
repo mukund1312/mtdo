@@ -3,6 +3,7 @@
 import { useState } from "react";
 
 import { ProgressDeck } from "./progress-deck";
+import { ReviewRings } from "./review-rings";
 
 type ReviewRange = "today" | "week" | "month" | "6weeks" | "year";
 
@@ -23,7 +24,7 @@ export function ReviewDeck() {
         <header className="a02-view-head">
           <div>
             <span className="a02-eyebrow">REVIEW / TODAY</span>
-            <div className="a02-review-title" id="review-title">MAKE EFFORT<br /><em>LEGIBLE.</em></div>
+            <h1 className="a02-review-title" id="review-title">MAKE EFFORT<br /><em>LEGIBLE.</em></h1>
             <p>Track. Understand. Improve. Repeat.</p>
           </div>
         </header>
@@ -43,7 +44,12 @@ export function ReviewDeck() {
         </div>
       </section>
 
-      {range === "today" ? <ProgressDeck /> : (
+      {range === "today" ? (
+        <>
+          <ReviewRings />
+          <ProgressDeck />
+        </>
+      ) : (
         <section className="a02-review a02-review-coming-soon" aria-live="polite">
           <div className="a02-product-state">
             <p>Coming soon</p>
