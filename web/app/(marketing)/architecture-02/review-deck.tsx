@@ -19,11 +19,11 @@ export function ReviewDeck() {
 
   return (
     <>
-      <section className="a02-review a02-review-shell" aria-labelledby="review-title">
+      <section className="a02-review-shell" aria-labelledby="review-title">
         <header className="a02-view-head">
           <div>
             <span className="a02-eyebrow">REVIEW / TODAY</span>
-            <h1 id="review-title">MAKE EFFORT<br /><em>LEGIBLE.</em></h1>
+            <div className="a02-review-title" id="review-title">MAKE EFFORT<br /><em>LEGIBLE.</em></div>
             <p>Track. Understand. Improve. Repeat.</p>
           </div>
         </header>
