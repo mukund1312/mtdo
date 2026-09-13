@@ -94,7 +94,9 @@ test("unscheduling a block clears its window and returns it to Unscheduled", asy
 
   await eventChip.click();
   const popover = page.getByTestId("calendar-detail-popover");
-  await expect(popover).toBeVisible();
+  // Observed flaking on CI at the default 5s here too, immediately after the
+  // same drag -- same reasoning as the eventChip wait above.
+  await expect(popover).toBeVisible({ timeout: 15_000 });
   await popover.getByTestId("calendar-unschedule-button").click();
   await expect(popover).toHaveCount(0);
 
@@ -141,7 +143,8 @@ test("Google Calendar's honest not-connected state renders with no console error
   await page.locator('[data-testid^="calendar-event-"]').filter({ hasText: taskA }).click();
 
   const popover = page.getByTestId("calendar-detail-popover");
-  await expect(popover).toBeVisible();
+  // Same post-drag-click CI latency as the unscheduling test above.
+  await expect(popover).toBeVisible({ timeout: 15_000 });
   // No GOOGLE_CLIENT_ID/GOOGLE_CLIENT_SECRET in this environment --
   // GET /api/calendar/status genuinely reports configured:false, and the
   // popover must say so plainly rather than showing a toggle that looks
