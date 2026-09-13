@@ -3,15 +3,22 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { createClient } from "@/lib/supabase/client";
+import { asReviewConsistency, type ConsistencyDay } from "@/lib/review/types";
 
 import { fetchProfileTimezone } from "./profile-timezone";
-import { type DailyRollup, formatDuration, formatShortDate, heatLevel, utcDateRange, utcToday } from "./product-data";
+import { type DailyRollup, formatDuration, formatShortDate, utcDateRange, utcToday } from "./product-data";
 import { WeeklyReviewPanel } from "./weekly-review";
 
 const WINDOW_DAYS = 42;
 
 export function ProgressDeck() {
   const [rollups, setRollups] = useState<DailyRollup[]>([]);
+  // F3 of docs/designs/review-frontend-briefs.md: the heatmap's coloring
+  // comes from review_consistency()'s server-computed Effort Score, never
+  // client-side heatLevel(focus_seconds) anymore (migrations/0026, api.md
+  // sec3k). The FOCUS TIME/6 WEEKS and LAST 7 DAYS panels below are
+  // deliberately untouched -- still daily_rollups, not this phase's charter.
+  const [consistencyDays, setConsistencyDays] = useState<ConsistencyDay[]>([]);
   const [state, setState] = useState<"loading" | "ready" | "error">("loading");
   const [recordOpen, setRecordOpen] = useState(false);
   // Recomputed on every load() -- see the comment there on why the window
@@ -39,21 +46,36 @@ export function ProgressDeck() {
     const windowDates = utcDateRange(WINDOW_DAYS, utcToday(userTimezone));
     setDates(windowDates);
 
-    const { data, error } = await supabase
-      .from("daily_rollups")
-      .select("blocks_done, computed_at, date, focus_seconds, sessions_completed")
-      .eq("user_id", user.id)
-      .is("room_id", null)
-      .gte("date", windowDates[0]!)
-      .lte("date", windowDates.at(-1)!)
-      .order("date", { ascending: true });
+    const [rollupsResult, consistencyResult] = await Promise.all([
+      supabase
+        .from("daily_rollups")
+        .select("blocks_done, computed_at, date, focus_seconds, sessions_completed")
+        .eq("user_id", user.id)
+        .is("room_id", null)
+        .gte("date", windowDates[0]!)
+        .lte("date", windowDates.at(-1)!)
+        .order("date", { ascending: true }),
+      supabase.rpc("review_consistency", { p_start: windowDates[0]!, p_end: windowDates.at(-1)! }),
+    ]);
 
-    if (error) {
-      console.error("[progress] failed to load rollups:", error);
+    if (rollupsResult.error) {
+      console.error("[progress] failed to load rollups:", rollupsResult.error);
       setState("error");
       return;
     }
-    setRollups(data ?? []);
+    if (consistencyResult.error) {
+      console.error("[progress] failed to load consistency:", consistencyResult.error);
+      setState("error");
+      return;
+    }
+    try {
+      setConsistencyDays(asReviewConsistency(consistencyResult.data).days);
+    } catch (parseError) {
+      console.error("[progress] malformed consistency response:", parseError);
+      setState("error");
+      return;
+    }
+    setRollups(rollupsResult.data ?? []);
     setState("ready");
   }, []);
 
@@ -63,6 +85,10 @@ export function ProgressDeck() {
   }, [load]);
 
   const rollupByDate = useMemo(() => new Map(rollups.map((rollup) => [rollup.date, rollup])), [rollups]);
+  const consistencyByDate = useMemo(
+    () => new Map(consistencyDays.map((day) => [day.date, day])),
+    [consistencyDays],
+  );
   const totals = useMemo(() => rollups.reduce((sum, rollup) => ({
     blocks: sum.blocks + rollup.blocks_done,
     focusSeconds: sum.focusSeconds + rollup.focus_seconds,
@@ -87,16 +113,30 @@ export function ProgressDeck() {
 
       {state === "error" ? <section className="a02-product-state" role="alert"><b>Progress is unavailable.</b><p>We could not read your recorded activity. Nothing has been changed.</p><button type="button" onClick={() => void load()}>Try again ↗</button></section> : <div className={`a02-review-grid ${state === "loading" ? "is-loading" : ""}`} aria-busy={state === "loading"}>
         <section className="a02-heat">
-          <header><b>FOCUS FREQUENCY</b><span>LOW <i /> HIGH</span></header>
-          <div aria-label="Six-week focus heatmap">
+          <header><b>CONSISTENCY</b><span>LOW <i /> HIGH</span></header>
+          <div aria-label="Six-week consistency heatmap">
             {dates.map((date) => {
-              const rollup = rollupByDate.get(date);
-              const minutes = Math.floor((rollup?.focus_seconds ?? 0) / 60);
-              return <i className={`level-${state === "loading" ? 0 : heatLevel(rollup?.focus_seconds ?? 0)}`} key={date} title={`${formatShortDate(date)} · ${minutes} focused minutes`} aria-label={`${formatShortDate(date)}: ${minutes} focused minutes`} />;
+              const day = consistencyByDate.get(date);
+              const level = state === "loading" ? null : day?.level ?? null;
+              const pct = (value: number | null | undefined) => (value == null ? "—" : `${value}%`);
+              const label =
+                level === null
+                  ? `${formatShortDate(date)} · no goal set yet`
+                  : `${formatShortDate(date)} · effort ${day?.effort_score ?? 0} · focus ${pct(day?.focus_percentage)} · execute ${pct(day?.execute_percentage)} · progress ${pct(day?.progress_percentage)}`;
+              return (
+                <i
+                  className={level === null ? "level-none" : `level-${level}`}
+                  key={date}
+                  title={label}
+                  aria-label={label}
+                />
+              );
             })}
           </div>
           <footer>{formatShortDate(dates[0]!)} <span>{formatShortDate(dates.at(-1)!)}</span></footer>
-          {state === "ready" && rollups.length === 0 && <p className="a02-heat-empty">No recorded focus in this window yet. Your grid will fill from completed or ended sessions.</p>}
+          {state === "ready" && consistencyDays.every((day) => day.level === null) && (
+            <p className="a02-heat-empty">Set up your route first, then return here for its first useful piece.</p>
+          )}
         </section>
         <section className="a02-score">
           <span>FOCUS TIME / 6 WEEKS</span>
