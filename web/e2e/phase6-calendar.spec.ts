@@ -58,7 +58,13 @@ test("day, week and month views render a real scheduled block, drag-scheduled fr
   await unscheduledA.dragTo(page.getByTestId(`calendar-slot-${today}-10`));
 
   const eventChip = page.locator('[data-testid^="calendar-event-"]').filter({ hasText: taskA });
-  await expect(eventChip).toBeVisible();
+  // dragTo() completing is not the schedule_block() RPC round-trip completing
+  // -- the default 5s timeout has been observed flaking under CI's slower
+  // network latency to the linked Supabase project (not reproducible locally,
+  // where the same drag settles in well under a second). 15s matches the
+  // timeout this suite already uses elsewhere for an RPC-round-trip-dependent
+  // visibility check (e.g. settings.spec.ts, phase3-plan-pipeline.spec.ts).
+  await expect(eventChip).toBeVisible({ timeout: 15_000 });
   await expect(page.locator('button[data-testid^="calendar-unscheduled-"]').filter({ hasText: taskA })).toHaveCount(0);
   // Positioned, not just present -- 10:00 falls at (10-6)*48=192px from the
   // top of the 6a-10p grid.
@@ -83,7 +89,8 @@ test("unscheduling a block clears its window and returns it to Unscheduled", asy
   const today = todayIso();
   await page.locator('button[data-testid^="calendar-unscheduled-"]').filter({ hasText: taskA }).dragTo(page.getByTestId(`calendar-slot-${today}-14`));
   const eventChip = page.locator('[data-testid^="calendar-event-"]').filter({ hasText: taskA });
-  await expect(eventChip).toBeVisible();
+  // Same schedule_block() round-trip as the drag test above -- same 15s.
+  await expect(eventChip).toBeVisible({ timeout: 15_000 });
 
   await eventChip.click();
   const popover = page.getByTestId("calendar-detail-popover");
