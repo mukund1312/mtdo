@@ -330,6 +330,17 @@ export function CalendarDeck() {
         setMovingId(null);
         return false;
       }
+      // Make a successful schedule write visible immediately. The follow-up
+      // read is still the source of truth, but waiting for that extra round
+      // trip made drag-and-drop feel unresponsive (and could leave a just
+      // moved task absent while a slow read was in flight).
+      const movedBlock: CalendarBlock = {
+        ...block,
+        scheduled_start_at: start.toISOString(),
+        scheduled_end_at: end.toISOString(),
+      };
+      setScheduled((current) => [...current.filter((item) => item.id !== block.id), movedBlock]);
+      setUnscheduled((current) => current.filter((item) => item.id !== block.id));
       await load();
       setMovingId(null);
       return true;
@@ -406,6 +417,12 @@ export function CalendarDeck() {
           method: "POST",
         }).catch((err) => console.error("[calendar] best-effort unsync failed:", err));
       }
+      // Mirror the committed clear before the verification read so the task
+      // returns to Unscheduled without depending on a second network round
+      // trip for perceived completion.
+      const clearedBlock: CalendarBlock = { ...block, scheduled_start_at: null, scheduled_end_at: null };
+      setScheduled((current) => current.filter((item) => item.id !== block.id));
+      setUnscheduled((current) => [...current.filter((item) => item.id !== block.id), clearedBlock]);
       setSelectedBlockId(null);
       await load();
       setMovingId(null);
@@ -464,9 +481,17 @@ export function CalendarDeck() {
     return { ok: true };
   }, []);
 
-  const dropAtSlot = (day: Date, hour: number | null) => {
-    if (!draggedBlockId) return;
-    const block = blocksById.get(draggedBlockId);
+  // Reads the dragged block id from the native DragEvent's dataTransfer
+  // (set synchronously in onDragStart, same drag session) rather than the
+  // draggedBlockId React state set by that same onDragStart -- state set in
+  // one native event isn't guaranteed to have committed to a new render by
+  // the time a separately-dispatched drop event fires, so a handler that
+  // trusted only React state could read a stale (pre-drag) closure and
+  // silently no-op. dataTransfer carries the id regardless of render timing.
+  const dropAtSlot = (day: Date, hour: number | null, droppedId: string | null) => {
+    const id = droppedId || draggedBlockId;
+    if (!id) return;
+    const block = blocksById.get(id);
     setDraggedBlockId(null);
     setDropHint(null);
     if (!block) return;
@@ -487,9 +512,10 @@ export function CalendarDeck() {
     void rescheduleBlock(block, start, end);
   };
 
-  const dropOnUnscheduled = () => {
-    if (!draggedBlockId) return;
-    const block = blocksById.get(draggedBlockId);
+  const dropOnUnscheduled = (droppedId: string | null) => {
+    const id = droppedId || draggedBlockId;
+    if (!id) return;
+    const block = blocksById.get(id);
     setDraggedBlockId(null);
     setDropHint(null);
     if (block && block.scheduled_start_at) void unscheduleBlock(block);
@@ -715,7 +741,7 @@ function TimeGrid({ days, blocks, draggedBlockId, dropHint, movingId, onDragStar
   movingId: string | null;
   onDragStart: (id: string) => void;
   onDragEnd: () => void;
-  onDrop: (day: Date, hour: number | null) => void;
+  onDrop: (day: Date, hour: number | null, droppedId: string | null) => void;
   onHover: (hint: string | null) => void;
   onOpenBlock: (id: string) => void;
   resizingId: string | null;
@@ -757,7 +783,7 @@ function TimeGrid({ days, blocks, draggedBlockId, dropHint, movingId, onDragStar
                   data-testid={`calendar-slot-${key}-${hour}`}
                   onDragOver={(event) => { event.preventDefault(); onHover(`${key}:${hour}`); }}
                   onDragLeave={() => onHover(null)}
-                  onDrop={(event) => { event.preventDefault(); onDrop(day, hour); }}
+                  onDrop={(event) => { event.preventDefault(); onDrop(day, hour, event.dataTransfer.getData("text/plain")); }}
                 />
               ))}
               {dayBlocks.map((block) => (
@@ -801,7 +827,7 @@ function MonthGrid({ anchorDate, blocks, draggedBlockId, dropHint, movingId, onD
   onDayClick: (day: Date) => void;
   onDragStart: (id: string) => void;
   onDragEnd: () => void;
-  onDrop: (day: Date, hour: number | null) => void;
+  onDrop: (day: Date, hour: number | null, droppedId: string | null) => void;
   onHover: (hint: string | null) => void;
   onOpenBlock: (id: string) => void;
 }) {
@@ -835,7 +861,7 @@ function MonthGrid({ anchorDate, blocks, draggedBlockId, dropHint, movingId, onD
               data-testid={`calendar-month-cell-${key}`}
               onDragOver={(event) => { event.preventDefault(); onHover(key); }}
               onDragLeave={() => onHover(null)}
-              onDrop={(event) => { event.preventDefault(); onDrop(day, null); }}
+              onDrop={(event) => { event.preventDefault(); onDrop(day, null, event.dataTransfer.getData("text/plain")); }}
             >
               <button type="button" className="a02-month-cell-date" onClick={() => onDayClick(day)}>
                 {day.getDate()}
@@ -870,7 +896,7 @@ function UnscheduledPanel({ items, draggedBlockId, isDropTarget, onDragStart, on
   isDropTarget: boolean;
   onDragStart: (id: string) => void;
   onDragEnd: () => void;
-  onDrop: () => void;
+  onDrop: (droppedId: string | null) => void;
   onHover: () => void;
   onOpenBlock: (id: string) => void;
 }) {
@@ -880,7 +906,7 @@ function UnscheduledPanel({ items, draggedBlockId, isDropTarget, onDragStart, on
       data-testid="calendar-unscheduled-panel"
       onDragOver={(event) => { event.preventDefault(); onHover(); }}
       onDragLeave={() => onHover()}
-      onDrop={(event) => { event.preventDefault(); onDrop(); }}
+      onDrop={(event) => { event.preventDefault(); onDrop(event.dataTransfer.getData("text/plain")); }}
     >
       <span>UNSCHEDULED · drag onto the calendar, or drop here to clear a time</span>
       {items.length === 0 ? (
