@@ -112,7 +112,7 @@ export function asReviewDailySummary(value: unknown): ReviewDailySummary {
 
 // ---------------------------------------------------------------------------
 // review_consistency() -- the Effort Score behind the Consistency heatmap
-// (migrations/0026, schema mtdo.review_consistency.v1). Same narrowing
+// (migrations/0027, schema mtdo.review_consistency.v1). Same narrowing
 // precedent as above.
 //
 // THE ONE RULE THAT MATTERS: `effort_score`/`level` are `null` ONLY when the

@@ -1382,7 +1382,7 @@ absent, never `0`** — the same rule §3f's whole engine turns on, applied here
   call `session_focus_seconds()`; regression assertions with a genuinely paused session are in both
   test files.
 
-## 3k. `review_consistency()` — the Effort Score behind the Consistency heatmap (Phase B, migrations/0026)
+## 3k. `review_consistency()` — the Effort Score behind the Consistency heatmap (Phase B, migrations/0027)
 
 **Read `docs/designs/mtdo-web-review-study-profile-plan.md` §4 Phase B first**, and the migration's
 own header — this section summarizes both, it does not replace them.

@@ -16,7 +16,7 @@ before building, not a judgment call mid-build.
 
 **Do not start a phase's screens before this doc says its backend contract is locked.** F1 has no
 backend dependency and is ready today. F2 depends on Phase A (`migrations/0025_review_daily_summary.sql`,
-`api.md` §3j) and F3 depends on Phase B (`migrations/0026_review_consistency.sql`, `api.md` §3k) —
+`api.md` §3j) and F3 depends on Phase B (`migrations/0027_review_consistency.sql`, `api.md` §3k) —
 both contract-locked as of 2026-09-13, both ready today. F4 onward are **not** ready yet; their row
 below says so explicitly and will be updated (not silently
 assumed) when their backend phase locks.
@@ -147,7 +147,7 @@ the heatmap recoloring (F3, needs Phase B), any insight/recommendation text (F6,
 
 ## F3 — Consistency heatmap (ready now, backend Phase B locked 2026-09-13)
 
-**Depends on:** `review_consistency()` (`migrations/0026`, `api.md` §3k) — merged, tested (156/156),
+**Depends on:** `review_consistency()` (`migrations/0027`, `api.md` §3k) — merged, tested (156/156),
 typed in `web/lib/review/types.ts` (`ReviewConsistency`/`asReviewConsistency()`).
 
 **Goal:** replace `ProgressDeck`'s existing heatmap coloring (currently `heatLevel(focus_seconds)`

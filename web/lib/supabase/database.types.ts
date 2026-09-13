@@ -1213,6 +1213,10 @@ export type Database = {
           isSetofReturn: false
         }
       }
+      review_consistency: {
+        Args: { p_end: string; p_start: string }
+        Returns: Json
+      }
       review_daily_summary: { Args: { p_date?: string }; Returns: Json }
       save_weekly_plan: {
         Args: {
