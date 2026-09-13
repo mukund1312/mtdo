@@ -243,7 +243,7 @@ begin
   perform t.eq('8b ...a real empty day, not user B''s', (v_out->'days'->0)->>'effort_score', '0');
 end $test$;
 
--- ===== 0027 regression: same session_focus_seconds() fix, range grain ======
+-- ===== 0030 regression: same session_focus_seconds() fix, range grain ======
 do $test$
 declare
   v_uid uuid := t.mkuser('consist_pause_fix');

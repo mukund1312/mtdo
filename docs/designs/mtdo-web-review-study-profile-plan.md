@@ -206,7 +206,7 @@ suite: 188/188.
 focus-seconds cap instead of calling `session_focus_seconds()` (0023) — which subtracts
 `total_paused_s` before capping — so a paused session's full wall-clock time was counted toward
 Focus/Effort in production. Caught because Phase C also needed that function and would have
-propagated the same mistake a third time. Fixed in `migrations/0027`, with regression assertions
+propagated the same mistake a third time. Fixed in `migrations/0030`, with regression assertions
 using a genuinely-paused session added to both existing test files (see `api.md` §3j/§3k for the
 full note).
 

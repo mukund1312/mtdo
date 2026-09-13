@@ -9,6 +9,41 @@ Add each session's PROGRESS.md entry to the same branch as the code it describes
 
 ---
 
+## [backend] 2026-09-13 (PR pending) — a second migration-number collision at 0027
+
+Same class of problem as the earlier `0026` collision (PR #181), same fix. The parallel Review/
+Study Profile effort kept shipping while its own `0026_review_consistency.sql` was mid-flight
+being renumbered to `0027` here -- its NEXT migration landed on `main` also numbered `0027`
+(`0027_review_focus_uses_session_focus_seconds.sql`, a real bug fix: `review_daily_summary()` and
+`review_consistency()` had both re-spelled the focus-seconds formula instead of calling
+`session_focus_seconds()` (0023), so any session with a real pause over-counted its wall-clock
+time toward Focus/Effort). Caught the same way: `supabase migration list` showing two rows both
+`"local":"0027"`, one applied remotely (mine), one not.
+
+**This one needed an actual dependency check before renumbering, unlike the first collision** --
+the colliding file *replaces* `review_daily_summary()`/`review_consistency()`'s function bodies,
+and two more migrations (`0028_review_time_patterns.sql`, `0029_review_momentum.sql`, Phase C,
+already on `main`) landed after it. Read both: `0028` calls `session_focus_seconds()` directly
+itself (self-contained, doesn't depend on the fix having run), `0029` doesn't reference it at all,
+and the fix file itself never references either of their functions -- no real ordering dependency
+either way. Safe to move it to the *end* of the sequence rather than renumber `0028`/`0029` too.
+
+**Fix:** renamed to `0030_review_focus_uses_session_focus_seconds.sql`. Updated eight real
+references across the migration's own two `comment on function` strings, two design docs, two
+spots in `api.md`, and two SQL test-suite comments (`17_review_daily_summary.sql`,
+`18_review_consistency.sql`) -- left every legitimate `migrations/0027` reference to
+`review_consistency()` itself untouched, only fixed the ones about this specific bug-fix
+migration. Applied `0028`-`0030` to the linked project via `supabase db push`, regenerated types,
+and ran the full local SQL suite -- including the new pause-time regression assertions this fix
+itself added to both `17_review_daily_summary.sql` and `18_review_consistency.sql` -- all pass
+unchanged under the new number.
+
+**Files changed:** `supabase/migrations/0030_review_focus_uses_session_focus_seconds.sql` (renamed
+from `0027_...`), `web/lib/supabase/database.types.ts` (regenerated), and the eight doc/comment
+references above.
+
+---
+
 ## [backend] 2026-09-13 (PR pending) — fix a real migration-number collision at 0026
 
 Two different, independently-merged PRs both claimed migration number `0026`: this session's own
