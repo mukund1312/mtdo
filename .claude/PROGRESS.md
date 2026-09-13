@@ -9,6 +9,59 @@ Add each session's PROGRESS.md entry to the same branch as the code it describes
 
 ---
 
+## [frontend] 2026-09-13 (PR pending) — Spotify music control center Phase 1, PR 2: playlist browse + play
+
+Second of three PRs (plan: `~/.claude/plans/adaptive-sleeping-turing.md`). Builds the Listen
+deck UI on top of PR #172's backend routes: column 2 of the Spotify panel goes from a bare
+"waiting for playback" blocker to a real playlist browser -- list playlists, drill into one's
+tracks, click a track to play it. Stays entirely in Signal Deck's existing visual idiom (reuses
+`.a02-listen-tracks`/`.a02-listen-library-heading` markup and classes) per the plan's decision,
+no new component styles.
+
+**Two real bugs caught and fixed before this shipped, not after:**
+1. **Backend response ambiguity.** `player/play/route.ts`'s 409 for "no active device" (added in
+   PR #172) carried neither `connected` nor `reconnectRequired`, and the new client-side result
+   classifier's generic 409 handling would have silently misread that as "you've never connected
+   Spotify" -- a materially wrong, confusing message for someone who IS connected but just has no
+   device active anywhere. Fixed by adding `noActiveDevice: true` to that specific response and
+   checking for it first, client-side, before falling through to the generic classifier.
+2. **A track-identity mismatch that would have silently broken "now playing" highlighting.**
+   `normalizeSpotifyTrack()` (already-shipped code) stores the *bare* Spotify id on
+   `currentTrack.id` (`track.id ?? track.uri`, and the SDK's own state object supplies `id`), but
+   the Web API's playlist-tracks response only has full URIs (`spotify:track:<id>`). A direct
+   `===` comparison between the two would almost never match, even for the track actually
+   playing. Fixed with a `spotifyIdFromUri()` helper that extracts the bare id before comparing.
+
+**Also caught, cosmetic but real:** `.a02-listen-tracks li button` is a fixed 5-column CSS grid
+(`20px 31px minmax(0,1fr) 38px 17px`). The first playlist-row markup written had only 3 children
+(art/name/arrow) -- it would have rendered visibly misaligned, squeezed into the grid's first
+three narrow columns instead of using all five. Fixed by giving playlist rows the same five-slot
+shape (numbered index, art, name+count, an empty `<time>` for grid alignment, arrow) as track
+rows, rather than inventing a new layout.
+
+**Deliberately simplified vs. the original plan:** skipped the proactive client-side
+`hasRequiredScopes()` check (detecting an under-scoped stored connection before a 403 happens) --
+`config.ts` imports `lib/crypto/token-envelope.ts`, which pulls in Node's `Buffer`/`crypto`, unsafe
+to bundle into a client component. The already-working reactive path (a 403 from any of the new
+routes throws `requiresReconnect: true`, which `listen-state.tsx`'s `handleSpotifyApiFailure`
+already routes into the existing `spotifyReconnectRequired` UI) covers the same real scenario
+without that risk. Worth revisiting with a client-safe scope list if the proactive version turns
+out to matter in practice.
+
+**New files:** `web/app/(marketing)/architecture-02/spotify-playlists.ts` (client fetch wrappers
+for playlists/tracks/play, same discriminated-union-result pattern as `spotify-token.ts`).
+**Changed:** `listen-state.tsx` (playlist/track/play state and fetchers), `listen-deck.tsx`
+(`SpotifyPlaylistBrowser`/`SpotifyTrackBrowser`/`SpotifyTrackList` components), `player/play/
+route.ts` (the `noActiveDevice` field), `e2e/spotify-listen.spec.ts` (new mocked test covering
+list/drill-down/play).
+
+**Verification:** `npm run typecheck` clean, 358/358 unit tests, and
+`npx playwright test e2e/spotify-listen.spec.ts` 5/5 -- verified with the Spotify vars temporarily
+stripped from `.env.local` again (this machine still has real ones from earlier manual testing,
+same collision documented in PR #172's own entry).
+
+---
+
 ## [backend] 2026-09-13 (PR pending) — Spotify music control center Phase 1, PR 1: playlist/queue/device backend
 
 First of three PRs (plan: `~/.claude/plans/adaptive-sleeping-turing.md`) turning the Listen

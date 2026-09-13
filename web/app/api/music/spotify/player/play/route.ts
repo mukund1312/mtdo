@@ -92,9 +92,17 @@ export async function POST(request: Request) {
     }
     // A 404 from Spotify here commonly means "no active device" -- surfaced
     // as-is rather than folded into a generic 502, so the frontend can show
-    // "pick a device first" instead of a vague failure.
+    // "pick a device first" instead of a vague failure. `noActiveDevice: true`
+    // is the field that distinguishes this from the not-connected/reconnect-
+    // required 409s above -- without it, a client checking only `connected`/
+    // `reconnectRequired` (both absent here) would misclassify this as
+    // "never connected", which is a wrong and confusing message for someone
+    // whose Spotify IS connected but just has nothing playing anywhere.
     if (err instanceof SpotifyError && err.status === 404) {
-      return json({ error: "No active Spotify device. Open Spotify somewhere, or pick a device first." }, 409);
+      return json(
+        { error: "No active Spotify device. Open Spotify somewhere, or pick a device first.", noActiveDevice: true },
+        409,
+      );
     }
     console.error("[music/spotify/player/play] couldn't start playback:", err);
     return json({ error: "Spotify couldn't start playback. Try again in a moment." }, 502);

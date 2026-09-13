@@ -13,7 +13,18 @@ import {
   providerById,
 } from "./listen-data";
 import { fetchSpotifyAccessToken } from "./spotify-token";
+import {
+  fetchSpotifyPlaylists as fetchSpotifyPlaylistsRequest,
+  fetchSpotifyPlaylistTracks,
+  postSpotifyPlay,
+  type SpotifyPlaylistSummary,
+  type SpotifyTrackSummary,
+} from "./spotify-playlists";
 import { loadSpotifyPlaybackSDK, Spotify as SpotifyTypes } from "./spotify-sdk";
+
+export type { SpotifyPlaylistSummary, SpotifyTrackSummary } from "./spotify-playlists";
+
+export type SpotifyResourceState = "idle" | "loading" | "ready" | "error";
 
 type RadioPlayback = "idle" | "loading" | "playing" | "paused" | "blocked" | "error";
 
@@ -100,6 +111,30 @@ type ListenState = {
   spotifyWaitingForTransfer: boolean;
   /** The six-month authorization is genuinely dead; only a fresh Connect fixes this. */
   spotifyReconnectRequired: boolean;
+
+  // Real Spotify (Phase 1 of the music control center, PR #172's routes):
+  // playlist browse + play. `fetchSpotifyPlaylists` is idempotent and safe
+  // to call repeatedly (e.g. a "Try again" button) -- it always replaces the
+  // list rather than appending.
+  spotifyPlaylists: SpotifyPlaylistSummary[];
+  spotifyPlaylistsState: SpotifyResourceState;
+  fetchSpotifyPlaylists: () => Promise<void>;
+  /** The playlist currently drilled into, or null when showing the top-level
+   * list. Kept as the full object (not just an id) so the track-list header
+   * can show its name without a second lookup. */
+  selectedSpotifyPlaylist: SpotifyPlaylistSummary | null;
+  spotifyPlaylistTracks: SpotifyTrackSummary[];
+  spotifyPlaylistTracksState: SpotifyResourceState;
+  openSpotifyPlaylist: (playlist: SpotifyPlaylistSummary) => void;
+  closeSpotifyPlaylist: () => void;
+  /** Fires POST /player/play for one track within its playlist's context.
+   * The SDK's own `player_state_changed` listener (already wired above)
+   * picks up the resulting state change and updates `currentTrack` -- this
+   * never sets it directly, so there is exactly one source of truth for
+   * "what's actually playing." */
+  playSpotifyTrack: (track: SpotifyTrackSummary, contextUri: string) => Promise<void>;
+  spotifyPlayRequestState: "idle" | "requesting";
+  spotifyPlayError: string | null;
 };
 
 const ListenContext = createContext<ListenState | null>(null);
@@ -145,6 +180,15 @@ export function SignalDeckListenProvider({ children }: { children: ReactNode }) 
   // cache staleness the token route already refreshes transparently.
   const [spotifyReconnectRequired, setSpotifyReconnectRequired] = useState(false);
   const spotifyPlayerRef = useRef<SpotifyTypes.Player | null>(null);
+
+  // --- Real Spotify: playlist browse + play (Phase 1 control center) -----
+  const [spotifyPlaylists, setSpotifyPlaylists] = useState<SpotifyPlaylistSummary[]>([]);
+  const [spotifyPlaylistsState, setSpotifyPlaylistsState] = useState<SpotifyResourceState>("idle");
+  const [selectedSpotifyPlaylist, setSelectedSpotifyPlaylist] = useState<SpotifyPlaylistSummary | null>(null);
+  const [spotifyPlaylistTracks, setSpotifyPlaylistTracks] = useState<SpotifyTrackSummary[]>([]);
+  const [spotifyPlaylistTracksState, setSpotifyPlaylistTracksState] = useState<SpotifyResourceState>("idle");
+  const [spotifyPlayRequestState, setSpotifyPlayRequestState] = useState<"idle" | "requesting">("idle");
+  const [spotifyPlayError, setSpotifyPlayError] = useState<string | null>(null);
 
   const queue = useMemo(() => providerById(activeProviderId).tracks, [activeProviderId]);
   // A real Spotify track never appears in any provider's mock `tracks` array,
@@ -345,6 +389,11 @@ export function SignalDeckListenProvider({ children }: { children: ReactNode }) 
       setMusicPlaying((playing) => (currentTrack?.isReal ? false : playing));
       setPosition((pos) => (currentTrack?.isReal ? 0 : pos));
       setSpotifyReconnectRequired(false);
+      setSpotifyPlaylists([]);
+      setSpotifyPlaylistsState("idle");
+      setSelectedSpotifyPlaylist(null);
+      setSpotifyPlaylistTracks([]);
+      setSpotifyPlaylistTracksState("idle");
       await refreshSpotifyStatus();
     } catch (err) {
       console.error("[listen] failed to disconnect Spotify:", err);
@@ -353,6 +402,86 @@ export function SignalDeckListenProvider({ children }: { children: ReactNode }) 
       setSpotifyDisconnecting(false);
     }
   }, [currentTrack, refreshSpotifyStatus]);
+
+  // A 401/409 result from any of these three calls means the SAME thing the
+  // token route's own 401/409 branches already mean (no-session/not-
+  // connected/reconnect-required) -- surfaced through the existing
+  // spotifyReconnectRequired flag rather than inventing a second one, so
+  // SpotifyPanel's already-built reconnect UI just works for these too.
+  const handleSpotifyApiFailure = useCallback((kind: string) => {
+    if (kind === "reconnect-required") {
+      setSpotifyReconnectRequired(true);
+      void refreshSpotifyStatus();
+    } else if (kind === "not-connected") {
+      void refreshSpotifyStatus();
+    }
+  }, [refreshSpotifyStatus]);
+
+  const fetchSpotifyPlaylists = useCallback(async () => {
+    setSpotifyPlaylistsState("loading");
+    const result = await fetchSpotifyPlaylistsRequest();
+    if (!result.ok) {
+      console.error("[listen] failed to load Spotify playlists:", result.kind);
+      handleSpotifyApiFailure(result.kind);
+      setSpotifyPlaylistsState("error");
+      return;
+    }
+    setSpotifyPlaylists(result.items);
+    setSpotifyPlaylistsState("ready");
+  }, [handleSpotifyApiFailure]);
+
+  // Fetches once, automatically, the moment a real connection is confirmed --
+  // the playlist browser is the default view of a connected account, not
+  // something the user has to separately ask to load. Resets to idle on
+  // disconnect (handled in disconnectSpotify above) so reconnecting fetches
+  // fresh rather than showing a stale list.
+  useEffect(() => {
+    if (!spotifyStatus?.connected) return;
+    if (spotifyPlaylistsState !== "idle") return;
+    const timer = window.setTimeout(() => void fetchSpotifyPlaylists(), 0);
+    return () => window.clearTimeout(timer);
+  }, [spotifyStatus?.connected, spotifyPlaylistsState, fetchSpotifyPlaylists]);
+
+  const openSpotifyPlaylist = useCallback((playlist: SpotifyPlaylistSummary) => {
+    setSelectedSpotifyPlaylist(playlist);
+    setSpotifyPlaylistTracks([]);
+    setSpotifyPlaylistTracksState("loading");
+    void fetchSpotifyPlaylistTracks(playlist.id).then((result) => {
+      if (!result.ok) {
+        console.error("[listen] failed to load playlist tracks:", result.kind);
+        handleSpotifyApiFailure(result.kind);
+        setSpotifyPlaylistTracksState("error");
+        return;
+      }
+      setSpotifyPlaylistTracks(result.items);
+      setSpotifyPlaylistTracksState("ready");
+    });
+  }, [handleSpotifyApiFailure]);
+
+  const closeSpotifyPlaylist = useCallback(() => {
+    setSelectedSpotifyPlaylist(null);
+    setSpotifyPlaylistTracks([]);
+    setSpotifyPlaylistTracksState("idle");
+  }, []);
+
+  const playSpotifyTrack = useCallback(async (track: SpotifyTrackSummary, contextUri: string) => {
+    setSpotifyPlayRequestState("requesting");
+    setSpotifyPlayError(null);
+    const result = await postSpotifyPlay({ contextUri, offset: { uri: track.uri } });
+    setSpotifyPlayRequestState("idle");
+    if (result.ok) return;
+    if (result.kind === "reconnect-required" || result.kind === "not-connected") {
+      handleSpotifyApiFailure(result.kind);
+      return;
+    }
+    // "No active device" is the common, expected case until PR 3 adds device
+    // transfer -- an honest, specific message rather than a generic failure.
+    setSpotifyPlayError(
+      result.kind === "no-active-device"
+        ? "No active Spotify device. Open Spotify somewhere and press play once, or pick \"mtdo\" from its device menu, then try again."
+        : "Couldn't start playback. Try again in a moment.",
+    );
+  }, [handleSpotifyApiFailure]);
 
   // --- Real Spotify: the Web Playback SDK ------------------------------
   // Only initializes once the connection is real (`connected`) and
@@ -701,7 +830,18 @@ export function SignalDeckListenProvider({ children }: { children: ReactNode }) 
     spotifyPlayerError,
     spotifyWaitingForTransfer,
     spotifyReconnectRequired,
-  }), [activeProviderId, connect, connections, currentTrack, currentTrackProviderId, disconnect, disconnectSpotify, favoriteStations, mode, musicPlaying, nextTrack, pauseRadio, position, previousTrack, queue, radioError, radioPlayback, refreshSpotifyStatus, repeat, seekOrSetPosition, selectedStation, selectStation, setTrack, shuffle, spotifyConnectHref, spotifyDisconnectError, spotifyDisconnecting, spotifyPlayerError, spotifyPlayerState, spotifyReconnectRequired, spotifyStatus, spotifyStatusState, spotifyWaitingForTransfer, stationAtOffset, toggleMusic, toggleRadio, volume]);
+    spotifyPlaylists,
+    spotifyPlaylistsState,
+    fetchSpotifyPlaylists,
+    selectedSpotifyPlaylist,
+    spotifyPlaylistTracks,
+    spotifyPlaylistTracksState,
+    openSpotifyPlaylist,
+    closeSpotifyPlaylist,
+    playSpotifyTrack,
+    spotifyPlayRequestState,
+    spotifyPlayError,
+  }), [activeProviderId, closeSpotifyPlaylist, connect, connections, currentTrack, currentTrackProviderId, disconnect, disconnectSpotify, favoriteStations, fetchSpotifyPlaylists, mode, musicPlaying, nextTrack, openSpotifyPlaylist, pauseRadio, playSpotifyTrack, position, previousTrack, queue, radioError, radioPlayback, refreshSpotifyStatus, repeat, seekOrSetPosition, selectedSpotifyPlaylist, selectedStation, selectStation, setTrack, shuffle, spotifyConnectHref, spotifyDisconnectError, spotifyDisconnecting, spotifyPlayError, spotifyPlayerError, spotifyPlayerState, spotifyPlayRequestState, spotifyPlaylists, spotifyPlaylistsState, spotifyPlaylistTracks, spotifyPlaylistTracksState, spotifyReconnectRequired, spotifyStatus, spotifyStatusState, spotifyWaitingForTransfer, stationAtOffset, toggleMusic, toggleRadio, volume]);
 
   return <ListenContext.Provider value={value}>{children}<audio ref={radioAudioRef} data-testid="signal-deck-radio-audio" preload="none" /></ListenContext.Provider>;
 }
