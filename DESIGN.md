@@ -132,6 +132,31 @@ No gradient buttons. No purple. The ember bloom is the *only* place `--ember-dee
 Replaces the terminal app's GitHub green. Keep the grid DNA (dense, honest, unforgiving); change
 only the ramp.
 
+### Review page ring tokens (scoped, added 2026-09-13)
+
+Three additional tokens, used **only** by the Review page's Focus/Execute/Progress rings, their
+heatmap coloring, and their hover detail panels — never buttons, nav, or any other screen. See
+`docs/designs/review-visual-spec.md` for the full page spec.
+
+```css
+:root{
+  --review-focus:    #FF4F78;   /* coral/pink — Focus ring: concentrated effort */
+  --review-execute:  #C8FF45;   /* acid lime — Execute ring: commitments fulfilled */
+  --review-progress: #3B82F6;   /* blue — Progress ring: movement toward the goal */
+}
+```
+
+**Not purple, deliberately.** The reference mock this palette is drawn from used violet for
+Progress; the existing "no purple" rule above stays intact with zero exceptions, so Progress uses
+a distinct blue instead — far enough from `--accent`'s cyan to read as its own signal on the same
+page.
+
+`--accent` (cyan) keeps its existing whole-product meaning and does double duty on the Review page
+for **observed behavioral data** (time-of-day charts, session-length bars, "actual" in a
+plan-vs-reality comparison) — not a new token, the same one, doing a job the reference mock had
+assigned to cyan. `--live` (ember) is not reused for any ring or chart — its one meaning stays
+"this is happening right now."
+
 ### Light mode
 
 **Dark-only for v1.** If added later, do not invert: redesign surfaces from scratch, drop accent
