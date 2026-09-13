@@ -245,15 +245,23 @@ it INSUFFICIENT DATA, don't fake it" rule this whole plan is built around.
 
 **Janhwi can start F5 (Study Profile panel) against this contract now.**
 
-### Phase E — Insights (structured, not prose)
+### Phase E — Insights (structured, not prose) — **CONTRACT LOCKED, 2026-09-14**
 
-- `review_insights()`: deterministic structured findings (`{type, severity, evidence}` — e.g.
-  `planning_overcommitment`, `subject_avoidance`) computed from Study Profile fields crossing
-  documented thresholds (same pattern `web/lib/planning/thresholds.ts` + `classify.ts` already use
-  for the weekly engine — reuse that module split, don't invent a second rules-engine shape).
-- No AI, no prose generation, in this phase — matches `decisions.md` 2026-09-11's standing decision
-  that the rules engine stays deterministic and `aiService.reviewWeek()` stays unbuilt until asked
-  for explicitly.
+`web/lib/review/insight-thresholds.ts` (every constant, reasoning attached) +
+`web/lib/review/insights.ts` (`buildReviewInsights(profile: StudyProfile): Insight[]`, pure, no
+I/O). **Not a new SQL RPC** — same architectural split the weekly engine already established
+(`web/lib/planning/thresholds.ts`/`classify.ts`): raw/derived metrics in Postgres, business-rule
+evaluation over already-computed numbers in TypeScript. `study_profile()` already *is* the composed
+data; this is pure functions over its output, nothing new queried or computed twice.
+`docs/architecture/api.md` §3o, `web/lib/review/insights.test.ts` (18 assertions, boundary-tested
+at every threshold — same convention as `classify.test.ts`). Full web suite: 386/386.
+
+Six insight types shipped: `planning_overcommitment`, `subject_avoidance`, `strong_subject`,
+`ideal_session_length`, `best_study_window`, `consistency_dip` — every one gated on the
+corresponding `study_profile()` field having cleared its own confidence threshold first. No AI
+anywhere in this file, matching `decisions.md` 2026-09-11's standing rule.
+
+**Janhwi can start F6 (Insights card) against this contract now.**
 
 ### Phase F (optional, only if asked for later) — Interventions with measured outcomes
 
