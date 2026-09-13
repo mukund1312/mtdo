@@ -15,16 +15,10 @@ import { buildAuthUrl } from "@/lib/calendar/google";
 import { safeNextPath } from "@/lib/safe-redirect";
 
 export async function GET(request: NextRequest) {
-  const supabase = await createClient();
-  const {
-    data: { user },
-    error: userError,
-  } = await supabase.auth.getUser();
-  if (userError || !user) {
-    return Response.json({ error: "No authenticated session." }, { status: 401 });
-  }
-
   const resolved = resolveCalendarConfig(new URL(request.url).origin);
+  // Keep the unavailable-integration response useful on a first anonymous
+  // visit. OAuth is never started without configuration, so no account data
+  // is exposed by returning this server capability before auth.
   if (!resolved.configured) {
     return Response.json(
       {
@@ -34,6 +28,15 @@ export async function GET(request: NextRequest) {
       },
       { status: 503 },
     );
+  }
+
+  const supabase = await createClient();
+  const {
+    data: { user },
+    error: userError,
+  } = await supabase.auth.getUser();
+  if (userError || !user) {
+    return Response.json({ error: "No authenticated session." }, { status: 401 });
   }
 
   // CSRF for the OAuth round trip: a random value echoed back by Google in

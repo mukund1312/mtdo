@@ -57,11 +57,19 @@ afterEach(() => {
 });
 
 describe("GET /api/calendar/status", () => {
-  it("401s without a session -- `missing` is deployment detail, not public information", async () => {
+  it("reports an unavailable integration before anonymous auth has settled", async () => {
+    mockGetUser.mockResolvedValue({ data: { user: null }, error: null });
+    const response = await GET(REQUEST);
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({ configured: false, connected: false });
+    expect(mockCreateServiceClient).not.toHaveBeenCalled();
+  });
+
+  it("still 401s without a session once Calendar is configured", async () => {
+    configureAll();
     mockGetUser.mockResolvedValue({ data: { user: null }, error: null });
     const response = await GET(REQUEST);
     expect(response.status).toBe(401);
-    expect(mockCreateServiceClient).not.toHaveBeenCalled();
   });
 
   it("reports 'not configured' as a clean 200 naming the missing variables", async () => {
