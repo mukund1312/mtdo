@@ -162,7 +162,7 @@ matching the `asWeeklyPerformance()` precedent.
 
 ### Phase B — Effort Score + Consistency heatmap data — **CONTRACT LOCKED, 2026-09-13**
 
-`migrations/0026_review_consistency.sql`, `docs/architecture/api.md` §3k, `web/lib/review/types.ts`
+`migrations/0027_review_consistency.sql`, `docs/architecture/api.md` §3k, `web/lib/review/types.ts`
 (`ReviewConsistency` + `asReviewConsistency()`), `supabase/tests/18_review_consistency.sql` (25
 assertions: a normal week, a genuinely-empty day inside an active plan (real 0, not null), no
 active plan at all, a goal switch — proving Progress does not misattribute a retired plan's week

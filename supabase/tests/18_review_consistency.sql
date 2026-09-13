@@ -3,7 +3,7 @@
 set client_min_messages = notice;
 set timezone = 'UTC';
 
--- migrations/0026: review_consistency() -- the Effort Score behind the
+-- migrations/0027: review_consistency() -- the Effort Score behind the
 -- Consistency heatmap (docs/designs/mtdo-web-review-study-profile-plan.md
 -- sec4 Phase B, docs/architecture/api.md sec3k).
 

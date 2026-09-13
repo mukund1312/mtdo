@@ -1373,7 +1373,7 @@ absent, never `0`** — the same rule §3f's whole engine turns on, applied here
   per day, by a human looking at the Review page, with no freshness argument for a cron-maintained
   table.
 
-## 3k. `review_consistency()` — the Effort Score behind the Consistency heatmap (Phase B, migrations/0026)
+## 3k. `review_consistency()` — the Effort Score behind the Consistency heatmap (Phase B, migrations/0027)
 
 **Read `docs/designs/mtdo-web-review-study-profile-plan.md` §4 Phase B first**, and the migration's
 own header — this section summarizes both, it does not replace them.
