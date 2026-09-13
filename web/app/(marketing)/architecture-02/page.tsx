@@ -10,7 +10,7 @@ import { ListenDeck } from "./listen-deck";
 import { useSignalDeckListen } from "./listen-state";
 import { fetchProfileTimezone } from "./profile-timezone";
 import { formatDuration, utcDateRange, utcToday } from "./product-data";
-import { ProgressDeck } from "./progress-deck";
+import { ReviewDeck } from "./review-deck";
 import { RadialMenu } from "./radial-menu";
 import { RadialNavigationWheel } from "./radial-navigation-wheel";
 import { useDockStyle } from "./dock-preference";
@@ -192,7 +192,7 @@ function ArchitectureTwoDeck() {
       {deck === "work" && <TodayDeck onOpenBlock={openBlock} />}
       {deck === "goals" && <GoalsDeck />}
       {deck === "calendar" && <CalendarDeck />}
-      {deck === "review" && <ProgressDeck />}
+      {deck === "review" && <ReviewDeck />}
       {deck === "listen" && <ListenDeck />}
 
       <AudioTransport onOpenListen={() => setDeck("listen")} />
