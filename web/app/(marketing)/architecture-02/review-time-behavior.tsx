@@ -27,8 +27,8 @@ import { utcDateRange, utcToday } from "./product-data";
 // it does not touch either of those existing call sites.
 
 const WINDOW_DAYS = 42;
-const WEEKDAY_NAMES = ["", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
-const DURATION_LABELS: Record<string, string> = {
+export const WEEKDAY_NAMES = ["", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
+export const DURATION_LABELS: Record<string, string> = {
   "<15m": "< 15m",
   "15-30m": "15–30m",
   "30-45m": "30–45m",
@@ -37,7 +37,7 @@ const DURATION_LABELS: Record<string, string> = {
   "90m+": "90m+",
 };
 
-function formatHour(hour: number): string {
+export function formatHour(hour: number): string {
   return `${String(hour).padStart(2, "0")}:00`;
 }
 

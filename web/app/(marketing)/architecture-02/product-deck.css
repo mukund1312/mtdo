@@ -110,3 +110,28 @@
 .a02-checkin-banner p{margin:0;color:var(--ink);font-size:12px}
 .a02-checkin-banner button{flex-shrink:0;border:1px solid var(--aqua);border-radius:5px;background:rgba(87,231,255,.08);color:var(--aqua);padding:9px 13px;font-size:11px}
 .a02-checkin-done{margin:0 0 16px;border-left:2px solid var(--acid);padding:9px 11px;background:rgba(215,255,82,.08);color:var(--ink);font-size:12px}
+
+/* Study Profile panel (F5). */
+.a02-study-profile { margin:22px clamp(26px,7vw,112px) 0; padding:22px; border:1px solid var(--line); border-radius:11px; background:rgba(15,18,49,.72); }
+.a02-study-profile-empty { margin:22px clamp(26px,7vw,112px) 0; padding:24px; border:1px solid var(--line); border-radius:11px; background:rgba(15,18,49,.72); color:var(--dim); font-size:13px; max-width:420px; }
+.a02-study-profile header { display:flex; justify-content:space-between; align-items:baseline; font:10px "DM Mono",monospace; color:var(--dim); letter-spacing:.08em; }
+.a02-trait-grid { display:grid; grid-template-columns:repeat(3,1fr); gap:16px; margin-top:20px; }
+.a02-trait { display:flex; flex-direction:column; gap:4px; }
+.a02-trait-label { color:var(--dim); font:9px "DM Mono",monospace; letter-spacing:.06em; text-transform:uppercase; }
+.a02-trait-value { font:900 22px/1 "Archivo Black",Arial,sans-serif; letter-spacing:-.04em; }
+.a02-trait-empty { margin:2px 0 0; color:var(--dim); font-size:11px; }
+.a02-trait-empty--good { color:var(--acid); }
+.a02-confidence { font:9px "DM Mono",monospace; font-style:normal; color:var(--dim); letter-spacing:.04em; }
+.a02-confidence--high { color:var(--acid); }
+.a02-confidence--medium { color:var(--aqua); }
+.a02-confidence--low,.a02-confidence--insufficient_data { color:var(--dim); }
+.a02-subject-grid { display:grid; grid-template-columns:repeat(3,1fr); gap:13px; margin-top:24px; padding-top:20px; border-top:1px solid var(--line); }
+.a02-subject-card { display:flex; flex-direction:column; gap:4px; padding:14px; border:1px solid var(--line); border-radius:8px; background:rgba(255,255,255,.02); }
+.a02-subject-card > span { color:var(--dim); font:9px "DM Mono",monospace; letter-spacing:.06em; text-transform:uppercase; }
+.a02-subject-card b { font-size:16px; letter-spacing:-.02em; }
+.a02-subject-card p { margin:0; color:var(--dim); font-size:11px; }
+.a02-subject-card--strong b { color:var(--acid); }
+.a02-subject-card--weak b { color:var(--coral); }
+.a02-subject-card--avoided b { color:var(--cobalt); }
+@media(max-width:900px){.a02-study-profile,.a02-study-profile-empty{margin:22px 18px 0}.a02-trait-grid,.a02-subject-grid{grid-template-columns:1fr 1fr}}
+@media(max-width:560px){.a02-trait-grid,.a02-subject-grid{grid-template-columns:1fr}}
