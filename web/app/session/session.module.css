@@ -221,9 +221,55 @@
 
 .focusLayout {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 252px;
+  grid-template-columns: minmax(0, 1fr) 0;
   gap: 14px;
-  align-items: stretch;
+  align-items: start;
+  position: relative;
+  overflow: hidden;
+  transition: grid-template-columns 260ms var(--ease-spring), gap 260ms var(--ease-spring);
+}
+
+.coachOpen {
+  grid-template-columns: minmax(0, 1fr) 252px;
+}
+
+.coachToggle {
+  position: absolute;
+  z-index: 2;
+  top: 13px;
+  right: 13px;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 30px;
+  padding: 0 10px;
+  border: 1px solid rgba(87, 231, 255, .34);
+  border-radius: 5px;
+  color: var(--aqua);
+  background: rgba(9, 10, 32, .38);
+  font: 9px "DM Mono", monospace;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition: color 180ms ease, background 180ms ease, border-color 180ms ease, transform 180ms var(--ease-spring);
+}
+
+.coachToggle:hover {
+  border-color: var(--aqua);
+  background: rgba(87, 231, 255, .1);
+  color: var(--ink);
+  transform: translateY(-1px);
+}
+
+.coachToggle:focus-visible {
+  outline: 2px solid var(--aqua);
+  outline-offset: 3px;
+}
+
+/* When the drawer is open, keep its close control on the task side of the
+   seam rather than on top of the drawer's own “Your Coach” heading. */
+.coachOpen .coachToggle {
+  right: calc(252px + 13px);
 }
 
 .taskPanel,
@@ -236,6 +282,7 @@
 
 .taskPanel {
   padding: clamp(26px, 4vw, 42px);
+  align-self: start;
 }
 
 .taskPanel h1 {
@@ -247,28 +294,91 @@
 .steps {
   display: grid;
   padding: 0;
-  margin: 36px 0 0;
+  margin: 12px 0 0;
   list-style: none;
   border-top: 1px solid rgba(216, 221, 255, 0.18);
 }
 
 .steps li {
+  border-bottom: 1px solid rgba(216, 221, 255, 0.18);
+}
+
+.steps button {
   display: grid;
-  grid-template-columns: 30px 1fr;
+  grid-template-columns: 30px minmax(0, 1fr) auto;
+  width: 100%;
   gap: 14px;
   padding: 16px 0;
-  border-bottom: 1px solid rgba(216, 221, 255, 0.18);
+  border: 0;
   color: #e9ebff;
+  background: transparent;
+  font: inherit;
   font-size: 14px;
   font-weight: 300;
   line-height: 1.45;
+  text-align: left;
+  cursor: pointer;
+  transition: color 180ms ease, background 180ms ease, transform 180ms var(--ease-spring);
 }
 
-.steps span {
+.steps button:hover {
+  color: var(--ink);
+}
+
+.steps button > span:first-child {
   color: #8e93bd;
   font-size: 11px;
   font-weight: 500;
   letter-spacing: 0.08em;
+}
+
+.stepCopy { min-width: 0; }
+
+.steps small {
+  align-self: center;
+  color: #8e93bd;
+  font: 9px "DM Mono", monospace;
+  letter-spacing: .08em;
+  text-align: right;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.stepCurrent button {
+  padding-inline: 10px;
+  color: var(--ink);
+  background: rgba(215, 255, 82, .07);
+  box-shadow: inset 3px 0 var(--acid);
+}
+
+.stepCurrent button > span:first-child,
+.stepCurrent small,
+.stepComplete button > span:first-child,
+.stepComplete small { color: var(--acid); }
+
+.stepComplete button { color: var(--dim); }
+.stepNext button { color: var(--dim); }
+
+.steps button:focus-visible {
+  outline: 2px solid var(--aqua);
+  outline-offset: -2px;
+}
+
+.stepProgress {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  margin-top: 36px;
+  color: var(--dim);
+  font: 9px "DM Mono", monospace;
+  letter-spacing: .11em;
+  text-transform: uppercase;
+}
+
+.stepProgress strong {
+  color: var(--acid);
+  font: 700 11px "DM Mono", monospace;
+  letter-spacing: .08em;
 }
 
 .sessionActions {
@@ -312,9 +422,22 @@
 
 .coachRail {
   display: flex;
-  min-height: 100%;
+  width: 252px;
+  align-self: start;
   padding: 22px;
   flex-direction: column;
+  box-sizing: border-box;
+  opacity: 0;
+  transform: translateX(18px);
+  visibility: hidden;
+  transition: opacity 180ms ease, transform 260ms var(--ease-spring), visibility 0s linear 260ms;
+}
+
+.coachOpen .coachRail {
+  opacity: 1;
+  transform: translateX(0);
+  visibility: visible;
+  transition-delay: 60ms, 0s, 0s;
 }
 
 .outcomePanel {
@@ -453,10 +576,26 @@
 
   .focusLayout {
     grid-template-columns: 1fr;
+    overflow: visible;
   }
 
   .coachRail {
+    display: none;
+    width: auto;
     min-height: 310px;
+  }
+
+  .coachOpen {
+    grid-template-columns: 1fr;
+  }
+
+  .coachOpen .coachRail {
+    display: flex;
+    margin-top: 0;
+  }
+
+  .coachOpen .coachToggle {
+    right: 13px;
   }
 
   .askButton {
@@ -491,20 +630,29 @@
 }
 :global(html[data-a02-theme="light"]) .taskPanel h1,
 :global(html[data-a02-theme="light"]) .coachRail h2,
-:global(html[data-a02-theme="light"]) .steps li,
+:global(html[data-a02-theme="light"]) .steps button,
 :global(html[data-a02-theme="light"]) .coachPrompt p { color:#17172a; }
 :global(html[data-a02-theme="light"]) .taskPanel > p:not(.cardEyebrow),
 :global(html[data-a02-theme="light"]) .coachCopy,
-:global(html[data-a02-theme="light"]) .steps span,
+:global(html[data-a02-theme="light"]) .steps button > span:first-child,
 :global(html[data-a02-theme="light"]) .coachPrompt span { color:#66667d; }
 :global(html[data-a02-theme="light"]) .cardEyebrow,
 :global(html[data-a02-theme="light"]) .coachMark { color:#008ca7; }
 :global(html[data-a02-theme="light"]) .steps,
 :global(html[data-a02-theme="light"]) .steps li,
 :global(html[data-a02-theme="light"]) .coachPrompt { border-color:#d8d4ee; }
+:global(html[data-a02-theme="light"]) .stepCurrent button { background:#f2f9d9; }
+:global(html[data-a02-theme="light"]) .stepCurrent button > span:first-child,
+:global(html[data-a02-theme="light"]) .stepCurrent small,
+:global(html[data-a02-theme="light"]) .stepComplete button > span:first-child,
+:global(html[data-a02-theme="light"]) .stepComplete small,
+:global(html[data-a02-theme="light"]) .stepProgress strong { color:#668d00; }
 :global(html[data-a02-theme="light"]) .pauseButton { background:#e2f8fb; border-color:#8ed8e5; color:#07586a; }
 :global(html[data-a02-theme="light"]) .abandonButton { border-color:#c4bef4; color:#585775; }
 :global(html[data-a02-theme="light"]) .abandonButton:hover:not(:disabled) { color:#17172a; border-color:#008ca7; background:#e2f8fb; }
 :global(html[data-a02-theme="light"]) .extensionDialog { background:rgba(245,245,250,.66); }
 :global(html[data-a02-theme="light"]) .extensionDialog > div { border-color:#c4bef4; background:linear-gradient(145deg,#fff,#e9e7ff); box-shadow:0 24px 80px rgba(43,39,95,.22); }
+:global(html[data-a02-theme="light"]) .coachToggle { border-color:#8ed8e5; background:rgba(255,255,255,.82); color:#07586a; }
+:global(html[data-a02-theme="light"]) .coachToggle:hover { border-color:#008ca7; background:#e2f8fb; color:#17172a; }
 @media (prefers-reduced-motion:reduce){:global(html[data-a02-theme="light"]) .page,:global(html[data-a02-theme="light"]) .page :is(button,input,textarea){transition:none}}
+@media (prefers-reduced-motion:reduce){.focusLayout,.coachRail,.coachToggle{transition:none}}

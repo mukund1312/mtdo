@@ -6,7 +6,6 @@ import {
   Headphones,
   Layers3,
   LayoutPanelTop,
-  Menu,
   Settings2,
   Target,
   type LucideIcon,
@@ -255,7 +254,6 @@ export function RadialMenu({ active, variant = "fan", onDeck, onKanban, onGoals,
           setOpen(true);
         }}
       >
-        <Menu size={22} strokeWidth={2} aria-hidden="true" />
         <span>Menu</span>
       </motion.button>
     </nav>
