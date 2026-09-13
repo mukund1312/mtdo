@@ -1372,6 +1372,15 @@ absent, never `0`** — the same rule §3f's whole engine turns on, applied here
   `weekly_performance()` (`decisions.md` 2026-09-06, 2026-09-11): read a handful of times per user
   per day, by a human looking at the Review page, with no freshness argument for a cron-maintained
   table.
+- **Focus time is `session_focus_seconds()` (0023), not a re-spelled cap (fixed migrations/0027).**
+  The version that shipped in 0025 recomputed `least(elapsed, planned)` directly and forgot to
+  subtract `total_paused_s` first — 0023's own comment on that function is explicit that
+  `recompute_daily_rollups()`/`weekly_performance()`/`settle_session()` all call it and nothing
+  should re-spell the formula, and this RPC (written after 0023, in the same session as
+  `review_consistency()` below) missed it too. No fixture in `supabase/tests/17_review_daily_summary.sql`
+  used a real pause, so nothing caught it until Phase C's own build turned it up. Both functions now
+  call `session_focus_seconds()`; regression assertions with a genuinely paused session are in both
+  test files.
 
 ## 3k. `review_consistency()` — the Effort Score behind the Consistency heatmap (Phase B, migrations/0026)
 
@@ -1436,6 +1445,9 @@ scores. `level` is `least(4, floor(effort_score / 20))` — five buckets, 0–4.
 **Performance note:** Progress is computed by calling `weekly_performance()` once per **distinct**
 ISO week the current plan touches inside the range (not once per day) — at most ~54 calls for a
 full year, reusing the already-audited weekly formula rather than a new set-based one.
+
+**Focus time uses `session_focus_seconds()` (0023), fixed in migrations/0027** — see §3j's own note;
+this function had the identical re-spelled-cap bug, fixed in the same migration.
 
 ## 4. The EmberMorph component contract
 
