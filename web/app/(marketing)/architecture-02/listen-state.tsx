@@ -550,11 +550,18 @@ export function SignalDeckListenProvider({ children }: { children: ReactNode }) 
   // Fetches the tab's own data the first time it's actually opened, not
   // eagerly on connect -- unlike the playlist browser (the panel's default
   // view), Queue and Device are secondary tabs a user may never visit in a
-  // given session, and both hit Spotify's Web API on every load.
+  // given session, and both hit Spotify's Web API on every load. Deferred one
+  // tick, matching this file's other mount/dependency-effects-that-set-state
+  // (refreshSpotifyStatus's own mount effect, the SDK init effect) -- calling
+  // a setState-triggering fetcher synchronously inside the effect body is a
+  // real lint error here (react-hooks/set-state-in-effect), not just style.
   useEffect(() => {
     if (!spotifyStatus?.connected) return;
-    if (rightColumnTab === "queue" && spotifyQueueState === "idle") void refreshSpotifyQueue();
-    if (rightColumnTab === "device" && spotifyDevicesState === "idle") void refreshSpotifyDevices();
+    const timer = window.setTimeout(() => {
+      if (rightColumnTab === "queue" && spotifyQueueState === "idle") void refreshSpotifyQueue();
+      if (rightColumnTab === "device" && spotifyDevicesState === "idle") void refreshSpotifyDevices();
+    }, 0);
+    return () => window.clearTimeout(timer);
   }, [rightColumnTab, spotifyStatus?.connected, spotifyQueueState, spotifyDevicesState, refreshSpotifyQueue, refreshSpotifyDevices]);
 
   const transferSpotifyPlayback = useCallback(async (deviceId: string) => {

@@ -20,6 +20,17 @@ Connect devices, click to transfer playback). Queue/Device data fetches lazily o
 not eagerly on connect like the playlist browser -- unlike playlists, a user may never open these
 tabs in a session, and both hit Spotify's Web API on every load.
 
+**Caught by CI, not locally -- a real process gap for this PR.** `web-build` failed on
+`react-hooks/set-state-in-effect`: the tab-fetch effect called `refreshSpotifyQueue()`/
+`refreshSpotifyDevices()` directly in the effect body, and both synchronously call `setState` as
+their first line. This file's own established convention (the mount-time status fetch, the SDK
+init effect) already defers exactly this shape inside `window.setTimeout(..., 0)` -- missed here
+because, unlike PRs #172 and #175, `npm run lint` was never run locally for this PR before
+pushing, only typecheck and tests. Fixed by wrapping the effect body in the same deferred-timer
+pattern already used twice elsewhere in this file. Worth remembering: this project's CI `web-build`
+job runs lint as a real gate, not just typecheck -- run `npm run lint` locally too, not only
+`npm run typecheck`, before pushing a PR that touches `.tsx`/hook code.
+
 **A real CSS collision found and fixed, not a bug in new code -- old code silently defeated
 new content.** The Queue tab's "Now playing: X" hint, first written as `<small>` inside the
 existing `.a02-listen-queue header`, rendered with `display:none` and no visible error anywhere --
