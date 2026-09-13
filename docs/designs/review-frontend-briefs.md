@@ -1,6 +1,6 @@
 # Review page frontend build briefs — for Janhwi (Codex)
 
-**Status:** ACTIVE — F1, F2, F3, and F4 are ready to build now
+**Status:** ACTIVE — F1–F5 are built. F6 is next once backend Phase E locks.
 **Owner:** Janhwi builds, Mukund (Claude Code) keeps this doc current before announcing a phase
 "contract locked" — same rule `wave1-frontend-briefs.md` and `mtdo-web-dev-split-plan.md` §3 already
 use.
@@ -256,7 +256,15 @@ Phase E).
 
 ---
 
-## F5 — Study Profile panel (ready now, backend Phase D locked 2026-09-14)
+## F5 — Study Profile panel — **BUILT, 2026-09-13 (PR #196)**
+
+Built by Mukund (Claude Code) while Janhwi was unavailable. `review-study-profile.tsx` adds the
+Study Profile card: every field on focus/execution/planning and every subject independently
+nullable with its own confidence tier; `most_avoided_subject: null` styled as a good state, not an
+error. Reuses `review-time-behavior.tsx`'s formatting helpers (now exported) rather than
+re-deriving them. **F1–F5 are all shipped.**
+
+## F5 — Study Profile panel, original brief text (kept for reference, backend Phase D locked 2026-09-14)
 
 **Depends on:** `study_profile()` (`migrations/0031`, `api.md` §3n) — merged, tested (213/213 full
 suite), typed in `web/lib/review/types.ts` (`StudyProfile`/`asStudyProfile()`).
