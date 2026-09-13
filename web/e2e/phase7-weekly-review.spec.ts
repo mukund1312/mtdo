@@ -27,6 +27,15 @@ import path from "node:path";
 //    in CI (no SUPABASE_ACCESS_TOKEN secret there, matching web-e2e's actual
 //    job env -- only the public URL/anon key are injected). Tests in this
 //    tier detect that and skip cleanly rather than failing on missing infra.
+//
+// All three tests below share ONE anonymous session (test.describe.serial).
+// Safe specifically because seed_weekly_engine_demo() (see the seed file
+// itself) unconditionally deactivates whatever plan the user already has
+// and creates its own fresh fixture plan -- so tier 3 running after tier
+// 1/2 have already made their own assertions and finished is fine, not a
+// collision. It also removes a real waste: tier 3's own beforeEach used to
+// mint a fresh anonymous session even on CI runs that immediately skip it
+// (no supabase CLI there) -- that sign-in was pure overhead.
 
 function loadEnvLocal(): Record<string, string> {
   const out: Record<string, string> = {};
@@ -98,6 +107,11 @@ function seedWeeklyEngineDemo(userId: string): boolean {
   }
 }
 
+async function closeWalkthroughIfPresent(page: Page) {
+  const close = page.getByRole("button", { name: /close walkthrough/i });
+  if (await close.isVisible().catch(() => false)) await close.click();
+}
+
 async function openReviewDeck(page: Page) {
   await openSignalDeckDestination(page, "Review");
   // The 6-week pulse's own outer section, always rendered regardless of
@@ -106,10 +120,20 @@ async function openReviewDeck(page: Page) {
   await expect(page.locator("section.a02-review")).toBeVisible();
 }
 
-test.describe("Review deck -- honest empty states (no seeding required)", () => {
-  test("a user with no active route sees an honest 'no route yet' state, not fabricated numbers", async ({ page }) => {
+test.describe.serial("Review deck -- weekly engine review, honest states and seeded thresholds", () => {
+  let page: Page;
+
+  test.beforeAll(async ({ browser }) => {
+    page = await browser.newPage();
+  });
+
+  test.afterAll(async () => {
+    await page.close();
+  });
+
+  test("a user with no active route sees an honest 'no route yet' state, not fabricated numbers", async () => {
     await page.goto("/architecture-02");
-    await page.getByRole("button", { name: /close walkthrough/i }).click();
+    await closeWalkthroughIfPresent(page);
     await openReviewDeck(page);
     await expect(page.getByRole("heading", { name: /no active route yet/i })).toBeVisible();
     await expect(page.getByText(/set up a route to get a real weekly review/i)).toBeVisible();
@@ -117,7 +141,7 @@ test.describe("Review deck -- honest empty states (no seeding required)", () => 
     await expect(page.getByTestId("weekly-review-generate")).toHaveCount(0);
   });
 
-  test("a brand-new route (real onboarding, zero history) reviews honestly: no fake numbers, no fabricated changes", async ({ page }) => {
+  test("a brand-new route (real onboarding, zero history) reviews honestly: no fake numbers, no fabricated changes", async () => {
     await page.goto("/architecture-02/onboarding/manual");
     await page.getByPlaceholder(/get fluent in sql joins/i).fill("Land a backend offer");
     await page.getByPlaceholder("e.g. SQL Joins").fill("Arrays");
@@ -142,16 +166,12 @@ test.describe("Review deck -- honest empty states (no seeding required)", () => 
     await expect(page.locator(".a02-weekly-change-card")).toHaveCount(0);
     await expect(page.locator(".a02-weekly-question-card")).toHaveCount(0);
   });
-});
 
-test.describe("Review deck -- real seeded threshold-crossing behavior", () => {
-  test.beforeEach(async ({ page }) => {
-    // Establish the anonymous session (proxy.ts signs in on first request).
+  test("a struggling/coasting/avoided/on-track mix renders correctly, and the avoided category is never silently auto-accepted", async () => {
+    // Re-establish a clean deck view before seeding -- the previous test left
+    // its own plan's Review deck open.
     await page.goto("/architecture-02");
-    await page.getByRole("button", { name: /close walkthrough/i }).click();
-  });
-
-  test("a struggling/coasting/avoided/on-track mix renders correctly, and the avoided category is never silently auto-accepted", async ({ page }) => {
+    await closeWalkthroughIfPresent(page);
     const userId = await currentUserId(page);
     test.skip(!userId, "Could not read the anonymous session's user id from browser storage.");
     const seeded = seedWeeklyEngineDemo(userId!);

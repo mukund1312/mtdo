@@ -1,5 +1,18 @@
-import { test, expect } from "@playwright/test";
+import { test, expect, type Page } from "@playwright/test";
 import { openSignalDeckDestination } from "./helpers/signal-deck";
+
+// Test 1 below creates a real, persisted plan via the AI-driven wizard (a
+// real Anthropic call, up to 60s) and stays on its own separate anonymous
+// session. Every other test in this file never creates a plan and doesn't
+// depend on any other test's state (Review's empty-heatmap check depends on
+// no focus SESSIONS having run, not on no plan existing, and test 1 never
+// starts one) -- so tests 2-7 share ONE session (test.describe.serial),
+// cutting this file from 7 sign-ins to 2.
+
+async function closeWalkthroughIfPresent(page: Page) {
+  const close = page.getByRole("button", { name: /close walkthrough/i });
+  if (await close.isVisible().catch(() => false)) await close.click();
+}
 
 // Real end-to-end happy path: landing page -> onboarding entry -> intent step
 // -> rhythm step -> submit -> a persisted plan is ready. gh95 (anonymous
@@ -85,9 +98,20 @@ test("onboarding wizard: intent -> rhythm -> build a route end-to-end", async ({
   await expect(page.locator(".a02-today-lane--in_progress")).toContainText(task!);
 });
 
-test("Review shows an honest empty heatmap and view-only Record Card", async ({ page }) => {
+test.describe.serial("Onboarding-adjacent: Review, Listen, callback and account controls", () => {
+  let page: Page;
+
+  test.beforeAll(async ({ browser }) => {
+    page = await browser.newPage();
+  });
+
+  test.afterAll(async () => {
+    await page.close();
+  });
+
+test("Review shows an honest empty heatmap and view-only Record Card", async () => {
   await page.goto("/architecture-02");
-  await page.getByRole("button", { name: /close walkthrough/i }).click();
+  await closeWalkthroughIfPresent(page);
   await openSignalDeckDestination(page, "Review");
 
   await expect(page.getByRole("heading", { name: /make effort legible/i })).toBeVisible();
@@ -101,9 +125,9 @@ test("Review shows an honest empty heatmap and view-only Record Card", async ({ 
   await expect(record.getByRole("button", { name: /download|export/i })).toHaveCount(0);
 });
 
-test("Listen keeps Music previews separate while loading Terminal's real radio streams", async ({ page }) => {
+test("Listen keeps Music previews separate while loading Terminal's real radio streams", async () => {
   await page.goto("/architecture-02");
-  await page.getByRole("button", { name: /close walkthrough/i }).click();
+  await closeWalkthroughIfPresent(page);
   await openSignalDeckDestination(page, "Listen");
 
   await expect(page.getByRole("heading", { name: /stay in the flow/i })).toBeVisible();
@@ -175,10 +199,10 @@ test("Listen keeps Music previews separate while loading Terminal's real radio s
   await expect(page.getByRole("button", { name: "Favorite current station" })).toHaveAttribute("aria-pressed", "true");
 });
 
-test("Listen keeps controls inside the mobile Signal Deck viewport", async ({ page }) => {
+test("Listen keeps controls inside the mobile Signal Deck viewport", async () => {
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto("/architecture-02");
-  await page.getByRole("button", { name: /close walkthrough/i }).click();
+  await closeWalkthroughIfPresent(page);
   await openSignalDeckDestination(page, "Listen");
   await expect(page.getByRole("tab", { name: /music/i })).toBeVisible();
   await expect(page.getByLabel("Music sources")).toBeVisible();
@@ -186,10 +210,10 @@ test("Listen keeps controls inside the mobile Signal Deck viewport", async ({ pa
   await expect(page.getByRole("navigation", { name: "Signal deck navigation" })).toBeVisible();
 });
 
-test("Listen radio stays within the tablet Signal Deck viewport", async ({ page }) => {
+test("Listen radio stays within the tablet Signal Deck viewport", async () => {
   await page.setViewportSize({ width: 834, height: 1024 });
   await page.goto("/architecture-02");
-  await page.getByRole("button", { name: /close walkthrough/i }).click();
+  await closeWalkthroughIfPresent(page);
   await openSignalDeckDestination(page, "Listen");
   await page.getByRole("tab", { name: /music/i }).press("ArrowRight");
   await expect(page.getByRole("tab", { name: /radio/i })).toHaveAttribute("aria-selected", "true");
@@ -201,7 +225,7 @@ test("Listen radio stays within the tablet Signal Deck viewport", async ({ page 
 // Supabase owns those single-use tokens. This exercises the real callback's
 // no-code/invalid-link branch and verifies it never claims the guest session
 // has been confirmed.
-test("an invalid confirmation callback stays in Signal Deck with account recovery", async ({ page }) => {
+test("an invalid confirmation callback stays in Signal Deck with account recovery", async () => {
   await page.goto("/auth/callback?next=%2Farchitecture-02%3Fauth%3Dconfirmed");
 
   await expect(page).toHaveURL(/\/architecture-02\?auth=confirmation-error$/);
@@ -215,9 +239,9 @@ test("an invalid confirmation callback stays in Signal Deck with account recover
 // only the provider endpoints, never manufactures an auth session. Signup
 // uses the anonymous-user identity-linking endpoint; login must hand off to
 // Supabase's normal authorize endpoint (which deliberately navigates away).
-test("OAuth account controls preserve the guest route on signup and begin returning login", async ({ page }) => {
+test("OAuth account controls preserve the guest route on signup and begin returning login", async () => {
   await page.goto("/architecture-02");
-  await page.getByRole("button", { name: /close walkthrough/i }).click();
+  await closeWalkthroughIfPresent(page);
   await page.getByRole("button", { name: /open guest account menu/i }).click();
   await page.getByRole("button", { name: /^create account/i }).click();
 
@@ -256,4 +280,6 @@ test("OAuth account controls preserve the guest route on signup and begin return
   });
   await loginPanel.getByRole("button", { name: "Continue with GitHub" }).click();
   expect(loginRequest).toContain("provider=github");
+});
+
 });
