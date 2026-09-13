@@ -116,6 +116,15 @@
   will-change: transform, opacity;
 }
 
+/* Labels belong to the open space of each sector, never the central control
+   well. Keeping the icon as the lower element gives the wheel a clear visual
+   read: label first, control second. */
+.a02-wheel-node > span:last-child {
+  order: -1;
+  min-height: 11px;
+  white-space: nowrap;
+}
+
 .a02-wheel-node:focus-visible { outline: none; }
 
 .a02-wheel-icon {

@@ -27,9 +27,7 @@ async function closeWalkthroughIfPresent(page: Page) {
 // README.md for history.
 test("onboarding wizard: intent -> rhythm -> build a route end-to-end", async ({ page }) => {
   await page.goto("/architecture-02");
-  // First visit shows the Signal Deck walkthrough tour as a modal overlay --
-  // dismiss it before interacting with the page underneath.
-  await page.getByRole("button", { name: /close walkthrough/i }).click();
+  await closeWalkthroughIfPresent(page);
   await page.getByRole("link", { name: /set up your route/i }).click();
   await expect(page).toHaveURL(/\/architecture-02\/onboarding$/);
 
@@ -83,7 +81,7 @@ test("onboarding wizard: intent -> rhythm -> build a route end-to-end", async ({
   await expect(page).toHaveURL(/\/architecture-02\?deck=work$/);
   await expect(page.getByRole("heading", { name: /move the right pieces/i })).toBeVisible();
   await expect(page.getByLabel("Kanban filters")).toBeVisible();
-  await expect(page.getByRole("group", { name: /filter by priority/i }).getByRole("button", { name: "High" })).toBeVisible();
+  await expect(page.getByLabel("Filter by priority")).toBeVisible();
 
   // The active plan's curriculum is retrieved through ensure_curriculum_menu.
   // Pulling an item onto Today uses the lock-safe, idempotent picker RPC -- it

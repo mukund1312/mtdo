@@ -33,6 +33,7 @@ export default function SignalDeckImportExportPage() {
 
   const [raw, setRaw] = useState("");
   const [preview, setPreview] = useState<GeneratedPlan | null>(null);
+  const [openPreviewCategory, setOpenPreviewCategory] = useState<number | null>(null);
   const [importState, setImportState] = useState<ImportState>("idle");
   const [importError, setImportError] = useState<string | null>(null);
   const [dragOver, setDragOver] = useState(false);
@@ -41,11 +42,13 @@ export default function SignalDeckImportExportPage() {
   const [exportError, setExportError] = useState<string | null>(null);
   const [exportJson, setExportJson] = useState("");
   const [copyStatus, setCopyStatus] = useState("");
+  const previewTaskCount = preview?.categories.reduce((count, category) => count + category.curriculum.flat().length, 0) ?? 0;
 
   const validate = (text: string) => {
     setRaw(text);
     setImportError(null);
     setPreview(null);
+    setOpenPreviewCategory(null);
     setImportState("idle");
     if (!text.trim()) return;
     try {
@@ -53,6 +56,7 @@ export default function SignalDeckImportExportPage() {
       // contract -- see parse.ts's ParseGeneratedPlanOptions.
       const plan = parseGeneratedPlan(text, { weekCount: "any" });
       setPreview(plan);
+      setOpenPreviewCategory(plan.categories.length === 1 ? 0 : null);
       setImportState("previewing");
     } catch (err) {
       setImportError(err instanceof PlanGenerationError ? err.message : "That file isn't a valid mtdo.plan.v1 export.");
@@ -94,6 +98,35 @@ export default function SignalDeckImportExportPage() {
       setImportError(err instanceof Error ? err.message : "We couldn't save that plan. Try again.");
       setImportState("previewing");
     }
+  };
+
+  const updatePreviewGoal = (goalLine: string) => {
+    setPreview((current) => current ? { ...current, goal_line: goalLine } : current);
+  };
+
+  const updatePreviewCategoryLabel = (categoryIndex: number, label: string) => {
+    setPreview((current) => current ? {
+      ...current,
+      categories: current.categories.map((category, index) => index === categoryIndex ? { ...category, label } : category),
+    } : current);
+  };
+
+  const updatePreviewTask = (categoryIndex: number, dayIndex: number, taskIndex: number, value: string) => {
+    setPreview((current) => current ? {
+      ...current,
+      categories: current.categories.map((category, index) => index !== categoryIndex ? category : {
+        ...category,
+        curriculum: category.curriculum.map((day, currentDayIndex) => currentDayIndex !== dayIndex ? day : day.map((task, currentTaskIndex) => {
+          if (currentTaskIndex !== taskIndex) return task;
+          return typeof task === "string" ? value : { ...task, task: value };
+        })),
+      }),
+    } : current);
+  };
+
+  const showPreviewCategory = (categoryIndex: number) => {
+    setOpenPreviewCategory(categoryIndex);
+    window.requestAnimationFrame(() => document.getElementById(`import-category-${categoryIndex}`)?.scrollIntoView({ behavior: "smooth", block: "start" }));
   };
 
   const runExport = async () => {
@@ -190,7 +223,7 @@ export default function SignalDeckImportExportPage() {
   };
 
   return (
-    <main className="a02-shell a02-onboarding-shell">
+    <main className="a02-shell a02-onboarding-shell a02-import-export-shell">
       <div className="a02-grid-glow" />
       <header className="a02-onboarding-header">
         <Link href="/architecture-02" className="a02-wordmark">
@@ -212,6 +245,12 @@ export default function SignalDeckImportExportPage() {
               ? `A ${PLAN_SCHEMA_VERSION} JSON file, from a previous export or "mtdo export" on the terminal app.`
               : "A JSON file compatible with the terminal app's own \"mtdo import\"."}
           </p>
+          {tab === "import" && preview ? <section className="a02-import-aside-preview" aria-label="Imported route overview">
+            <span>IMPORT MAP</span>
+            <strong>{preview.categories.length} categories · {previewTaskCount} tasks</strong>
+            <p>Open a subject to edit its route pieces.</p>
+            <ol>{preview.categories.map((category, index) => <li key={category.name}><button type="button" className={openPreviewCategory === index ? "is-active" : ""} onClick={() => showPreviewCategory(index)}><span>{category.label}</span><i>{category.curriculum.flat().length}</i></button></li>)}</ol>
+          </section> : <section className="a02-import-aside-guide" aria-label="Import guide"><span>IMPORT FLOW</span><ol><li><i>01</i> Choose a saved route file</li><li><i>02</i> Review each subject and task</li><li><i>03</i> Import when the plan looks right</li></ol></section>}
         </aside>
         <section className="a02-onboarding-panel" aria-live="polite">
           <section className="a02-onboarding-step a02-import-step">
@@ -275,15 +314,31 @@ export default function SignalDeckImportExportPage() {
 
                 {preview && importState !== "error" && (
                   <div className="a02-import-preview">
-                    <span>PREVIEW</span>
-                    <p>{preview.goal_line}</p>
-                    <ol>
-                      {preview.categories.map((category) => (
-                        <li key={category.name}>
-                          <b>{category.label}</b>
-                          <span>{category.curriculum.flat().length} tasks</span>
-                        </li>
-                      ))}
+                    <span>PREVIEW / EDIT BEFORE IMPORT</span>
+                    <label className="a02-import-edit-field">
+                      <span>Route goal</span>
+                      <textarea value={preview.goal_line} onChange={(event) => updatePreviewGoal(event.target.value)} aria-label="Route goal" />
+                    </label>
+                    <p className="a02-import-preview-note">Open a category to review and edit its pieces before importing.</p>
+                    <ol className="a02-import-categories">
+                      {preview.categories.map((category, categoryIndex) => {
+                        const open = openPreviewCategory === categoryIndex;
+                        const taskCount = category.curriculum.flat().length;
+                        return <li id={`import-category-${categoryIndex}`} className={open ? "is-open" : ""} key={category.name}>
+                          <button type="button" className="a02-import-category-toggle" aria-expanded={open} onClick={() => setOpenPreviewCategory((current) => current === categoryIndex ? null : categoryIndex)}>
+                            <b>{category.label}</b><span>{taskCount} tasks</span><i aria-hidden="true">{open ? "−" : "+"}</i>
+                          </button>
+                          {open && <div className="a02-import-category-editor">
+                            <label className="a02-import-edit-field"><span>Category name</span><input value={category.label} onChange={(event) => updatePreviewCategoryLabel(categoryIndex, event.target.value)} aria-label={`${category.label} category name`} /></label>
+                            <div className="a02-import-task-list">
+                              {category.curriculum.map((day, dayIndex) => day.map((task, taskIndex) => {
+                                const taskName = typeof task === "string" ? task : task.task;
+                                return <label key={`${dayIndex}-${taskIndex}`}><span>{String(dayIndex + 1).padStart(2, "0")}</span><input value={taskName} onChange={(event) => updatePreviewTask(categoryIndex, dayIndex, taskIndex, event.target.value)} aria-label={`Edit ${taskName}`} /></label>;
+                              }))}
+                            </div>
+                          </div>}
+                        </li>;
+                      })}
                     </ol>
                   </div>
                 )}

@@ -99,6 +99,8 @@ test("unscheduling a block clears its window and returns it to Unscheduled", asy
   // same drag -- same reasoning as the eventChip wait above.
   await expect(popover).toBeVisible({ timeout: 15_000 });
   await popover.getByTestId("calendar-unschedule-button").click();
+  await expect(popover.getByText(/This won't delete the task/i)).toBeVisible();
+  await popover.getByTestId("calendar-unschedule-confirm").click();
   await expect(popover).toHaveCount(0);
 
   // schedule_block(id) with every optional arg omitted clears the window --

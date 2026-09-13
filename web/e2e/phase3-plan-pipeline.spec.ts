@@ -28,7 +28,8 @@ test.describe.serial("Phase 3: plan-free checks", () => {
 
   test("method chooser offers all three paths", async () => {
     await page.goto("/architecture-02");
-    await page.getByRole("button", { name: /close walkthrough/i }).click();
+    const walkthroughClose = page.getByRole("button", { name: /close walkthrough/i });
+    if (await walkthroughClose.isVisible().catch(() => false)) await walkthroughClose.click();
     await page.getByRole("link", { name: /set up your route/i }).click();
     await expect(page.getByRole("heading", { name: /how do you.*want to start/is })).toBeVisible();
     await expect(page.getByRole("button", { name: /guided ai/i })).toBeVisible();

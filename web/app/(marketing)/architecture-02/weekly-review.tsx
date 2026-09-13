@@ -29,6 +29,7 @@
 // see the comment on acceptAll() below for why.
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
 
 import { createClient } from "@/lib/supabase/client";
 import {
@@ -173,6 +174,7 @@ function databaseErrorMessage(error: unknown, fallback: string): string {
 }
 
 export function WeeklyReviewPanel() {
+  const router = useRouter();
   const [state, setState] = useState<LoadState>("loading");
   const [isoWeek, setIsoWeek] = useState<string | null>(null);
   const [performance, setPerformance] = useState<WeeklyPerformance | null>(null);
@@ -187,6 +189,7 @@ export function WeeklyReviewPanel() {
   const [justSkippedQuestions, setJustSkippedQuestions] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editValue, setEditValue] = useState<string>("");
+  const [reviewOpen, setReviewOpen] = useState(false);
 
   const load = useCallback(async () => {
     setState("loading");
@@ -331,6 +334,31 @@ export function WeeklyReviewPanel() {
     () => (activePerformance ? activePerformance.categories.every((c) => !c.existed_before_week) : false),
     [activePerformance],
   );
+  const proposalState = useMemo<"insufficient" | "no-activity" | "ready" | "reviewed">(() => {
+    if (!activePerformance) return "insufficient";
+    if (weeklyPlan && weeklyPlan.status !== "proposed") return "reviewed";
+    if (isBrandNewRoute) return "insufficient";
+    if (activePerformance.plan.sessions_completed === 0 && activePerformance.plan.done_count === 0) return "no-activity";
+    return "ready";
+  }, [activePerformance, isBrandNewRoute, weeklyPlan]);
+  const reviewContext = useMemo(() => {
+    if (!activePerformance) return "";
+    const format = new Intl.DateTimeFormat("en", { month: "short", day: "numeric", timeZone: "UTC" });
+    return `${format.format(new Date(`${activePerformance.week_start}T00:00:00.000Z`)).toUpperCase()}–${format.format(new Date(`${activePerformance.week_end}T00:00:00.000Z`)).toUpperCase()} · ${activePerformance.plan.sessions_completed} ${activePerformance.plan.sessions_completed === 1 ? "SESSION" : "SESSIONS"} · ${activePerformance.plan.study_days} ACTIVE ${activePerformance.plan.study_days === 1 ? "DAY" : "DAYS"}`;
+  }, [activePerformance]);
+  const reviewInsights = useMemo(() => {
+    if (!activePerformance) return [];
+    const insights: string[] = [];
+    const categories = activePerformance.categories.filter((category) => category.existed_before_week);
+    const mostFocused = [...categories].sort((a, b) => b.actual_minutes - a.actual_minutes)[0];
+    const strongest = [...categories].filter((category) => category.current_target > 0 && category.done_count / category.current_target >= .8).sort((a, b) => b.done_count - a.done_count)[0];
+    const struggling = [...categories].filter((category) => category.current_target > 0 && category.done_count / category.current_target < .4 && category.picked_count > 0).sort((a, b) => a.done_count - b.done_count)[0];
+    if (activePerformance.plan.study_days <= 2 && activePerformance.plan.sessions_completed > 0) insights.push("Your focus is concentrated. Most of your activity landed on only a few days.");
+    if (mostFocused && mostFocused.actual_minutes > 0) insights.push(`${mostFocused.label} received the most focused time this week.`);
+    if (strongest) insights.push(`${strongest.label} is building momentum: ${strongest.done_count} of ${strongest.current_target} planned pieces were completed.`);
+    if (struggling) insights.push(`${struggling.label} needs protection: ${struggling.done_count} of ${struggling.current_target} planned pieces were completed.`);
+    return insights.slice(0, 3);
+  }, [activePerformance]);
 
   const generate = useCallback(async () => {
     if (!isoWeek) return;
@@ -596,21 +624,17 @@ export function WeeklyReviewPanel() {
         {activePerformance.categories.map((cat) => {
           const outcome = proposal?.outcomes.find((o) => o.category_id === cat.category_id);
           const classification = outcome?.classification ?? "insufficient_data";
+          const isCollecting = classification === "insufficient_data";
+          const target = Math.max(1, cat.current_target);
+          const progress = Math.min(100, Math.round((cat.done_count / target) * 100));
           return (
             <div className="a02-weekly-category" key={cat.category_id} data-testid={`weekly-category-${cat.name}`}>
               <div className="a02-weekly-category-head">
                 <b>{cat.label}</b>
-                <span
-                  className={`a02-signal-badge ${CLASSIFICATION_CLASS[classification]}`}
-                  data-testid={`weekly-category-${cat.name}-badge`}
-                >
-                  {CLASSIFICATION_LABEL[classification]}
-                </span>
+                <strong className="a02-weekly-category-target">{isCollecting ? "—" : cat.done_count} <small>/ {target}</small></strong>
               </div>
-              <p>
-                {cat.done_count}/{cat.picked_count} done ({pct(cat.completion_rate)}) · pace {pct(cat.pace_ratio)} ·
-                pick rate {pct(cat.pick_rate)} · target {cat.current_target}/wk
-              </p>
+              {isCollecting ? <p className="a02-weekly-category-collecting">Collecting your first week</p> : <><div className="a02-weekly-category-progress" role="progressbar" aria-label={`${cat.label}: ${cat.done_count} of ${target} weekly target`} aria-valuemin={0} aria-valuemax={target} aria-valuenow={Math.min(cat.done_count, target)}><i style={{ width: `${progress}%` }} /></div><p className="a02-weekly-category-progress-copy">{progress}% of weekly target</p></>}
+              {!isCollecting && <span className={`a02-signal-badge ${CLASSIFICATION_CLASS[classification]}`} data-testid={`weekly-category-${cat.name}-badge`}>{CLASSIFICATION_LABEL[classification]}</span>}
               {outcome?.suppressed === "low_completion_week" && (
                 <i className="a02-weekly-suppressed">Increase withheld — this week&apos;s overall completion was low.</i>
               )}
@@ -622,25 +646,19 @@ export function WeeklyReviewPanel() {
         })}
       </div>
 
-      <div className="a02-weekly-changeset">
+      <div className="a02-weekly-changeset" id="weekly-review-proposal" tabIndex={-1}>
         <div className="a02-view-head">
           <div>
             <span className="a02-eyebrow">THIS WEEK&apos;S PROPOSAL</span>
-            <h3>{weeklyPlan ? "What the rules noticed." : "No review generated yet."}</h3>
+            <h3>{proposalState === "insufficient" ? "Not enough history yet." : proposalState === "no-activity" ? "This week was quiet." : proposalState === "reviewed" ? "You&apos;ve reviewed this week." : weeklyPlan ? "Your weekly review is ready." : "Ready to review your week."}</h3>
+            <p className="a02-weekly-proposal-intro">{proposalState === "insufficient" ? "Your route needs one full week of activity before mtdo can spot meaningful patterns." : proposalState === "no-activity" ? "There isn&apos;t enough activity to surface a useful pattern yet. Start a focus session to begin your baseline." : proposalState === "reviewed" ? "Your next focus is ready to carry into the week ahead." : "See what this week revealed and decide what to protect next."}</p>
+            {proposalState === "insufficient" ? <p className="a02-weekly-proposal-status">COLLECTING YOUR BASELINE</p> : proposalState !== "no-activity" && <p className="a02-weekly-proposal-context">{reviewContext}</p>}
           </div>
-          {!weeklyPlan && (
-            <div className="a02-view-controls">
-              <button
-                type="button"
-                className="a02-add"
-                disabled={generating}
-                onClick={() => void generate()}
-                data-testid="weekly-review-generate"
-              >
-                {generating ? "Generating…" : "Generate this week's review ↗"}
-              </button>
-            </div>
-          )}
+          <div className="a02-view-controls">
+            {proposalState === "ready" && !weeklyPlan && <button type="button" className="a02-add" disabled={generating} onClick={() => void generate()} data-testid="weekly-review-generate">{generating ? "Generating…" : "Generate weekly review →"}</button>}
+            {(weeklyPlan || proposalState === "reviewed") && <button type="button" className="a02-add" onClick={() => setReviewOpen(true)}>View weekly review →</button>}
+            {proposalState === "no-activity" && <button type="button" className="a02-add" onClick={() => router.push("/architecture-02")}>Start focus →</button>}
+          </div>
         </div>
 
         {generateError && (
@@ -835,6 +853,25 @@ export function WeeklyReviewPanel() {
           </details>
         )}
       </div>
+      {reviewOpen && <section className="a02-weekly-review-overlay" role="dialog" aria-modal="true" aria-labelledby="weekly-review-dialog-title">
+        <div className="a02-weekly-review-dialog">
+          <button className="a02-lens-close" type="button" aria-label="Close weekly review" onClick={() => setReviewOpen(false)}>×</button>
+          <span className="a02-eyebrow">WEEKLY REVIEW</span>
+          <h2 id="weekly-review-dialog-title">What this week<br /><em>revealed.</em></h2>
+          <p className="a02-weekly-dialog-context">{reviewContext}</p>
+          <section className="a02-weekly-dialog-section">
+            <span>01 / WHAT HAPPENED</span>
+            <div className="a02-weekly-dialog-stats"><b>{activePerformance.plan.sessions_completed}<small>focus sessions</small></b><b>{activePerformance.plan.study_days}<small>active days</small></b><b>{Math.floor(activePerformance.plan.actual_minutes / 60)}h {activePerformance.plan.actual_minutes % 60}m<small>focused</small></b><b>{activePerformance.plan.done_count}<small>blocks completed</small></b></div>
+          </section>
+          {reviewInsights.length > 0 && <section className="a02-weekly-dialog-section"><span>02 / WHAT MTDO NOTICED</span><ol className="a02-weekly-insights">{reviewInsights.map((insight, index) => <li key={insight}><i>{String(index + 1).padStart(2, "0")}</i><p>{insight}</p></li>)}</ol></section>}
+          <section className="a02-weekly-dialog-protect">
+            <span>03 / WHAT TO PROTECT NEXT</span>
+            <h3>{activePerformance.plan.study_days <= 2 ? "Protect your weekday focus rhythm." : "Protect the momentum you built."}</h3>
+            <p>{activePerformance.plan.study_days <= 2 ? "Your work is concentrated into a few days. Use the review decisions below to set a more sustainable weekly target." : "Keep the work that is already proving sustainable, then use the review decisions below to adjust next week deliberately."}</p>
+            <button type="button" className="a02-add" onClick={() => { setReviewOpen(false); document.getElementById("weekly-review-proposal")?.scrollIntoView({ behavior: "smooth", block: "start" }); }}>Decide on next week →</button>
+          </section>
+        </div>
+      </section>}
     </section>
   );
 }
