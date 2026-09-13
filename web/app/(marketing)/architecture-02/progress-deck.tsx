@@ -74,11 +74,14 @@ export function ProgressDeck() {
 
   return (
     <section className="a02-review" aria-labelledby="progress-title">
+      {/* The "MAKE EFFORT LEGIBLE." hero now lives once, at the top of
+          ReviewDeck (F1) -- this repeated it verbatim, which reads as a
+          visible duplicate now that ReviewRings (F2) sits between the two.
+          Kept the real controls (Refresh / View record), dropped only the
+          redundant title. Found while building F2, not F2's own scope --
+          flagged rather than left in place. */}
       <div className="a02-view-head">
-        <div>
-          <span className="a02-eyebrow">REVIEW / 6-WEEK PULSE</span>
-          <h1 id="progress-title">Make effort<br /><em>legible.</em></h1>
-        </div>
+        <span id="progress-title" className="a02-eyebrow">SIX-WEEK PULSE</span>
         <div className="a02-view-controls"><button type="button" onClick={() => void load()}>Refresh</button><button className="a02-export" type="button" onClick={() => setRecordOpen(true)} disabled={state !== "ready"}>View record ↗</button></div>
       </div>
 
