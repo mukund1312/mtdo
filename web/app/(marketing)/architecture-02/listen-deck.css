@@ -2,3 +2,7 @@
 .a02-track-art.is-real{background:#111;object-fit:cover}
 .a02-listen-spotify-connected{display:flex;min-height:420px;flex-direction:column}
 .a02-listen-spotify-connected .a02-provider-empty{flex:1;min-height:0}
+/* A dedicated class rather than reusing ".a02-listen-queue header small":
+   listen-deck-polish.css's accessibility pass hides that exact selector
+   (written before this Now-Playing hint existed in the queue header). */
+.a02-listen-queue-now{font-size:8px;color:var(--aqua)}

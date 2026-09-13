@@ -230,4 +230,83 @@ test.describe.serial("Spotify: Listen deck and Settings honesty states", () => {
     await page.unroute("**/api/music/spotify/playlists/p1/tracks");
     await page.unroute("**/api/music/spotify/player/play");
   });
+
+  // Phase 1's Queue/Device tabs (Phase 1, PR 3), same mocked-fetch technique
+  // as the playlist-browser test above. Run last for the same reason.
+  test("Queue and Device tabs render real data and transferring playback fires the right request", async () => {
+    await page.route("**/api/music/spotify/status", async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          configured: true,
+          connected: true,
+          connection: {
+            connectedAt: new Date().toISOString(),
+            displayName: "Test Listener",
+            expired: false,
+            premium: true,
+            product: "premium",
+            refreshTokenExpiresAt: null,
+            scopes: [],
+          },
+          missing: [],
+          provider: "spotify",
+        }),
+      });
+    });
+    await page.route("**/api/music/spotify/playlists", async (route) => {
+      await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ items: [], next: null }) });
+    });
+    await page.route("**/api/music/spotify/player/queue", async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          currentlyPlaying: { uri: "spotify:track:now", name: "Currently Playing Track", artists: ["Artist"], album: null, imageUrl: null, durationMs: 180000 },
+          queue: [{ uri: "spotify:track:next", name: "Up Next Track", artists: ["Artist"], album: null, imageUrl: null, durationMs: 200000 }],
+        }),
+      });
+    });
+    await page.route("**/api/music/spotify/player/devices", async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          devices: [
+            { id: "d1", name: "MacBook", type: "Computer", isActive: false, volumePercent: 60 },
+            { id: "d2", name: "Kitchen Speaker", type: "Speaker", isActive: true, volumePercent: 40 },
+          ],
+        }),
+      });
+    });
+    let transferRequestBody: unknown = null;
+    await page.route("**/api/music/spotify/player/transfer", async (route) => {
+      transferRequestBody = route.request().postDataJSON();
+      await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ ok: true }) });
+    });
+
+    await page.goto("/architecture-02?deck=listen");
+    await closeWalkthroughIfPresent(page);
+    await page.locator(".a02-listen-source").filter({ hasText: "Spotify" }).click();
+    await expect(page.getByText("No playlists found on this Spotify account.")).toBeVisible({ timeout: 20_000 });
+
+    const tablist = page.getByRole("tablist", { name: "Spotify playback view" });
+    await tablist.getByRole("tab", { name: "Queue" }).click();
+    await expect(page.getByText("Up Next Track")).toBeVisible();
+    await expect(page.locator(".a02-listen-queue-now").filter({ hasText: "Currently Playing Track" })).toBeVisible();
+
+    await tablist.getByRole("tab", { name: "Device" }).click();
+    await expect(page.getByRole("button", { name: "Switch playback to MacBook" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Switch playback to Kitchen Speaker" })).toBeDisabled();
+
+    await page.getByRole("button", { name: "Switch playback to MacBook" }).click();
+    await expect.poll(() => transferRequestBody).toEqual({ deviceId: "d1", play: true });
+
+    await page.unroute("**/api/music/spotify/status");
+    await page.unroute("**/api/music/spotify/playlists");
+    await page.unroute("**/api/music/spotify/player/queue");
+    await page.unroute("**/api/music/spotify/player/devices");
+    await page.unroute("**/api/music/spotify/player/transfer");
+  });
 });
