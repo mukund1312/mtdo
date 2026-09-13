@@ -3,7 +3,7 @@
 set client_min_messages = notice;
 set timezone = 'UTC';
 
--- migrations/0026: review_consistency() -- the Effort Score behind the
+-- migrations/0027: review_consistency() -- the Effort Score behind the
 -- Consistency heatmap (docs/designs/mtdo-web-review-study-profile-plan.md
 -- sec4 Phase B, docs/architecture/api.md sec3k).
 
@@ -241,6 +241,39 @@ begin
   perform t.eq('8 user A sees none of user B''s activity',
     (v_out->'days'->0)->>'execute_percentage', null::text);
   perform t.eq('8b ...a real empty day, not user B''s', (v_out->'days'->0)->>'effort_score', '0');
+end $test$;
+
+-- ===== 0030 regression: same session_focus_seconds() fix, range grain ======
+do $test$
+declare
+  v_uid uuid := t.mkuser('consist_pause_fix');
+  v_plan uuid;
+  v_cat uuid;
+  v_block uuid;
+  v_out jsonb;
+  v_day jsonb;
+begin
+  insert into public.plans (user_id, app_name, goal_line, is_active)
+    values (v_uid, 'test', 'pause fix range', false) returning id into v_plan;
+  insert into public.plan_categories (plan_id, name, label, days, sort_order, created_at)
+    values (v_plan, 'cat', 'Cat', '{0,1,2}', 0, '2026-01-01'::timestamptz) returning id into v_cat;
+  insert into public.blocks (user_id, plan_id, category_id, date, position, text, status, estimated_minutes)
+    values (v_uid, v_plan, v_cat, '2026-09-01', 0, 'block', 'todo', 30) returning id into v_block;
+
+  -- Same fixture as 17's 9/9b: 30m wall clock, 10m paused, 20m real focus.
+  insert into public.focus_sessions
+    (user_id, block_id, started_at, completed_at, planned_duration_s, total_paused_s, state)
+  values (v_uid, v_block, '2026-09-01 08:00+00', '2026-09-01 08:30+00', 1800, 600, 'completed');
+
+  set local role authenticated;
+  perform set_config('request.jwt.claim.sub', v_uid::text, true);
+  perform public.activate_plan(v_plan);
+
+  v_out := public.review_consistency('2026-09-01'::date, '2026-09-01'::date);
+  v_day := v_out->'days'->0;
+
+  perform t.eq('9 focus_percentage subtracts the paused interval -- 20m of a 30m target, not 30m',
+    v_day->>'focus_percentage', '66.7');
 end $test$;
 
 do $test$

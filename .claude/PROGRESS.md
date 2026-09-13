@@ -66,6 +66,40 @@ stripped from `.env.local` (the recurring local-environment collision documented
 
 ---
 
+## [backend] 2026-09-13 (PR pending) — fix a real migration-number collision at 0026
+
+Two different, independently-merged PRs both claimed migration number `0026`: this session's own
+`0026_soundtrack_preferences.sql` (PR #180, merged and already applied to the linked project) and
+a parallel Review/Study Profile effort's `0026_review_consistency.sql` (merged separately, around
+the same time, never applied to remote). Both landed on `main` with the identical numeric prefix.
+
+**Caught immediately after merging PR #180**, via `supabase migration list` showing two rows both
+reading `"local":"0026"` -- one with a real `"remote":"0026"` (mine, already applied), one with
+`"remote":""` (the other, not yet applied anywhere). That gap is what made the fix safe: since the
+review migration had never actually run against the shared dev database under the `0026` name,
+renumbering its *file* to `0027` didn't orphan any already-applied migration-tracking row.
+
+**Fix:** `git mv supabase/migrations/0026_review_consistency.sql
+supabase/migrations/0027_review_consistency.sql`, plus five real prose references to the old
+number that needed updating alongside it -- `docs/designs/mtdo-web-review-study-profile-plan.md`,
+`docs/designs/review-frontend-briefs.md` (two spots), `docs/architecture/api.md` §3k's own
+heading, and `web/lib/review/types.ts`'s header comment. `supabase/tests/18_review_consistency.sql`
+lives in a separate, non-colliding numbering namespace (test files, not migrations) -- only its
+own internal comment referencing "migrations/0026" needed the same bump, not its filename.
+Applied `0027` to the linked project via `supabase db push`, regenerated types, and ran the full
+local SQL suite (`supabase/tests/run.sh`) end to end -- both `review_daily_summary` and
+`review_consistency`'s own assertions pass unchanged under the new number.
+
+**Not this session's migration to rename in the first place** -- it belongs to unrelated,
+already-merged work -- but left uncorrected it would have made the next `supabase db push` from
+anyone ambiguous about which `0026` file a given applied-migration row actually refers to. Purely
+mechanical: no schema/logic in either file changed, only the shared filename collision.
+
+**Files changed:** `supabase/migrations/0027_review_consistency.sql` (renamed from `0026_...`),
+`web/lib/supabase/database.types.ts` (regenerated), and the five doc/comment references above.
+
+---
+
 ## [backend] 2026-09-13 (PR pending) — Task-tied soundtracks, PR A: schema + client plumbing
 
 First of three PRs (plan: `~/.claude/plans/adaptive-sleeping-turing.md`) for Phase 2 of the

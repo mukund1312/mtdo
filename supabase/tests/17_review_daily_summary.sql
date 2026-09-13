@@ -196,6 +196,43 @@ begin
   perform t.eq('8c ...and plan_id is A''s own plan, not B''s', v_out->>'plan_id', v_plan_a::text);
 end $test$;
 
+-- ===== 0030 regression: focus time subtracts paused time, via ===============
+-- session_focus_seconds() (0023), never a re-spelled cap. t.sess() doesn't
+-- expose total_paused_s, so this session is inserted directly.
+do $test$
+declare
+  v_uid uuid := t.mkuser('review_daily_pause_fix');
+  v_plan uuid;
+  v_cat uuid;
+  v_block uuid;
+  v_out jsonb;
+begin
+  insert into public.plans (user_id, app_name, goal_line, is_active)
+    values (v_uid, 'test', 'pause fix', false) returning id into v_plan;
+  insert into public.plan_categories (plan_id, name, label, days, sort_order, created_at)
+    values (v_plan, 'cat', 'Cat', '{0,1,2}', 0, '2026-01-01'::timestamptz) returning id into v_cat;
+  insert into public.blocks (user_id, plan_id, category_id, date, position, text, status, estimated_minutes)
+    values (v_uid, v_plan, v_cat, '2026-09-01', 0, 'block', 'todo', 30) returning id into v_block;
+
+  -- Planned 30m (1800s), wall clock 30m (08:00-08:30), but 10m (600s) of that
+  -- was paused. Real focus time is 20m -- the pre-0030 bug would have
+  -- reported the full 30m (elapsed capped at planned, ignoring the pause).
+  insert into public.focus_sessions
+    (user_id, block_id, started_at, completed_at, planned_duration_s, total_paused_s, state)
+  values (v_uid, v_block, '2026-09-01 08:00+00', '2026-09-01 08:30+00', 1800, 600, 'completed');
+
+  set local role authenticated;
+  perform set_config('request.jwt.claim.sub', v_uid::text, true);
+  perform public.activate_plan(v_plan);
+
+  v_out := public.review_daily_summary('2026-09-01'::date);
+
+  perform t.eq('9 focus_minutes subtracts the paused interval -- 30m wall clock minus 10m paused = 20m',
+    v_out->'focus'->>'focus_minutes', '20.0');
+  perform t.eq('9b longest_session_minutes agrees',
+    v_out->'focus'->>'longest_session_minutes', '20.0');
+end $test$;
+
 do $test$
 begin
   raise notice '--- review_daily_summary: complete ---';

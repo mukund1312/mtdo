@@ -162,7 +162,7 @@ matching the `asWeeklyPerformance()` precedent.
 
 ### Phase B — Effort Score + Consistency heatmap data — **CONTRACT LOCKED, 2026-09-13**
 
-`migrations/0026_review_consistency.sql`, `docs/architecture/api.md` §3k, `web/lib/review/types.ts`
+`migrations/0027_review_consistency.sql`, `docs/architecture/api.md` §3k, `web/lib/review/types.ts`
 (`ReviewConsistency` + `asReviewConsistency()`), `supabase/tests/18_review_consistency.sql` (25
 assertions: a normal week, a genuinely-empty day inside an active plan (real 0, not null), no
 active plan at all, a goal switch — proving Progress does not misattribute a retired plan's week
@@ -190,15 +190,38 @@ Verification section below.
 
 **Janhwi can start F3 (Consistency heatmap) against this contract now.**
 
-### Phase C — Time-of-day and session-length analytics
+### Phase C — Time-of-day and session-length analytics — **CONTRACT LOCKED, 2026-09-13**
 
-- `review_time_patterns(p_start date, p_end date)`: buckets `focus_sessions` by hour and by
-  duration range, returns completion rate / focus efficiency per bucket **only when
-  `sample_size >= 5`** (the brief's own minimum-sample rule), else `status: "insufficient_data"`.
-- `review_momentum()`: a smoothed score across recent weeks (not a raw streak) — the brief is
-  explicit this should degrade gracefully (91 → 88, never 145 → 0), and this project already has
-  the philosophical precedent for "don't let one bad signal overreact" in `pace_ratio` using a
-  ratio-of-sums instead of a mean.
+`migrations/0028_review_time_patterns.sql` (hour/weekday/duration-bucket breakdown,
+`min_sample_size = 5` gating every `best_*` field — never inferred from fewer),
+`migrations/0029_review_momentum.sql` (EWMA over `review_consistency()`'s daily Effort Score,
+decay 0.9/day, plus `current_streak`/`longest_streak`/`active_days_rate` — composition, not a
+second Effort Score formula). `docs/architecture/api.md` §3l/§3m, `web/lib/review/types.ts`
+(`ReviewTimePatterns`/`asReviewTimePatterns()`, `ReviewMomentum`/`asReviewMomentum()`),
+`supabase/tests/19_review_time_patterns.sql` + `20_review_momentum.sql` (30 assertions). Full
+suite: 188/188.
+
+**A real bug found and fixed along the way, not part of the original Phase C scope**:
+`review_daily_summary()` (0025) and `review_consistency()` (0026) had both re-spelled the
+focus-seconds cap instead of calling `session_focus_seconds()` (0023) — which subtracts
+`total_paused_s` before capping — so a paused session's full wall-clock time was counted toward
+Focus/Effort in production. Caught because Phase C also needed that function and would have
+propagated the same mistake a third time. Fixed in `migrations/0030` (renumbered from an earlier
+`0027` that collided with `review_consistency()`'s own renumbering — see the "Migration numbering"
+note below), with regression assertions
+using a genuinely-paused session added to both existing test files (see `api.md` §3j/§3k for the
+full note).
+
+**Janhwi can start F4 (Time behavior + Session quality) against this contract now.**
+
+**Migration numbering, 2026-09-13:** two concurrent PRs both claimed migration number `0026` —
+this plan's `review_consistency()` and an unrelated soundtrack-preferences PR merging around the
+same time. Resolved (PR #181, not this session's work) by renumbering `review_consistency()` to
+`0027`; this session's own `migrations/0027_review_focus_...` pause-seconds fix (written before
+that renumbering landed) then collided with the *new* `0027` and was itself renumbered to `0030`
+once caught — `api.md` §3j/§3k/§3l/§3m and every test file already reference the final numbers.
+No functions or data were affected either time; both were pure filename renumbers, verified by diff
+before renaming.
 
 ### Phase D — Study Profile
 
