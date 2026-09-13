@@ -184,7 +184,7 @@ test.describe.serial("Calendar editing: resize, overlap lanes, category colour, 
     await chipAfterReload.click();
     const popover = page.getByTestId("calendar-detail-popover");
     await expect(popover).toBeVisible();
-    await expect(popover.locator(".a02-calendar-detail-time")).toContainText(/6:00.*7:30|7:30.*6:00/i);
+    await expect(popover.locator(".a02-calendar-schedule-summary")).toContainText(/6:00.*7:30|7:30.*6:00/i);
     await popover.getByRole("button", { name: "Close", exact: true }).click();
   });
 

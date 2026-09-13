@@ -141,6 +141,7 @@ test("Home reflects a real picked task and Session shows real, non-fake coaching
   await expect(page.getByRole("heading", { name: taskText! })).toBeVisible();
   await expect(page.getByLabel("Focus minutes")).toHaveValue("50");
   await page.getByRole("button", { name: /begin focus/i }).click();
+  await page.getByRole("button", { name: "Your coach" }).click();
   await expect(page.getByRole("heading", { name: /stay with the question/i })).toBeVisible();
   const timerToggle = page.getByRole("button", { name: "Timer on" });
   await expect(timerToggle).toBeVisible();
