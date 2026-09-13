@@ -1,6 +1,7 @@
 # Review page frontend build briefs — for Janhwi (Codex)
 
-**Status:** ACTIVE — F1–F5 are built. F6 (Insights card) is ready now, backend Phase E locked 2026-09-14.
+**Status:** COMPLETE — F1–F6 are all built. This is the whole originally-scoped Review page. F7
+(Effort Terrain) remains optional/stretch; nothing else is queued unless the user asks.
 **Owner:** Janhwi builds, Mukund (Claude Code) keeps this doc current before announcing a phase
 "contract locked" — same rule `wave1-frontend-briefs.md` and `mtdo-web-dev-split-plan.md` §3 already
 use.
@@ -315,7 +316,16 @@ this is a read-only summary panel.
 
 ---
 
-## F6 — Insights card (ready now, backend Phase E locked 2026-09-14)
+## F6 — Insights card — **BUILT, 2026-09-13 (PR #199)**
+
+Built by Mukund (Claude Code) while Janhwi was unavailable. `review-insights.tsx` renders
+`buildReviewInsights()`'s output as a short factual list. The `study_profile()` fetch was lifted
+out of `review-study-profile.tsx` into a shared `use-study-profile.ts` hook, owned by `ReviewDeck`
+and passed to both F5 and F6 as props — the RPC is called once per page load, not once per card.
+**F1–F6 are all shipped — the full Review page (rings, consistency, time behavior, study profile,
+insights) is complete.**
+
+## F6 — Insights card, original brief text (kept for reference, backend Phase E locked 2026-09-14)
 
 **Depends on:** `web/lib/review/insights.ts`'s `buildReviewInsights()` (`api.md` §3o) — merged,
 unit-tested (18/18, boundary-tested at every threshold). **Not an RPC** — a pure TS function over
