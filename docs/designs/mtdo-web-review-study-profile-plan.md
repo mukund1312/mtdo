@@ -254,9 +254,11 @@ system, which `CLAUDE.md` requires explicit approval for before building.
 palette** rather than either flattening the rings into existing tokens or leaving color
 undecided. Concretely, before Janhwi's F2:
 
-1. Mukund proposes 3 new tokens (`--review-focus`, `--review-execute`, `--review-progress`) as a
-   `DESIGN.md` addendum — colors close to the reference mock's pink/lime/violet, adjusted only as
-   needed for AA contrast against Graphite's `#0B0B0C` background.
+1. **Shipped, 2026-09-13**: 3 new tokens as a `DESIGN.md` addendum ("Review page ring tokens",
+   under §Color) — `--review-focus: #FF4F78` (coral/pink), `--review-execute: #C8FF45` (lime),
+   `--review-progress: #3B82F6` (**blue, not violet**). DESIGN.md's existing "no purple" rule
+   surfaced only after the first approval above, on a closer read — re-asked and resolved
+   2026-09-13: **zero exceptions**, Progress uses blue instead of the reference mock's violet.
 2. These tokens are scoped to the Review page's rings/heatmap/charts only — they do not bleed into
    buttons, nav, or any other screen's semantics. `--live` (ember) keeps its existing exclusive
    meaning ("something is happening right now") and is not reused for a ring.

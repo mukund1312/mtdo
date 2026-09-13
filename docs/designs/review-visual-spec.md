@@ -12,10 +12,13 @@ grid, card borders, spacing, type (Satoshi), motion rules.
 ## New tokens (Review-page scoped only — do not use elsewhere)
 
 ```css
---review-focus:     /* pink/coral, close to reference #FF4F78–#F2386B, contrast-checked vs #0B0B0C */
---review-execute:   /* acid lime, close to reference #C8FF45–#AEEE49 */
---review-progress:  /* violet, close to reference #A05BFF–#8D63FF */
+--review-focus:    #FF4F78;   /* coral/pink */
+--review-execute:  #C8FF45;   /* acid lime */
+--review-progress: #3B82F6;   /* blue -- NOT violet/purple; DESIGN.md's "no purple" rule has zero exceptions */
 ```
+
+These are now live in `DESIGN.md` ("Review page ring tokens" under §Color) — this doc just explains
+how to use them, it is not their source of truth.
 
 `--accent` (cyan) keeps its existing whole-product meaning and is reused here for **observed
 behavioral data** (time-of-day charts, session-length bars, plan-vs-actual's "actual" bar) — not a
@@ -58,9 +61,10 @@ product stays "this is happening right now" (an active focus session), per `DESI
 
 ## Plan vs. reality (existing weekly-engine data, new UI)
 
-- Planned bar: a muted violet/lavender tone (intent), actual bar: `--accent` cyan (observed) —
-  matches the plan's stated rule "purple/violet = intent, cyan = observed, lime = successful
-  result," applied consistently rather than per-chart ad hoc choices.
+- Planned bar: a muted `--muted`/`--dim` neutral tone (intent), actual bar: `--accent` cyan
+  (observed) — "neutral = intent, cyan = observed, lime = successful result," applied consistently
+  rather than per-chart ad hoc choices. (The reference mock used violet for "intent"; not used here
+  since `--review-progress` already claims blue and DESIGN.md's "no purple" rule stays intact.)
 
 ## Insights card (Phase E / F6)
 
