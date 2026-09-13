@@ -1290,6 +1290,89 @@ control on the server** — no play/pause/seek route and no call to Spotify's We
 endpoints — so nothing unattended can start audio on a user's account. The scopes Spotify
 actually *granted* are stored on the connection row, not the ones requested.
 
+## 3j. `review_daily_summary()` — the three daily rings (Review page, Phase A, migrations/0025)
+
+**Read `docs/designs/mtdo-web-review-study-profile-plan.md` §4 Phase A first.** This is the
+backend half of the new Review page (Focus / Execute / Progress rings). It exists specifically so
+that formula does not get reimplemented a second time on the frontend, or a third time later.
+
+```sql
+public.review_daily_summary(p_date date default null) returns jsonb
+```
+
+`authenticated`-callable, `security definer`, `stable`, derives the user from `auth.uid()` and
+takes **no plan id** — it resolves the caller's own active plan itself (`plans.is_active`,
+`plans_one_active` guarantees at most one). `p_date` defaults to "today" in the caller's own
+`profiles.timezone` (UTC fallback, same rule every timezone-aware RPC in this file uses). TS
+mirrors + a narrowing helper are exported from `web/lib/review/types.ts` (`asReviewDailySummary()`)
+— import those rather than casting the RPC's generated `Json`, same rule §3f's
+`asWeeklyPerformance()` already established.
+
+**Why this is not a fourth aggregation table.** `daily_rollups` (§3a) is user+day grain with no
+plan/category breakdown at all — it cannot answer "how much of today's plan got done." So Focus
+and Execute here re-run a **narrowed, single-date** version of `weekly_performance()`'s own
+block/session aggregation (same ledger last-event-wins rule, same `least(elapsed, planned)` cap).
+**Progress does not get a new formula at all** — it calls `weekly_performance()` itself for the
+ISO week containing `p_date` and reports that week's `plan.score`/`plan.score_max` as of right
+now. "How much of this week's goal is satisfied, read on this particular day" is what today's
+work has actually contributed to so far — not a second, competing definition of progress. A true
+route/milestone-level progress model is an explicitly-named later phase, not this one.
+
+**Return shape** (`mtdo.review_daily_summary.v1`):
+
+```jsonc
+// status: "ok" (an active plan exists)
+{
+  "schema_version": "mtdo.review_daily_summary.v1",
+  "date": "2026-09-01", "timezone": "UTC", "plan_id": "…", "iso_week": "2026-W36",
+  "computed_at": "…", "status": "ok",
+  "focus": {
+    "metric_version": "focus_v1",
+    "focus_minutes": 35.0, "target_minutes": 50.0, "percentage": 70.0,
+    "session_count": 2, "completed_sessions": 1, "longest_session_minutes": 25.0
+  },
+  "execute": {
+    "metric_version": "execute_v1",
+    "tasks_done": 2, "tasks_picked": 3, "percentage": 66.7,
+    "score": 3, "score_max": 4
+  },
+  "progress": {
+    "metric_version": "progress_v1",
+    "week_score": 3, "week_score_max": 3, "percentage": 100.0
+  }
+}
+// status: "no_active_plan" — every ring is null, never a fake zero ring
+{
+  "schema_version": "mtdo.review_daily_summary.v1",
+  "date": "2026-09-01", "timezone": "UTC", "computed_at": "…",
+  "status": "no_active_plan", "focus": null, "execute": null, "progress": null
+}
+```
+
+⚠️ **Every `percentage` (and `focus.target_minutes`) is `null` when its denominator is zero or
+absent, never `0`** — the same rule §3f's whole engine turns on, applied here:
+
+| field | `null` means |
+|---|---|
+| `focus.target_minutes` / `focus.percentage` | none of today's picked blocks carry an `estimated_minutes` — there is no per-user daily focus-minutes setting anywhere in this schema, and V1 deliberately does not invent one (see the migration's own header for why that would repeat 0021's "never invent availability" mistake) |
+| `execute.percentage` | nothing was picked (scheduled) for today at all — "nothing planned" is not "0% executed" |
+| `progress.percentage` | the current week's `score_max` is 0 — no category was picked from at all this week |
+
+**What each number means, where it is non-obvious:**
+
+- **`execute.score`/`execute.score_max` are weighted by category `score_weight`**, summed per
+  picked block (a block in a 2-weight category contributes 2 to `score_max`, done or not, and 2 to
+  `score` only if done). This is deliberately allowed to differ from the raw
+  `tasks_done`/`tasks_picked` ratio when today's categories carry unequal weights — both are
+  returned so a UI can choose either, but they are not the same number by design.
+- **`focus.longest_session_minutes` and `session_count`/`completed_sessions`** come straight from
+  `focus_sessions` for the date, with no `block_id` requirement — an unscheduled focus session
+  still counts toward Focus, same as `daily_rollups` already treats a session with no linked block.
+- **This is read-computed, never materialized** — same reasoning as `daily_rollups` and
+  `weekly_performance()` (`decisions.md` 2026-09-06, 2026-09-11): read a handful of times per user
+  per day, by a human looking at the Review page, with no freshness argument for a cron-maintained
+  table.
+
 ## 4. The EmberMorph component contract
 
 `DESIGN.md` §Motion specifies the morph itself (`Graphite home → ember bloom → terminal focus

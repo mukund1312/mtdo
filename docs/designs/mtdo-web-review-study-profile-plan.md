@@ -126,7 +126,13 @@ Each phase = one migration + doc update + tests, ends in a "contract locked" ann
 stops. Same discipline the existing weekly-engine work already used — do not start phase N+1 before
 N is merged and documented.
 
-### Phase A — `review_daily_summary()`: the three rings, at daily grain
+### Phase A — `review_daily_summary()`: the three rings, at daily grain — **CONTRACT LOCKED, 2026-09-13**
+
+`migrations/0025_review_daily_summary.sql`, `docs/architecture/api.md` §3j, `web/lib/review/types.ts`
+(`ReviewDailySummary` + `asReviewDailySummary()`), `supabase/tests/17_review_daily_summary.sql` (25
+assertions: the three rings over a normal day, the null-not-zero rule on a quiet day, no-active-plan,
+default-date resolution, cross-user isolation). Full suite (`supabase/tests/run.sh`) passes,
+131 assertions. **Janhwi can start F2 (Rings) against this contract now.**
 
 - New `security definer stable` RPC, `review_daily_summary(p_date date, p_timezone text default
   null) returns jsonb`, deriving the caller from `auth.uid()` like every other RPC here.
