@@ -232,6 +232,64 @@ sign-in instead of four).
 
 ---
 
+## [e2e] 2026-09-13 (PR #171, merged) — reduce the e2e suite's own anonymous sign-in volume
+
+PRs #170 and #168 both went red overnight on the same shared test files, at nearly the same
+timestamps, with no code change between runs. Root cause (confirmed directly, not inferred): the
+Supabase project's own auth rate limit on `/auth/v1/signup` -- the dashboard's Auth Logs showed a
+real burst of `429`s, and a live `curl -X POST .../auth/v1/signup` reproduced `429` on demand
+during this session. Every test in this suite that uses Playwright's default `page` fixture, or
+creates its own `browser.newPage()`, mints a **brand-new real anonymous Supabase account** --
+`proxy.ts` signs one in on first request. A full serial run was making far more of these than the
+scenarios under test actually needed.
+
+Explicitly chosen over the other option on the table (raising the Supabase rate limit / paying to
+upgrade): reduce what the suite itself asks for. Converted 6 files to share ONE anonymous session
+across tests that don't need their own (`test.describe.serial` + a manually created/closed `page`,
+the pattern `phase6b-calendar-editing.spec.ts` and `session-rpc-contract.spec.ts` already
+established) -- `fixed-layer-safety.spec.ts`, `settings.spec.ts`, `signal-deck-home-session.spec.ts`,
+`phase3-plan-pipeline.spec.ts`, `onboarding.spec.ts`, `phase7-weekly-review.spec.ts`.
+
+**The constraint that decided every merge/no-merge call:** this project enforces one active plan
+per user (`plans_one_active`). Two tests that each independently create a plan (Manual Setup,
+Guided AI onboarding, Import) cannot safely share a session -- the second creation would silently
+change what the second test is actually exercising ("import as a fresh first plan" vs "import
+while replacing an existing plan"), not just slow it down. `phase5-kanban-metadata.spec.ts` and
+`phase6-calendar.spec.ts` were read in full and left untouched for exactly this reason: every test
+in both files creates its own plan via a shared helper. Within `phase7-weekly-review.spec.ts`,
+confirmed first that `seed_weekly_engine_demo()` itself unconditionally deactivates whatever plan
+the target user already has before creating its own fixture plan -- that's what made merging its
+three tests (one of which previously minted a session in CI only to immediately `test.skip()`,
+pure waste) safe rather than a guess.
+
+**Concrete reduction** (counted via `grep -c 'async ({.*page' + browser.newPage()` across
+merge-base vs. this branch): the 6 converted files went from 25 sign-ins to 10. Suite-wide,
+~32 -> 17.
+
+**Honest result, not a full fix:** even after this cut, one full local serial run of the whole
+suite still tripped the same `429` partway through -- confirmed live (`curl` to the signup
+endpoint went `200` right before the run, `429` several times during it, `200` again ~20s after
+the run's own probing stopped). 17 real sign-ins inside a ~5 minute run is still enough to cross
+whatever this project's Supabase tier's actual threshold is. CI runs `workers: 1`,
+`fullyParallel: false` already (matches this session's local runs) with 2 retries, which will
+mask some but not all of these. This PR is a real, verified, zero-risk-added improvement -- every
+touched file passed individually against a production build when the endpoint wasn't currently
+rate-limited -- but it is not, by itself, a guarantee that CI stops going red. Closing that gap
+the rest of the way means either accepting real correctness risk to convert the plan-creating
+files too, or the option this session deliberately deferred: raising the Supabase auth rate limit.
+
+**Files changed:** `e2e/fixed-layer-safety.spec.ts`, `e2e/settings.spec.ts`,
+`e2e/signal-deck-home-session.spec.ts`, `e2e/phase3-plan-pipeline.spec.ts`, `e2e/onboarding.spec.ts`,
+`e2e/phase7-weekly-review.spec.ts`. No schema/RLS/RPC/app code touched -- test files only.
+
+**Also surfaced this session, unrelated, not yet acted on:** the connected Anthropic account is
+returning `400 "Your credit balance is too low to access the Anthropic API"` on every real call.
+The app's own failure contract falls back to a static plan cleanly (by design, no user-facing
+break), but every real onboarding right now -- test or production -- is silently getting the
+static fallback plan, not an AI-generated one, until that account is topped up.
+
+---
+
 ## [backend] 2026-09-13 (PR pending) — Spotify: a real OAuth + token backend behind the Listen deck
 
 The Listen deck has been a fake player over hardcoded `MockTrack` data since it was built. This

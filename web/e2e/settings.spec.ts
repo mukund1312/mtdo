@@ -1,5 +1,14 @@
-import { test, expect } from "@playwright/test";
+import { test, expect, type Page } from "@playwright/test";
 import { openSignalDeckDestination } from "./helpers/signal-deck";
+
+// This file's first test builds a real plan and must stay on its own,
+// separate anonymous session -- the four tests below it all specifically
+// assert the NO-active-route / fresh-account state, so sharing a session
+// with the plan-creating test would break every one of them. Those four,
+// though, never create a plan among themselves, so they share ONE session
+// (test.describe.serial + a manually created page, the pattern
+// phase6b-calendar-editing.spec.ts established) rather than four separate
+// sign-ins -- cutting this file's total from 5 down to 2.
 
 // Planning mode (migrations/0017) is real now, not a localStorage draft --
 // the wizard's choice is sent to POST /api/onboarding/plan and lands on
@@ -49,10 +58,21 @@ test("Planning mode: choice in onboarding persists, and Settings can change it f
   );
 });
 
+test.describe.serial("Settings: fresh-account / no-active-route states", () => {
+  let page: Page;
+
+  test.beforeAll(async ({ browser }) => {
+    page = await browser.newPage();
+  });
+
+  test.afterAll(async () => {
+    await page.close();
+  });
+
 // A fresh session with no active route yet must not show a live control
 // with nothing real to save it to -- the exact "fake surface" class of bug
 // Phase 1 spent its whole scope removing.
-test("Settings shows an honest empty state for planning mode when there is no active route", async ({ page }) => {
+test("Settings shows an honest empty state for planning mode when there is no active route", async () => {
   await page.goto("/architecture-02/settings");
   await expect(page.getByRole("heading", { name: /under the hood/i })).toBeVisible();
   await page.getByRole("button", { name: "Planning & Route" }).click();
@@ -64,7 +84,7 @@ test("Settings shows an honest empty state for planning mode when there is no ac
 // Phase 2's frontend piece: Settings -> AI is a real status panel backed by
 // GET /api/ai/status, not a static mock -- and the "More" dock button
 // (previously dead, no onClick) now actually navigates there.
-test("Settings launcher opens Settings, which shows real AI provider status", async ({ page }) => {
+test("Settings launcher opens Settings, which shows real AI provider status", async () => {
   await page.goto("/architecture-02");
   await page.getByRole("button", { name: /close walkthrough/i }).click();
 
@@ -91,7 +111,7 @@ test("Settings launcher opens Settings, which shows real AI provider status", as
 // the missing variables, and does NOT render a Connect button that would
 // bounce the user off to a half-built Google URL. It also asserts the line
 // that matters most for the product: scheduling still works without it.
-test("Settings -> Calendar reports 'not configured' cleanly when Google isn't set up", async ({ page }) => {
+test("Settings -> Calendar reports 'not configured' cleanly when Google isn't set up", async () => {
   await page.goto("/architecture-02/settings");
   await expect(page.getByRole("heading", { name: /under the hood/i })).toBeVisible();
   await page.getByRole("button", { name: "Integrations" }).click();
@@ -108,7 +128,7 @@ test("Settings -> Calendar reports 'not configured' cleanly when Google isn't se
 // The routes themselves must degrade, not crash -- an unconfigured server
 // answers with a real status code and a machine-readable reason, never a 500
 // and never a redirect into a broken OAuth flow.
-test("Calendar routes degrade cleanly when Google isn't configured", async ({ page }) => {
+test("Calendar routes degrade cleanly when Google isn't configured", async () => {
   // Establish the anonymous session the routes require, the same way every
   // other authenticated surface in this suite does.
   await page.goto("/architecture-02");
@@ -132,4 +152,6 @@ test("Calendar routes degrade cleanly when Google isn't configured", async ({ pa
 
   const sync = await page.request.post("/api/calendar/sync", { data: { blockId: "nope", enabled: true } });
   expect(sync.status()).toBe(503);
+});
+
 });

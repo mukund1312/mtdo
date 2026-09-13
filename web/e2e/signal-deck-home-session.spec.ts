@@ -1,4 +1,4 @@
-import { test, expect } from "@playwright/test";
+import { test, expect, type Page } from "@playwright/test";
 import { openSignalDeckDestination } from "./helpers/signal-deck";
 
 // Phase 1 of the operating-engine plan ("make the shipped surfaces honest")
@@ -8,10 +8,39 @@ import { openSignalDeckDestination } from "./helpers/signal-deck";
 // the plan's own P1 verification bar -- "every Home/Session number
 // traceable to a row; no literal task strings remain" -- run against a
 // real anonymous session and a real persisted plan, not a mock.
+//
+// ONE shared session for all three tests (test.describe.serial), not three
+// -- safe here specifically because of this file's existing test ORDER:
+// test 1 needs no-active-route, test 2 doesn't care either way, test 3
+// creates a real plan. State only ever moves one direction (no plan ->
+// plan exists), so running them in this exact sequence on one shared
+// session is correct, not just convenient. Do not reorder these three
+// tests without re-checking this reasoning.
+//
+// The first-time walkthrough only ever shows once per session (it sets its
+// own dismissed-flag on close) -- a shared page means only test 1 will
+// actually see it; a later test's own "close walkthrough" click must be
+// conditional or it fails outright on a button that's legitimately gone.
 
-test("Home and Time show honest empty states for a brand-new user, no fake literals", async ({ page }) => {
+async function closeWalkthroughIfPresent(page: Page) {
+  const close = page.getByRole("button", { name: /close walkthrough/i });
+  if (await close.isVisible().catch(() => false)) await close.click();
+}
+
+test.describe.serial("Signal Deck: Home, Time and Session, honest end to end", () => {
+  let page: Page;
+
+  test.beforeAll(async ({ browser }) => {
+    page = await browser.newPage();
+  });
+
+  test.afterAll(async () => {
+    await page.close();
+  });
+
+test("Home and Time show honest empty states for a brand-new user, no fake literals", async () => {
   await page.goto("/architecture-02");
-  await page.getByRole("button", { name: /close walkthrough/i }).click();
+  await closeWalkthroughIfPresent(page);
 
   // The old static markup showed "Two Sum" in three separate places and a
   // fabricated "3h 20m" / "4-day signal" regardless of account state. None
@@ -45,7 +74,7 @@ test("Home and Time show honest empty states for a brand-new user, no fake liter
   await expect(page.getByText(today, { exact: false })).toBeVisible();
 });
 
-test("marketing root links to the real app", async ({ page }) => {
+test("marketing root links to the real app", async () => {
   await page.goto("/");
   const openApp = page.getByRole("link", { name: /open the app/i });
   await expect(openApp).toBeVisible();
@@ -53,9 +82,9 @@ test("marketing root links to the real app", async ({ page }) => {
   await expect(page).toHaveURL(/\/architecture-02$/);
 });
 
-test("Home reflects a real picked task and Session shows real, non-fake coaching", async ({ page }) => {
+test("Home reflects a real picked task and Session shows real, non-fake coaching", async () => {
   await page.goto("/architecture-02");
-  await page.getByRole("button", { name: /close walkthrough/i }).click();
+  await closeWalkthroughIfPresent(page);
   await page.getByRole("link", { name: /set up your route/i }).click();
   await expect(page).toHaveURL(/\/architecture-02\/onboarding$/);
   await page.getByRole("button", { name: /guided ai/i }).click();
@@ -125,4 +154,6 @@ test("Home reflects a real picked task and Session shows real, non-fake coaching
   // "Watch for" sections render something, whatever the merge produced.
   await expect(page.getByText("Ask yourself")).toBeVisible();
   await expect(page.getByText("Watch for")).toBeVisible();
+});
+
 });
