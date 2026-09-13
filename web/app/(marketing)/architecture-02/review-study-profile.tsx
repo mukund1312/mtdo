@@ -1,18 +1,18 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
-
-import { createClient } from "@/lib/supabase/client";
-import { asStudyProfile, type StudyProfile } from "@/lib/review/types";
-
 import { DURATION_LABELS, WEEKDAY_NAMES, formatHour } from "./review-time-behavior";
+import type { UseStudyProfileResult } from "./use-study-profile";
 
-// F5 of docs/designs/review-frontend-briefs.md: the Study Profile panel,
-// reading study_profile() (migrations/0031) via asStudyProfile(). Every
-// field on focus/execution/planning and every subject is INDEPENDENTLY
-// nullable -- this is not one loading/ready toggle for the whole card, each
-// trait renders its own "not enough data yet" state when its value is null,
-// alongside other traits that ARE ready, on the same load.
+// F5 of docs/designs/review-frontend-briefs.md: the Study Profile panel.
+// Every field on focus/execution/planning and every subject is
+// INDEPENDENTLY nullable -- this is not one loading/ready toggle for the
+// whole card, each trait renders its own "not enough data yet" state when
+// its value is null, alongside other traits that ARE ready, on the same
+// load.
+//
+// Presentational only, as of F6: the study_profile() fetch lives in
+// useStudyProfile() (ReviewDeck owns the call), shared with ReviewInsights
+// so the RPC is never called twice for one page load.
 
 const CONFIDENCE_LABEL: Record<string, string> = {
   insufficient_data: "not enough data",
@@ -51,39 +51,13 @@ function Trait({
   );
 }
 
-export function ReviewStudyProfile() {
-  const [profile, setProfile] = useState<StudyProfile | null>(null);
-  const [state, setState] = useState<"loading" | "ready" | "error">("loading");
-
-  const load = useCallback(async () => {
-    setState("loading");
-    const supabase = createClient();
-    const { data, error } = await supabase.rpc("study_profile", { p_window_days: 42 });
-    if (error) {
-      console.error("[review] failed to load study profile:", error);
-      setState("error");
-      return;
-    }
-    try {
-      setProfile(asStudyProfile(data));
-      setState("ready");
-    } catch (parseError) {
-      console.error("[review] malformed study profile response:", parseError);
-      setState("error");
-    }
-  }, []);
-
-  useEffect(() => {
-    const timer = window.setTimeout(() => void load(), 0);
-    return () => window.clearTimeout(timer);
-  }, [load]);
-
+export function ReviewStudyProfile({ profile, state, reload }: UseStudyProfileResult) {
   if (state === "error") {
     return (
       <section className="a02-product-state" role="alert">
         <b>Your study profile is unavailable.</b>
         <p>We could not read your profile. Nothing has been changed.</p>
-        <button type="button" onClick={() => void load()}>Try again ↗</button>
+        <button type="button" onClick={reload}>Try again ↗</button>
       </section>
     );
   }

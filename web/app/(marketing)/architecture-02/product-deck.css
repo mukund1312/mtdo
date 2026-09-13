@@ -135,3 +135,13 @@
 .a02-subject-card--avoided b { color:var(--cobalt); }
 @media(max-width:900px){.a02-study-profile,.a02-study-profile-empty{margin:22px 18px 0}.a02-trait-grid,.a02-subject-grid{grid-template-columns:1fr 1fr}}
 @media(max-width:560px){.a02-trait-grid,.a02-subject-grid{grid-template-columns:1fr}}
+
+/* Insights card (F6). */
+.a02-insights { margin:22px clamp(26px,7vw,112px) 32px; padding:22px; border:1px solid var(--line); border-radius:11px; background:rgba(15,18,49,.72); }
+.a02-insights header { font:10px "DM Mono",monospace; color:var(--dim); letter-spacing:.08em; }
+.a02-insight-list { display:flex; flex-direction:column; gap:12px; margin:18px 0 0; padding:0; list-style:none; }
+.a02-insight-list li { display:flex; align-items:start; gap:10px; color:var(--ink); font-size:13px; line-height:1.5; }
+.a02-insight-glyph { flex-shrink:0; font-style:normal; line-height:1.5; }
+.a02-insight-glyph--acid { color:var(--acid); }
+.a02-insight-glyph--aqua { color:var(--aqua); }
+@media(max-width:900px){.a02-insights{margin:22px 18px 32px}}
