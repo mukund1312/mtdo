@@ -13,7 +13,7 @@ import { ReviewSessionQuality } from "./review-session-quality";
 import { ReviewPlanVsReality } from "./review-plan-vs-reality";
 import { ReviewGoalBalance } from "./review-goal-balance";
 import { ReviewStudyProfile } from "./review-study-profile";
-import { WeeklyReviewPanel } from "./weekly-review";
+import { ProgressDeck } from "./progress-deck";
 
 import { useDailySummary } from "./use-daily-summary";
 import { useMomentum } from "./use-momentum";
@@ -104,14 +104,19 @@ export function ReviewDeck() {
 
             <ReviewStudyProfile {...studyProfile} />
 
-            {/* Not in the reference mock's screenshot, but this is the ONLY
-                place in the app that renders the weekly engine's
-                accept/reject proposal UI (previously reached through
-                ProgressDeck, now removed from this page to match the mock).
-                Kept mounted rather than silently cutting off reachability to
+            {/* Not in the reference mock's screenshot, but ProgressDeck is
+                the ONLY place in the app that renders (a) the six-week
+                consistency heatmap + Record Card export dialog (real,
+                tested functionality -- e2e/onboarding.spec.ts's "Review
+                shows an honest empty heatmap and view-only Record Card")
+                and (b) the weekly engine's accept/reject proposal UI, which
+                it mounts internally (WeeklyReviewPanel). Kept mounted below
+                the fold rather than silently cutting off reachability to
                 real, working functionality -- flagged to the user directly,
-                not buried. */}
-            <WeeklyReviewPanel />
+                not buried. Do not also import WeeklyReviewPanel directly
+                here -- ProgressDeck already renders it, and a second mount
+                would duplicate it on the page. */}
+            <ProgressDeck />
           </>
         ) : (
           <section className="a02-review a02-review-coming-soon" aria-live="polite">
