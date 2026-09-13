@@ -103,7 +103,7 @@ function ArchitectureTwoDeck() {
     // first-time visitor who reaches this page without having dismissed the
     // tour on an earlier visit. The handoff wins; the tour is still one
     // click away via "? Guide".
-    if (isDeck(searchParams.get("deck"))) return;
+    if (isDeck(searchParams.get("deck")) || searchParams.has("nav")) return;
     try {
       if (!window.localStorage.getItem(SIGNAL_DECK_WALKTHROUGH_STORAGE_KEY)) {
         const timer = window.setTimeout(() => setWalkthroughOpen(true), 0);
