@@ -643,45 +643,56 @@
 }
 
 .rd-terrain-wrap {
-  height: 280px;
+  height: 340px;
   border-radius: 10px;
   overflow: hidden;
-  background: radial-gradient(ellipse at 50% 100%, rgba(139,92,246,0.06), transparent 70%);
+  background: #070b16;
   position: relative;
 }
 .rd-terrain-months {
-  display: flex;
-  justify-content: space-between;
-  font-size: 11px;
-  color: var(--rd-text-muted);
-  margin-top: 8px;
-  padding: 0 8px;
+  font-size: 12px;
+  color: #75809f;
+  margin-top: 10px;
+  padding: 0 4px;
 }
 .rd-terrain-tooltip {
   position: absolute;
   pointer-events: none;
-  background: rgba(10, 14, 26, 0.96);
-  border: 1px solid var(--rd-border);
-  border-radius: 8px;
-  padding: 10px 12px;
-  font-size: 12px;
+  background: rgba(6, 11, 24, 0.96);
+  border: 1px solid rgba(100, 130, 190, 0.22);
+  border-radius: 9px;
+  padding: 14px 16px;
+  font-size: 12.5px;
   color: var(--rd-text-secondary);
-  min-width: 150px;
+  width: 220px;
   z-index: 5;
 }
 .rd-terrain-tooltip b {
   color: var(--rd-text-primary);
   display: block;
-  margin-bottom: 4px;
+  margin-bottom: 8px;
+}
+.rd-terrain-tooltip-row {
+  display: flex;
+  justify-content: space-between;
+  padding: 3px 0;
+}
+.rd-terrain-tooltip-row span {
+  color: var(--rd-text-muted);
+}
+.rd-terrain-tooltip-row b {
+  margin: 0;
+  color: var(--rd-lime);
+  font-weight: 700;
 }
 .rd-terrain-tooltip .rd-peak-badge {
   display: inline-block;
-  margin-top: 6px;
+  margin-top: 8px;
   font-size: 10.5px;
-  color: var(--rd-lime);
-  border: 1px solid rgba(183, 255, 86, 0.35);
+  color: var(--rd-cyan);
+  border: 1px solid rgba(61, 217, 255, 0.35);
   border-radius: 4px;
-  padding: 1px 6px;
+  padding: 2px 7px;
 }
 
 /* ---------- third row ---------- */
