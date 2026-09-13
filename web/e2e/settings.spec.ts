@@ -60,6 +60,27 @@ test("Settings shows an honest empty state for planning mode when there is no ac
   await expect(page.getByRole("radiogroup", { name: /planning mode/i })).toHaveCount(0);
 });
 
+test("Appearance keeps the theme and Dock style as independent persisted preferences", async ({ page }) => {
+  await page.goto("/architecture-02/settings");
+  const theme = page.getByRole("radiogroup", { name: "Theme" });
+  await expect(theme).toBeVisible();
+  await expect(theme.getByRole("radio", { name: /dark/i })).toHaveAttribute("aria-checked", "true");
+
+  await theme.getByRole("radio", { name: /light/i }).click();
+  await expect(theme.getByRole("radio", { name: /light/i })).toHaveAttribute("aria-checked", "true");
+  await expect(page.locator("html")).toHaveAttribute("data-a02-theme", "light");
+  await expect(page.locator("main.a02-shell")).toHaveCSS("background-color", "rgb(245, 245, 250)");
+
+  const dockStyles = page.getByRole("radiogroup", { name: /dock style/i });
+  await dockStyles.getByRole("radio", { name: /orbit menu/i }).click();
+  await expect(dockStyles.getByRole("radio", { name: /orbit menu/i })).toHaveAttribute("aria-checked", "true");
+
+  await page.reload();
+  await expect(page.locator("html")).toHaveAttribute("data-a02-theme", "light");
+  await expect(page.getByRole("radiogroup", { name: "Theme" }).getByRole("radio", { name: /light/i })).toHaveAttribute("aria-checked", "true");
+  await expect(page.getByRole("radiogroup", { name: /dock style/i }).getByRole("radio", { name: /orbit menu/i })).toHaveAttribute("aria-checked", "true");
+});
+
 
 // Phase 2's frontend piece: Settings -> AI is a real status panel backed by
 // GET /api/ai/status, not a static mock -- and the "More" dock button

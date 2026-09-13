@@ -39,6 +39,7 @@ type ListenState = {
   radioError: string | null;
   selectStation: (station: RadioStation) => void;
   toggleRadio: () => void;
+  pauseRadio: () => void;
   nextStation: () => void;
   previousStation: () => void;
   favoriteStations: Set<string>;
@@ -295,6 +296,20 @@ export function SignalDeckListenProvider({ children }: { children: ReactNode }) 
     audio.pause();
   }, [selectedStation, startRadioPlayback]);
 
+  // Consumers such as Break Mode need a deterministic stop operation. A
+  // toggle is not safe while a stream is buffering because its paused state
+  // can still be true even though the user has already requested playback.
+  const pauseRadio = useCallback(() => {
+    radioPlayAttemptRef.current += 1;
+    if (radioTuningTimerRef.current !== null) {
+      window.clearTimeout(radioTuningTimerRef.current);
+      radioTuningTimerRef.current = null;
+    }
+    const audio = radioAudioRef.current;
+    if (audio && !audio.paused) audio.pause();
+    if (selectedStationRef.current) setRadioPlayback("paused");
+  }, []);
+
   const value = useMemo<ListenState>(() => ({
     mode,
     setMode,
@@ -320,6 +335,7 @@ export function SignalDeckListenProvider({ children }: { children: ReactNode }) 
     radioError,
     selectStation,
     toggleRadio,
+    pauseRadio,
     nextStation: () => stationAtOffset(1),
     previousStation: () => stationAtOffset(-1),
     favoriteStations,
@@ -333,7 +349,7 @@ export function SignalDeckListenProvider({ children }: { children: ReactNode }) 
     setShuffle,
     repeat,
     cycleRepeat: () => setRepeat((current) => current === "off" ? "all" : current === "all" ? "one" : "off"),
-  }), [activeProviderId, connect, connections, currentTrack, currentTrackProviderId, disconnect, favoriteStations, mode, musicPlaying, nextTrack, position, previousTrack, queue, radioError, radioPlayback, repeat, selectedStation, selectStation, setTrack, shuffle, stationAtOffset, toggleRadio, volume]);
+  }), [activeProviderId, connect, connections, currentTrack, currentTrackProviderId, disconnect, favoriteStations, mode, musicPlaying, nextTrack, pauseRadio, position, previousTrack, queue, radioError, radioPlayback, repeat, selectedStation, selectStation, setTrack, shuffle, stationAtOffset, toggleRadio, volume]);
 
   return <ListenContext.Provider value={value}>{children}<audio ref={radioAudioRef} data-testid="signal-deck-radio-audio" preload="none" /></ListenContext.Provider>;
 }

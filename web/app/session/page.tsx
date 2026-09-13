@@ -2,10 +2,15 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { EmberMorph, type EmberMorphTrigger } from "@/components/EmberMorph";
+import { FocusBreakActivities } from "@/components/FocusBreakActivities";
+import { FocusCompletionConfetti } from "@/components/FocusCompletionConfetti";
+import { FocusListeningStudio } from "@/components/FocusListeningStudio";
+import { useSignalDeckListen } from "@/app/(marketing)/architecture-02/listen-state";
 import { createClient } from "@/lib/supabase/client";
 import { recordEvent } from "@/lib/analytics/record-event";
 import { buildCoachingContent, type CategoryMeta, type CoachingFields } from "@/lib/coaching/build-coaching-content";
 import { useFocusTimerPreference } from "@/lib/preferences/focus-timer";
+import { useFocusSandglassPreference } from "@/lib/preferences/focus-sandglass";
 import styles from "./session.module.css";
 
 type FocusSession = {
@@ -31,7 +36,7 @@ type LinkedBlock = {
   text: string;
 };
 
-type SessionPhase = "ready" | "starting" | "active" | "outcome" | "exiting";
+type SessionPhase = "ready" | "starting" | "active" | "outcome" | "celebrating" | "exiting";
 const EXTENSION_PROMPT_AT_S = 5 * 60;
 const BREAK_STORAGE_PREFIX = "mtdo:focus-breaks:";
 // Shown when a session was started without a linked block (Home's generic
@@ -111,7 +116,9 @@ function messageFrom(error: { code?: string; message?: string } | null) {
 }
 
 export default function SessionPage() {
+  const listen = useSignalDeckListen();
   const [showFocusTimer, setShowFocusTimer] = useFocusTimerPreference();
+  const [showSandglass, setShowSandglass] = useFocusSandglassPreference();
   const [phase, setPhase] = useState<SessionPhase>("ready");
   const [session, setSession] = useState<FocusSession | null>(null);
   const [elapsedS, setElapsedS] = useState(0);
@@ -380,9 +387,13 @@ export default function SessionPage() {
       setNotice(messageFrom(error));
       return;
     }
+    // Break audio belongs to the break. Once the pause has been successfully
+    // released (manually or at its scheduled end), leave the station selected
+    // but silence the one shared player before focus resumes.
+    if (breakEndsAt !== null) listen.pauseRadio();
     setBreakEndsAt(null);
     setNotice(null);
-  }, [isSettling, session, updateSessionFromRpc]);
+  }, [breakEndsAt, isSettling, listen, session, updateSessionFromRpc]);
 
   const extendSession = useCallback(async () => {
     if (!session || isSettling || extensionMinutes < 1 || extensionMinutes > 1440) return;
@@ -419,7 +430,7 @@ export default function SessionPage() {
       setNotice(messageFrom(error));
       return;
     }
-    setPhase("exiting");
+    setPhase(outcome === "done" ? "celebrating" : "exiting");
   }, [isSettling, leftoverNote, session]);
 
   // A planned break is a persisted schedule plus the same pause mechanic the
@@ -503,14 +514,14 @@ export default function SessionPage() {
           plannedDurationS: session.planned_duration_s,
           elapsedS,
         }
-      : (phase === "active" || phase === "outcome") && session
+      : (phase === "active" || phase === "outcome" || phase === "celebrating") && session
         ? {
             phase: "active",
             sessionId: session.id,
             plannedDurationS: session.planned_duration_s,
             elapsedS,
             originRect,
-            status: phase === "outcome" ? "complete" : session.paused_at ? "paused" : "active",
+            status: phase === "outcome" || phase === "celebrating" ? "complete" : session.paused_at ? "paused" : "active",
           }
         : { phase: "idle" };
 
@@ -552,7 +563,7 @@ export default function SessionPage() {
     );
   }
 
-  if (phase !== "active" && phase !== "outcome" && phase !== "exiting") {
+  if (phase !== "active" && phase !== "outcome" && phase !== "celebrating" && phase !== "exiting") {
     return (
       <main className={styles.page} aria-live="polite">
         <div className={styles.preparing}>
@@ -581,7 +592,14 @@ export default function SessionPage() {
 
   return (
     <main className={styles.page}>
-      <EmberMorph trigger={trigger} onExitComplete={finishExit} showTimer={showFocusTimer} onTimerVisibilityChange={setShowFocusTimer}>
+      <EmberMorph
+        trigger={trigger}
+        onExitComplete={finishExit}
+        showTimer={showFocusTimer}
+        onTimerVisibilityChange={setShowFocusTimer}
+        showSandglass={showSandglass}
+        onSandglassVisibilityChange={setShowSandglass}
+      >
         <div className={styles.focusLayout}>
           <section className={styles.taskPanel} aria-labelledby="focus-task-title">
             <p className={styles.cardEyebrow}>{task.eyebrow}</p>
@@ -603,7 +621,13 @@ export default function SessionPage() {
               </li>
             </ol>
 
-            {phase === "outcome" ? (
+            {phase === "celebrating" ? (
+              <div className={styles.outcomePanel} role="status" aria-live="polite">
+                <p className={styles.cardEyebrow}>Complete</p>
+                <h2>That moved.</h2>
+                <p className={styles.celebrationCopy}>Your finished task is heading to Done.</p>
+              </div>
+            ) : phase === "outcome" ? (
               <div className={styles.outcomePanel} role="region" aria-label="Session outcome">
                 <p className={styles.cardEyebrow}>Time is up</p>
                 <h2>Did you complete this task?</h2>
@@ -691,6 +715,7 @@ export default function SessionPage() {
             )}
           </aside>
         </div>
+        <FocusListeningStudio />
         {extensionOpen && phase === "active" && !session?.paused_at && (
           <div className={styles.extensionDialog} role="dialog" aria-modal="true" aria-labelledby="extension-title">
             <div>
@@ -708,6 +733,10 @@ export default function SessionPage() {
               </div>
             </div>
           </div>
+        )}
+        {phase === "celebrating" && <FocusCompletionConfetti onComplete={() => setPhase("exiting")} />}
+        {breakEndsAt && phase === "active" && session?.paused_at && (
+          <FocusBreakActivities endsAt={breakEndsAt} onResume={() => void resumeSession()} isResuming={isSettling} />
         )}
       </EmberMorph>
     </main>

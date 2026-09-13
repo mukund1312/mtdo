@@ -15,6 +15,7 @@ test("a picked task shows its real, defaulted priority -- not a fabricated one",
 
   await page.getByRole("button", { name: /add from route/i }).click();
   await page.locator(".a02-curriculum-item").filter({ hasText: "Practice INNER JOIN" }).click();
+  await page.getByRole("button", { name: /add selected \(1\)/i }).click();
 
   const card = page.locator(".a02-live-block").filter({ hasText: "Practice INNER JOIN" });
   await expect(card).toBeVisible();
@@ -41,8 +42,8 @@ test("priority and category filters narrow the board using real data", async ({ 
 
   await page.getByRole("button", { name: /add from route/i }).click();
   await page.locator(".a02-curriculum-item").filter({ hasText: "SQL task one" }).click();
-  await page.getByRole("button", { name: /add from route/i }).click();
   await page.locator(".a02-curriculum-item").filter({ hasText: "System design task one" }).click();
+  await page.getByRole("button", { name: /add selected \(2\)/i }).click();
 
   await expect(page.locator(".a02-live-block")).toHaveCount(2);
 

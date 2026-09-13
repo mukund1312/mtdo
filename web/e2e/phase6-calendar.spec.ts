@@ -30,8 +30,8 @@ async function createRouteWithTwoTasks(page: import("@playwright/test").Page, ta
 
   await page.getByRole("button", { name: /add from route/i }).click();
   await page.locator(".a02-curriculum-item").filter({ hasText: taskA }).click();
-  await page.getByRole("button", { name: /add from route/i }).click();
   await page.locator(".a02-curriculum-item").filter({ hasText: taskB }).click();
+  await page.getByRole("button", { name: /add selected \(2\)/i }).click();
   await expect(page.locator(".a02-live-block")).toHaveCount(2);
 }
 

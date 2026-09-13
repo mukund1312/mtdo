@@ -48,6 +48,17 @@ function parseBody(body: unknown): SyncRequest | null {
 }
 
 export async function POST(request: Request) {
+  const resolved = resolveCalendarConfig(new URL(request.url).origin);
+  // There is no sync work to authorize when Calendar is unavailable. Return
+  // the documented 503 consistently while an anonymous session is still
+  // propagating, rather than turning an optional integration into a 401.
+  if (!resolved.configured) {
+    return Response.json(
+      { configured: false, error: "Google Calendar isn't configured on this server.", missing: resolved.missing },
+      { status: 503 },
+    );
+  }
+
   const supabase = await createClient();
   const {
     data: { user },
@@ -62,13 +73,6 @@ export async function POST(request: Request) {
     return Response.json({ error: "Expected { blockId: string, enabled: boolean }." }, { status: 400 });
   }
 
-  const resolved = resolveCalendarConfig(new URL(request.url).origin);
-  if (!resolved.configured) {
-    return Response.json(
-      { configured: false, error: "Google Calendar isn't configured on this server.", missing: resolved.missing },
-      { status: 503 },
-    );
-  }
   const service = createServiceClient();
   if (!service) {
     return Response.json(

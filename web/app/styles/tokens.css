@@ -45,6 +45,21 @@
   --ease-spring: cubic-bezier(0.2, 1.5, 0.4, 1);
 }
 
+/* Device-level Signal Deck daylight preference. Architecture 02 defines its
+ * own richer palette locally; these root tokens keep shared surfaces such as
+ * feedback, dialogs, and shell-level controls in the same theme. */
+html[data-a02-theme="light"] {
+  --bg: #f5f5fa;
+  --surface: rgba(255, 255, 255, 0.86);
+  --surface-hover: #ffffff;
+  --border: #c4bef4;
+  --text: #17172a;
+  --muted: #66667d;
+  --dim: #66667d;
+  --accent: #00afc8;
+  --live: #6957e8;
+}
+
 /* All numerals: tabular figures so timers/counters don't jitter (DESIGN.md §Typography) */
 .num {
   font-variant-numeric: tabular-nums;
