@@ -9,6 +9,63 @@ Add each session's PROGRESS.md entry to the same branch as the code it describes
 
 ---
 
+## [frontend] 2026-09-13 (PR pending) — Task-tied soundtracks, PR B: Settings mapping UI
+
+Second of three PRs (plan: `~/.claude/plans/adaptive-sleeping-turing.md`), built on PR A's schema
+(`soundtrack_preferences`). A new "Focus Soundtracks" section in Settings -> Integrations lets a
+user map each topic type their active route's categories actually use to one of their real
+Spotify playlists -- PR C's Session-screen suggestion card reads what this writes.
+
+**Deviated from the plan on one point, once the actual code didn't match what was assumed.** The
+plan said to read `spotifyPlaylists` from `SignalDeckListenProvider`'s context (`listen-state.tsx`)
+-- but `settings/page.tsx` turns out not to consume that context at all; it keeps its own
+independent `GET /api/music/spotify/status` fetch, mirroring the Calendar panel's pattern.
+Introducing the global context here just to read one list would have been a bigger, riskier
+change (extra effects, extra mount-time behavior on a page that has nothing to do with playback)
+than one more isolated fetch via the already-existing `fetchSpotifyPlaylists()` client wrapper.
+Went with the isolated fetch, matching this file's own established shape rather than the plan's
+unverified assumption.
+
+**Caught by lint again, not by re-reading the last entry's own lesson closely enough the first
+time.** Wrote the new "load once Spotify is connected" effect calling `loadSoundtrackMapping()`
+(which sets state as its first line) directly in the effect body -- `react-hooks/set-state-in-effect`
+flagged it immediately on `npm run lint`, same rule that bit PR #176's CI. Caught locally this
+time before pushing, not by CI. Fixed with the same deferred-`window.setTimeout(..., 0)` pattern
+now used in three places across this codebase.
+
+**Also fixed a stale, now-wrong scope claim right next to this PR's own edit**: the Spotify panel's
+existing copy said connecting "only grants the three scopes playback needs" -- true before PR
+#172, false since (seven scopes now, including playlist/queue/device read and playback-state
+write). Updated the copy to describe what's actually granted rather than leave known-wrong text
+sitting beside new, correct work.
+
+**Display polish**: `plan_categories.topic_type` is stored lowercase (`dsa`, `system_design` --
+the manual-setup form's own `<select>` values), but no existing formatter converts it back to a
+display label anywhere in the codebase. Added a small local `TOPIC_TYPE_LABELS` map in
+`settings/page.tsx` rather than reaching for a shared util nothing else needs yet -- only this one
+new section reads a stored topic_type back for display.
+
+**e2e** (`web/e2e/spotify-listen.spec.ts`): extended the existing "not configured" test with one
+assertion (the whole new section renders nothing when Spotify isn't configured -- no duplicate
+"not configured" message). Added a new standalone test that creates a REAL plan with a real
+topic-typed category via Manual Setup (mocking only the genuinely-external Spotify status/
+playlists calls) -- this test can NOT share the file's usual one-session-for-the-whole-file
+pattern, since `plan_categories.topic_type` only exists on a real, owned plan and this project
+enforces one active plan per user, the same reasoning `phase3-plan-pipeline.spec.ts`'s
+plan-creating tests already follow. Verifies the mapping section shows the real topic type,
+saving/clearing a mapping actually persists across a reload (not just local state), consistent
+with `saveBlockNotes`'s cross-device posture.
+
+**Files changed:** `web/app/(marketing)/architecture-02/settings/page.tsx`,
+`web/e2e/spotify-listen.spec.ts`.
+
+**Verification:** `npm run typecheck`, `npm run lint`, `npm run test` (368/368) all clean.
+`npx playwright test e2e/spotify-listen.spec.ts` 7/7, verified with Spotify vars temporarily
+stripped from `.env.local` (the recurring local-environment collision documented in PRs
+#172/#175/#176's own entries) and restored afterward.
+
+---
+
 ## [backend] 2026-09-13 (PR pending) — Task-tied soundtracks, PR A: schema + client plumbing
 
 First of three PRs (plan: `~/.claude/plans/adaptive-sleeping-turing.md`) for Phase 2 of the
