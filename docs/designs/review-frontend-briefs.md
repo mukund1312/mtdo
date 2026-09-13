@@ -156,7 +156,14 @@ the heatmap recoloring (F3, needs Phase B), any insight/recommendation text (F6,
 
 ---
 
-## F3 — Consistency heatmap (ready now, backend Phase B locked 2026-09-13)
+## F3 — Consistency heatmap — **BUILT, 2026-09-13 (PR #192)**
+
+Built by Mukund (Claude Code) while Janhwi was unavailable. `progress-deck.tsx`'s heatmap now
+colors by `review_consistency()`'s Effort Score; `level: null` renders as a distinct hatched
+pattern from a real `level: 0`. Section renamed `FOCUS FREQUENCY` → `CONSISTENCY`. `FOCUS TIME/6
+WEEKS` and `LAST 7 DAYS` panels untouched (still `daily_rollups`).
+
+## F3 — Consistency heatmap, original brief text (kept for reference, backend Phase B locked 2026-09-13)
 
 **Depends on:** `review_consistency()` (`migrations/0027`, `api.md` §3k) — merged, tested (156/156),
 typed in `web/lib/review/types.ts` (`ReviewConsistency`/`asReviewConsistency()`).

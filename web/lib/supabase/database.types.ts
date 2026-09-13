@@ -1218,6 +1218,11 @@ export type Database = {
         Returns: Json
       }
       review_daily_summary: { Args: { p_date?: string }; Returns: Json }
+      review_momentum: { Args: { p_window_days?: number }; Returns: Json }
+      review_time_patterns: {
+        Args: { p_end: string; p_start: string }
+        Returns: Json
+      }
       save_weekly_plan: {
         Args: {
           p_changes: Json
