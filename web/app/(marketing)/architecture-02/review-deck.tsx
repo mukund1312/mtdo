@@ -24,7 +24,7 @@ export function ReviewDeck() {
         <header className="a02-view-head">
           <div>
             <span className="a02-eyebrow">REVIEW / TODAY</span>
-            <div className="a02-review-title" id="review-title">MAKE EFFORT<br /><em>LEGIBLE.</em></div>
+            <h1 className="a02-review-title" id="review-title">MAKE EFFORT<br /><em>LEGIBLE.</em></h1>
             <p>Track. Understand. Improve. Repeat.</p>
           </div>
         </header>
