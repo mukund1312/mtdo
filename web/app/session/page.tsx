@@ -506,6 +506,10 @@ export default function SessionPage() {
     window.location.replace("/architecture-02?deck=work");
   }, []);
 
+  const finishCelebration = useCallback(() => {
+    setPhase("exiting");
+  }, []);
+
   const trigger: EmberMorphTrigger =
     phase === "exiting" && session
       ? {
@@ -734,7 +738,7 @@ export default function SessionPage() {
             </div>
           </div>
         )}
-        {phase === "celebrating" && <FocusCompletionConfetti onComplete={() => setPhase("exiting")} />}
+        {phase === "celebrating" && <FocusCompletionConfetti onComplete={finishCelebration} />}
         {breakEndsAt && phase === "active" && session?.paused_at && (
           <FocusBreakActivities endsAt={breakEndsAt} onResume={() => void resumeSession()} isResuming={isSettling} />
         )}

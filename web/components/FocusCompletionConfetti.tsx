@@ -22,16 +22,34 @@ const COLORS = ["#d7ff52", "#57e7ff", "#8975ff", "#e9ebff"];
 /** A short canvas burst with real gravity, spin, and screen-edge collision. */
 export function FocusCompletionConfetti({ onComplete }: FocusCompletionConfettiProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const onCompleteRef = useRef(onComplete);
+
+  // The parent changes state as the session settles. Keeping the latest
+  // callback in a ref means that render never restarts the burst and its
+  // elapsed time always reaches the finish line.
+  useEffect(() => {
+    onCompleteRef.current = onComplete;
+  }, [onComplete]);
 
   useEffect(() => {
+    let completed = false;
+    const finish = () => {
+      if (completed) return;
+      completed = true;
+      onCompleteRef.current();
+    };
+
     if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
-      const timeout = window.setTimeout(onComplete, 180);
+      const timeout = window.setTimeout(finish, 180);
       return () => window.clearTimeout(timeout);
     }
 
     const canvas = canvasRef.current;
     const context = canvas?.getContext("2d");
-    if (!canvas || !context) return;
+    if (!canvas || !context) {
+      const timeout = window.setTimeout(finish, 180);
+      return () => window.clearTimeout(timeout);
+    }
 
     const pixelRatio = Math.min(window.devicePixelRatio || 1, 2);
     let width = 0;
@@ -66,6 +84,10 @@ export function FocusCompletionConfetti({ onComplete }: FocusCompletionConfettiP
 
     let frame = 0;
     let startTime = 0;
+    // A canvas frame can be throttled when a tab changes visibility. This is
+    // a hard completion guard, not a second animation: celebration always
+    // hands off to Kanban even if requestAnimationFrame is paused.
+    const completionTimeout = window.setTimeout(finish, DURATION_MS + 250);
     const draw = (now: number) => {
       if (!startTime) startTime = now;
       const elapsed = now - startTime;
@@ -98,15 +120,16 @@ export function FocusCompletionConfetti({ onComplete }: FocusCompletionConfettiP
         context.restore();
       }
       if (elapsed < DURATION_MS) frame = window.requestAnimationFrame(draw);
-      else onComplete();
+      else finish();
     };
 
     frame = window.requestAnimationFrame(draw);
     return () => {
       window.cancelAnimationFrame(frame);
+      window.clearTimeout(completionTimeout);
       window.removeEventListener("resize", resize);
     };
-  }, [onComplete]);
+  }, []);
 
   return <canvas ref={canvasRef} className="focus-completion-confetti" aria-hidden="true" />;
 }
