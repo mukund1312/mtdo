@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent } from "react";
+import { useRouter } from "next/navigation";
 
 import { createClient } from "@/lib/supabase/client";
 
@@ -53,6 +54,8 @@ type CalendarStatus = {
   missing: string[];
   provider: string;
 };
+
+type ScheduleConflict = { block: CalendarBlock; start: Date; end: Date; conflicts: CalendarBlock[] };
 
 const DAY_START_HOUR = 6;
 const DAY_END_HOUR = 22; // grid runs 6a-10p; events outside this window still render, just clipped visually
@@ -162,6 +165,12 @@ function rangeLabel(view: CalendarView, anchor: Date): string {
   return new Intl.DateTimeFormat("en", { month: "long", year: "numeric" }).format(anchor);
 }
 
+function formatPlannedMinutes(minutes: number): string {
+  const hours = Math.floor(minutes / 60);
+  const remaining = Math.round(minutes % 60);
+  return hours > 0 ? `${hours}h${remaining > 0 ? ` ${remaining}m` : ""}` : `${remaining}m`;
+}
+
 function eventGeometry(start: Date, end: Date): { top: number; height: number } {
   const minutesFromStart = (start.getHours() - DAY_START_HOUR) * 60 + start.getMinutes();
   const durationMinutes = Math.max(15, (end.getTime() - start.getTime()) / 60000);
@@ -199,6 +208,7 @@ export function CalendarDeck() {
   const [draggedBlockId, setDraggedBlockId] = useState<string | null>(null);
   const [dropHint, setDropHint] = useState<string | null>(null);
   const [selectedBlockId, setSelectedBlockId] = useState<string | null>(null);
+  const [scheduleConflict, setScheduleConflict] = useState<ScheduleConflict | null>(null);
 
   // Resize (bottom-edge drag-to-extend/shrink). Deliberately plain
   // mouse events, not the HTML5 DnD the move-drag path uses -- a resize
@@ -413,6 +423,24 @@ export function CalendarDeck() {
     [load, syncedIds],
   );
 
+  const updateBlockStatus = useCallback(async (block: CalendarBlock, status: BlockStatus): Promise<boolean> => {
+    setWriteError(null);
+    setMovingId(block.id);
+    const supabase = createClient();
+    const { error } = await supabase.from("blocks").update({ status }).eq("id", block.id);
+    if (error) {
+      console.error("[calendar] failed to update block status:", error);
+      setWriteError(databaseErrorMessage(error, "We could not update that task's status."));
+      setMovingId(null);
+      return false;
+    }
+    const patch = (items: CalendarBlock[]) => items.map((item) => item.id === block.id ? { ...item, status } : item);
+    setScheduled(patch);
+    setUnscheduled(patch);
+    setMovingId(null);
+    return true;
+  }, []);
+
   const toggleSync = useCallback(
     async (block: CalendarBlock, enabled: boolean) => {
       setSyncError(null);
@@ -484,6 +512,16 @@ export function CalendarDeck() {
       start.setHours(DEFAULT_SCHEDULE_HOUR, 0, 0, 0);
     }
     const end = new Date(start.getTime() + durationMs);
+    const conflicts = scheduled.filter((candidate) => {
+      if (candidate.id === block.id || !candidate.scheduled_start_at || !candidate.scheduled_end_at) return false;
+      const candidateStart = new Date(candidate.scheduled_start_at);
+      const candidateEnd = new Date(candidate.scheduled_end_at);
+      return start < candidateEnd && end > candidateStart;
+    });
+    if (conflicts.length > 0) {
+      setScheduleConflict({ block, start, end, conflicts });
+      return;
+    }
     void rescheduleBlock(block, start, end);
   };
 
@@ -498,6 +536,23 @@ export function CalendarDeck() {
   const selectedBlock = selectedBlockId ? (blocksById.get(selectedBlockId) ?? null) : null;
 
   const { start: rangeStart } = viewRange(view, anchorDate);
+  const densityDate = view === "day" ? startOfDay(anchorDate) : startOfDay(new Date());
+  const densityIsVisible = view === "day" || (densityDate >= viewRange(view, anchorDate).start && densityDate < viewRange(view, anchorDate).end);
+  const densityIntervals = densityIsVisible ? scheduled.flatMap((block) => {
+    if (!block.scheduled_start_at || !block.scheduled_end_at || !sameDay(new Date(block.scheduled_start_at), densityDate)) return [];
+    const start = new Date(block.scheduled_start_at).getTime();
+    const end = new Date(block.scheduled_end_at).getTime();
+    return end > start ? [{ start, end }] : [];
+  }).sort((a, b) => a.start - b.start) : [];
+  const plannedMinutes = densityIntervals.reduce((total, interval) => total + ((interval.end - interval.start) / 60_000), 0);
+  const occupiedMinutes = densityIntervals.reduce<{ total: number; end: number | null }>((occupied, interval) => {
+    if (occupied.end === null || interval.start >= occupied.end) return { total: occupied.total + ((interval.end - interval.start) / 60_000), end: interval.end };
+    if (interval.end > occupied.end) return { total: occupied.total + ((interval.end - occupied.end) / 60_000), end: interval.end };
+    return occupied;
+  }, { total: 0, end: null }).total;
+  const overlapMinutes = Math.max(0, Math.round(plannedMinutes - occupiedMinutes));
+  const firstScheduled = densityIntervals[0]?.start;
+  const lastScheduled = densityIntervals.at(-1)?.end;
 
   return (
     <section className="a02-calendar" aria-labelledby="calendar-title">
@@ -532,6 +587,11 @@ export function CalendarDeck() {
           </div>
         </div>
       </div>
+
+      {densityIsVisible && <section className={`a02-calendar-density ${overlapMinutes > 0 ? "is-overlap" : ""}`} aria-label="Schedule density">
+        <div><span>{sameDay(densityDate, new Date()) ? "TODAY" : new Intl.DateTimeFormat("en", { weekday: "short", month: "short", day: "numeric" }).format(densityDate).toUpperCase()}</span><b>{formatPlannedMinutes(Math.round(plannedMinutes))} planned <i>·</i> {densityIntervals.length} {densityIntervals.length === 1 ? "block" : "blocks"}</b>{firstScheduled && lastScheduled && <small>{new Intl.DateTimeFormat("en", { hour: "numeric", minute: "2-digit" }).format(new Date(firstScheduled))} → {new Intl.DateTimeFormat("en", { hour: "numeric", minute: "2-digit" }).format(new Date(lastScheduled))}</small>}</div>
+        {overlapMinutes > 0 && <p>⚠ {formatPlannedMinutes(overlapMinutes)} of scheduled work overlaps.</p>}
+      </section>}
 
       {state === "error" ? (
         <section className="a02-product-state" role="alert">
@@ -606,13 +666,21 @@ export function CalendarDeck() {
           onSaveNotes={saveBlockNotes}
           onToggleSync={(enabled) => void toggleSync(selectedBlock, enabled)}
           onUnschedule={() => void unscheduleBlock(selectedBlock)}
+          onUpdateStatus={(status) => updateBlockStatus(selectedBlock, status)}
           synced={syncedIds.has(selectedBlock.id)}
           syncError={syncError}
           syncing={syncingId === selectedBlock.id}
         />
       )}
+
+      {scheduleConflict && <ScheduleConflictDialog conflict={scheduleConflict} moving={movingId === scheduleConflict.block.id} onClose={() => setScheduleConflict(null)} onMoveAnyway={() => { const pending = scheduleConflict; setScheduleConflict(null); void rescheduleBlock(pending.block, pending.start, pending.end); }} />}
     </section>
   );
+}
+
+function ScheduleConflictDialog({ conflict, moving, onClose, onMoveAnyway }: { conflict: ScheduleConflict; moving: boolean; onClose: () => void; onMoveAnyway: () => void }) {
+  const time = new Intl.DateTimeFormat("en", { hour: "numeric", minute: "2-digit" });
+  return <section className="a02-record-overlay" role="dialog" aria-modal="true" aria-labelledby="time-conflict-title"><section className="a02-calendar-conflict"><button className="a02-lens-close" type="button" aria-label="Close time conflict" onClick={onClose} disabled={moving}>×</button><span className="a02-eyebrow">⚠ TIME CONFLICT</span><h2 id="time-conflict-title">This time is already<br /><em>occupied.</em></h2><p><b>{conflict.block.text}</b><br />{time.format(conflict.start)}–{time.format(conflict.end)} overlaps {conflict.conflicts.map((block) => block.text).join(", ")}.</p><div className="a02-calendar-conflict-actions"><button type="button" className="a02-add" onClick={onMoveAnyway} disabled={moving}>{moving ? "Moving…" : "Move anyway"}</button><button type="button" onClick={onClose} disabled={moving}>Choose another time</button></div></section></section>;
 }
 
 function EventChip({ block, lanePlacement, moving, resizeDeltaMinutes, resizing, onDragEnd, onDragStart, onOpen, onResizeStart }: {
@@ -722,7 +790,11 @@ function TimeGrid({ days, blocks, draggedBlockId, dropHint, movingId, onDragStar
   resizeDeltaMinutes: number;
   onResizeStart: (block: CalendarBlock, clientY: number) => void;
 }) {
-  const today = new Date();
+  const [now, setNow] = useState(() => new Date());
+  useEffect(() => {
+    const timer = window.setInterval(() => setNow(new Date()), 30_000);
+    return () => window.clearInterval(timer);
+  }, []);
   return (
     <div className={`a02-time-map ${days.length > 1 ? "a02-time-map--week" : ""}`}>
       <aside>
@@ -731,6 +803,9 @@ function TimeGrid({ days, blocks, draggedBlockId, dropHint, movingId, onDragStar
         ))}
       </aside>
       {days.map((day) => {
+        const isToday = sameDay(day, now);
+        const markerMinutes = ((now.getHours() - DAY_START_HOUR) * 60) + now.getMinutes();
+        const showNowMarker = isToday && markerMinutes >= 0 && markerMinutes <= HOURS.length * 60;
         const dayBlocks = blocks.filter((block) => block.scheduled_start_at && sameDay(new Date(block.scheduled_start_at), day));
         const key = isoDate(day);
         // Overlap lanes are computed per day column, from this day's own
@@ -742,7 +817,7 @@ function TimeGrid({ days, blocks, draggedBlockId, dropHint, movingId, onDragStar
             .map((block) => ({ id: block.id, start: new Date(block.scheduled_start_at as string), end: new Date(block.scheduled_end_at as string) })),
         );
         return (
-          <div key={key} className={`a02-time-column ${sameDay(day, today) ? "is-today" : ""}`}>
+          <div key={key} className={`a02-time-column ${isToday ? "is-today" : ""}`}>
             {days.length > 1 && (
               <header className="a02-time-column-head">
                 <span>{WEEKDAY_LABELS[day.getDay()]}</span>
@@ -753,13 +828,14 @@ function TimeGrid({ days, blocks, draggedBlockId, dropHint, movingId, onDragStar
               {HOURS.map((hour) => (
                 <i
                   key={hour}
-                  className={draggedBlockId && dropHint === `${key}:${hour}` ? "is-drop-target" : ""}
+                  className={`${draggedBlockId && dropHint === `${key}:${hour}` ? "is-drop-target" : ""} ${isToday && now.getHours() === hour ? "is-current-hour" : ""}`.trim()}
                   data-testid={`calendar-slot-${key}-${hour}`}
                   onDragOver={(event) => { event.preventDefault(); onHover(`${key}:${hour}`); }}
                   onDragLeave={() => onHover(null)}
                   onDrop={(event) => { event.preventDefault(); onDrop(day, hour); }}
                 />
               ))}
+              {showNowMarker && <div className="a02-calendar-now" style={{ top: `${(markerMinutes / 60) * ROW_HEIGHT}px` }} aria-label={`Current time: ${now.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}`}><span>NOW</span></div>}
               {dayBlocks.map((block) => (
                 <EventChip
                   key={block.id}
@@ -874,6 +950,8 @@ function UnscheduledPanel({ items, draggedBlockId, isDropTarget, onDragStart, on
   onHover: () => void;
   onOpenBlock: (id: string) => void;
 }) {
+  const [showAll, setShowAll] = useState(false);
+  const visibleItems = showAll ? items : items.slice(0, 6);
   return (
     <aside
       className={`a02-unscheduled ${isDropTarget ? "is-drop-target" : ""}`}
@@ -882,11 +960,11 @@ function UnscheduledPanel({ items, draggedBlockId, isDropTarget, onDragStart, on
       onDragLeave={() => onHover()}
       onDrop={(event) => { event.preventDefault(); onDrop(); }}
     >
-      <span>UNSCHEDULED · drag onto the calendar, or drop here to clear a time</span>
+      <span className="a02-unscheduled-heading">UNSCHEDULED · {items.length}</span>
       {items.length === 0 ? (
         <p className="a02-lane-empty">Nothing waiting -- every active task has a time.</p>
       ) : (
-        items.map((block) => (
+        visibleItems.map((block) => (
           <button
             key={block.id}
             type="button"
@@ -897,17 +975,18 @@ function UnscheduledPanel({ items, draggedBlockId, isDropTarget, onDragStart, on
             onClick={() => onOpenBlock(block.id)}
           >
             <span>{block.text}</span>
-            <i>{block.estimated_minutes ? `${block.estimated_minutes}m` : priorityLabel(block.priority)}</i>
+            <i>{priorityLabel(block.priority)}</i>
           </button>
         ))
       )}
+      {items.length > 6 && <button className="a02-unscheduled-expand" type="button" onClick={() => setShowAll((current) => !current)}>{showAll ? "Show less" : `View all ${items.length} →`}</button>}
     </aside>
   );
 }
 
 type NotesSaveState = "idle" | "saving" | "saved" | "error";
 
-function BlockDetailPopover({ block, calendarStatus, calendarStatusState, moving, onClose, onReschedule, onSaveNotes, onToggleSync, onUnschedule, synced, syncError, syncing }: {
+function BlockDetailPopover({ block, calendarStatus, calendarStatusState, moving, onClose, onReschedule, onSaveNotes, onToggleSync, onUnschedule, onUpdateStatus, synced, syncError, syncing }: {
   block: CalendarBlock;
   calendarStatus: CalendarStatus | null;
   calendarStatusState: LoadState;
@@ -917,10 +996,12 @@ function BlockDetailPopover({ block, calendarStatus, calendarStatusState, moving
   onSaveNotes: (blockId: string, notes: string) => Promise<{ ok: true } | { ok: false; message: string }>;
   onToggleSync: (enabled: boolean) => void;
   onUnschedule: () => void;
+  onUpdateStatus: (status: BlockStatus) => Promise<boolean>;
   synced: boolean;
   syncError: string | null;
   syncing: boolean;
 }) {
+  const router = useRouter();
   const start = block.scheduled_start_at ? new Date(block.scheduled_start_at) : null;
   const end = block.scheduled_end_at ? new Date(block.scheduled_end_at) : null;
 
@@ -937,11 +1018,18 @@ function BlockDetailPopover({ block, calendarStatus, calendarStatusState, moving
   const [startTime, setStartTime] = useState(start ? timeInputValue(start) : "");
   const [endTime, setEndTime] = useState(end ? timeInputValue(end) : "");
   const [timeError, setTimeError] = useState<string | null>(null);
+  const [showTimeEditor, setShowTimeEditor] = useState(false);
+  const [showRemoveConfirm, setShowRemoveConfirm] = useState(false);
   if (lastOpenBlockId !== block.id) {
     setLastOpenBlockId(block.id);
     setNoteDraft(block.notes ?? "");
     setNoteSaveState("idle");
     setNoteError(null);
+    setStartTime(start ? timeInputValue(start) : "");
+    setEndTime(end ? timeInputValue(end) : "");
+    setTimeError(null);
+    setShowTimeEditor(false);
+    setShowRemoveConfirm(false);
   }
 
   const commitNote = async () => {
@@ -977,22 +1065,22 @@ function BlockDetailPopover({ block, calendarStatus, calendarStatusState, moving
         <button className="a02-lens-close" type="button" onClick={onClose}>
           ESC / close ×
         </button>
-        <span className="a02-eyebrow">SCHEDULED TASK</span>
+        <span className="a02-eyebrow">SCHEDULED</span>
         <h2 id="calendar-detail-title">{block.text}</h2>
         {start && end ? (
-          <p className="a02-calendar-detail-time">
-            {new Intl.DateTimeFormat("en", { weekday: "long", month: "short", day: "numeric" }).format(start)} · {formatTimeRange(start, end)}
-          </p>
+          <section className="a02-calendar-schedule-summary"><span>{new Intl.DateTimeFormat("en", { weekday: "long", month: "short", day: "numeric" }).format(start)}</span><b>{formatTimeRange(start, end)}</b><small>{formatPlannedMinutes(Math.round((end.getTime() - start.getTime()) / 60_000))}</small></section>
         ) : (
           <p className="a02-calendar-detail-time">Not yet on the calendar.</p>
         )}
         <div className="a02-lens-meta">
           <span className={`a02-priority a02-priority--${block.priority}`}>{priorityLabel(block.priority)}</span>
           {block.category_label && <span>{block.category_label}</span>}
-          <span>{block.status.replace("_", " ")}</span>
+          <label className="a02-calendar-status"><select aria-label="Task status" value={block.status} disabled={moving} onChange={(event) => { const status = event.target.value; if (isBlockStatus(status)) void onUpdateStatus(status); }}><option value="todo">TODO</option><option value="in_progress">IN PROGRESS</option><option value="done">DONE</option><option value="backlog">BACKLOG</option></select></label>
         </div>
 
-        {start && end && (
+        {start && end && <div className="a02-calendar-focus-action"><button type="button" className="a02-add" onClick={() => router.push(`/session?blockId=${encodeURIComponent(block.id)}`)}>Start focus →</button><button type="button" className="a02-calendar-edit-schedule" onClick={() => setShowTimeEditor((current) => !current)} aria-expanded={showTimeEditor}>{showTimeEditor ? "Hide schedule editor" : "Edit schedule →"}</button></div>}
+
+        {start && end && showTimeEditor && (
           <form className="a02-calendar-time-editor" onSubmit={(event) => void commitTime(event)}>
             <span>TIME WINDOW</span>
             <label>
@@ -1030,10 +1118,10 @@ function BlockDetailPopover({ block, calendarStatus, calendarStatusState, moving
             {calendarStatusState === "loading" && <p>Checking Google Calendar…</p>}
             {calendarStatusState === "error" && <p>Couldn&apos;t check Google Calendar&apos;s status.</p>}
             {calendarStatusState === "ready" && calendarStatus && !calendarStatus.configured && (
-              <p data-testid="calendar-sync-not-configured">Google Calendar isn&apos;t connected yet. This server has no Google credentials configured, so scheduling here still works, it just doesn&apos;t leave the app.</p>
+              <p data-testid="calendar-sync-not-configured"><b>Not connected to Google Calendar</b><br />Your schedule is saved in mtdo.</p>
             )}
             {calendarStatusState === "ready" && calendarStatus?.configured && !calendarStatus.connected && (
-              <p>Connect Google Calendar in Settings to mirror this task there.</p>
+              <p><b>Not connected to Google Calendar</b><br />Connect Google Calendar in Settings to mirror this schedule.</p>
             )}
             {calendarStatusState === "ready" && calendarStatus?.configured && calendarStatus.connected && (
               <label className="a02-calendar-sync-toggle">
@@ -1053,12 +1141,9 @@ function BlockDetailPopover({ block, calendarStatus, calendarStatusState, moving
           <button type="button" onClick={onClose}>
             Close
           </button>
-          {start && end && (
-            <button type="button" className="a02-calendar-unschedule" data-testid="calendar-unschedule-button" disabled={moving} onClick={onUnschedule}>
-              {moving ? "Clearing…" : "Remove from calendar ↗"}
-            </button>
-          )}
+          {start && end && !showRemoveConfirm && <button type="button" className="a02-calendar-unschedule" data-testid="calendar-unschedule-button" disabled={moving} onClick={() => setShowRemoveConfirm(true)}>Remove from calendar</button>}
         </div>
+        {start && end && showRemoveConfirm && <section className="a02-calendar-remove-confirm" role="alertdialog" aria-label="Remove scheduled block"><b>Remove this scheduled block?</b><p>{block.text}<br />{formatTimeRange(start, end)}<br /><small>This won&apos;t delete the task. It will only remove its scheduled time.</small></p><div><button type="button" onClick={() => setShowRemoveConfirm(false)} disabled={moving}>Cancel</button><button type="button" className="a02-calendar-remove-confirm-action" data-testid="calendar-unschedule-confirm" onClick={onUnschedule} disabled={moving}>{moving ? "Removing…" : "Remove"}</button></div></section>}
       </section>
     </section>
   );

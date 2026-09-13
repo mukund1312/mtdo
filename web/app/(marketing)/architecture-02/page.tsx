@@ -94,25 +94,12 @@ function ArchitectureTwoDeck() {
     return () => window.clearTimeout(timer);
   }, [authState, router]);
 
-  useEffect(() => {
-    if (authState) return;
-    // A ?deck handoff (onboarding/Manual Setup/Import all finish this way)
-    // is a deliberate landing on a specific deck -- the walkthrough's own
-    // first step forces deck back to "home" on open (SignalDeckWalkthrough's
-    // onDeckChange effect), which would silently undo the handoff for any
-    // first-time visitor who reaches this page without having dismissed the
-    // tour on an earlier visit. The handoff wins; the tour is still one
-    // click away via "? Guide".
-    if (isDeck(searchParams.get("deck")) || searchParams.has("nav")) return;
-    try {
-      if (!window.localStorage.getItem(SIGNAL_DECK_WALKTHROUGH_STORAGE_KEY)) {
-        const timer = window.setTimeout(() => setWalkthroughOpen(true), 0);
-        return () => window.clearTimeout(timer);
-      }
-    } catch {
-      // Storage is only a convenience. A blocked storage API must not stop the deck.
-    }
-  }, [authState, searchParams]);
+  // The field guide is deliberately user initiated. Automatically mounting a
+  // modal after the first paint can steal a click from the navigation dock --
+  // particularly on slower devices -- and makes the app feel unavailable at
+  // the exact moment someone is trying to orient themselves. ? Guide and the
+  // keyboard shortcut remain available everywhere, while confirmed accounts
+  // still enter the guided journey explicitly through beginConfirmedGuide().
 
   useEffect(() => {
     const openWithShortcut = (event: KeyboardEvent) => {
@@ -190,7 +177,7 @@ function ArchitectureTwoDeck() {
 
       {deck === "home" && <HomeDeck onTask={openBlock} onCalendar={() => setDeck("calendar")} onReview={() => setDeck("review")} onWork={() => setDeck("work")} />}
       {deck === "work" && <TodayDeck onOpenBlock={openBlock} />}
-      {deck === "goals" && <GoalsDeck />}
+      {deck === "goals" && <GoalsDeck onReview={() => setDeck("review")} />}
       {deck === "calendar" && <CalendarDeck />}
       {deck === "review" && <ProgressDeck />}
       {deck === "listen" && <ListenDeck />}

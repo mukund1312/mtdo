@@ -89,6 +89,8 @@ test("unscheduling a block clears its window and returns it to Unscheduled", asy
   const popover = page.getByTestId("calendar-detail-popover");
   await expect(popover).toBeVisible();
   await popover.getByTestId("calendar-unschedule-button").click();
+  await expect(popover.getByText(/This won't delete the task/i)).toBeVisible();
+  await popover.getByTestId("calendar-unschedule-confirm").click();
   await expect(popover).toHaveCount(0);
 
   // schedule_block(id) with every optional arg omitted clears the window --
