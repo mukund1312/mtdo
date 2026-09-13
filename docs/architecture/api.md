@@ -1373,6 +1373,70 @@ absent, never `0`** — the same rule §3f's whole engine turns on, applied here
   per day, by a human looking at the Review page, with no freshness argument for a cron-maintained
   table.
 
+## 3k. `review_consistency()` — the Effort Score behind the Consistency heatmap (Phase B, migrations/0026)
+
+**Read `docs/designs/mtdo-web-review-study-profile-plan.md` §4 Phase B first**, and the migration's
+own header — this section summarizes both, it does not replace them.
+
+```sql
+public.review_consistency(p_start date, p_end date) returns jsonb
+```
+
+`authenticated`-callable, `security definer`, `stable`, `auth.uid()`-derived, no plan id. Range
+capped at 400 days (`22023` above that, or if `p_start > p_end`).
+
+**This replaces what mtdo-bugs #89's Progress heatmap currently colors by (raw minutes) with a real
+Effort Score.** Flag any PR touching this as changing a live surface, not purely additive — same
+rule §3j's own note states for `review_daily_summary()`.
+
+**Why Focus/Execute are NOT filtered to the caller's current active plan, unlike §3j.** A single
+day only ever has one active plan to ask about; a date *range* can span a goal switch, and
+re-filtering history to whatever plan happens to be active *now* would silently zero out every day
+that belonged to a prior, retired plan. So Focus and Execute here are scoped to the **whole user**,
+across every plan they have ever had — exactly `daily_rollups`' own scoping (§3a) — while
+**Progress stays plan-scoped by necessity** (it can only be computed via `weekly_performance()`,
+which takes a plan id) and is therefore `NULL` for any ISO week the *current* active plan has no
+block in, even if a since-retired plan was active and productive that week. This under-covers
+rather than misattributes — same direction of error §3f's `menu_offered_count` estimate chose.
+
+**Return shape** (`mtdo.review_consistency.v1`):
+
+```jsonc
+{
+  "schema_version": "mtdo.review_consistency.v1",
+  "from": "2026-09-01", "to": "2026-09-02", "timezone": "UTC",
+  "plan_id": "…", "computed_at": "…", "metric_version": "effort_v1",
+  "days": [
+    {
+      "date": "2026-09-01",
+      "focus_percentage": 66.7, "execute_percentage": 50.0, "progress_percentage": 50.0,
+      "effort_score": 55.8, "level": 2
+    },
+    { "date": "2026-09-02", "focus_percentage": null, "execute_percentage": null,
+      "progress_percentage": 50.0, "effort_score": 50.0, "level": 2 }
+  ]
+}
+```
+
+⚠️ **`effort_score`/`level` are `NULL` only when the caller has no active plan at all** ("there is
+no goal to measure this day against"). Whenever an active plan exists, a day with nothing
+computable is a **real `0`**, not `NULL` — a genuinely empty day inside an active goal is a
+meaningful, real bucket (the heatmap's emptiest level), unlike a per-ring percentage whose
+denominator can be legitimately absent. Do not treat `0` and `NULL` the same in the UI: `NULL`
+should probably render as "no goal yet" styling, `0` as the heatmap's lightest real level.
+
+**`effort_v1` combines `focus_percentage`/`execute_percentage`/`progress_percentage` at weights
+35/45/20, renormalized over whichever of the three actually have a value** (never coalesced to 0 —
+a day with a real completed task but no estimated one must not be dragged down by a Focus
+component that had no basis to begin with). **These weights are reasoned, not measured** — see the
+migration header for why Execute > Focus > Progress — and are versioned specifically so they can
+be recalibrated against real `daily_rollups` history later without silently reinterpreting old
+scores. `level` is `least(4, floor(effort_score / 20))` — five buckets, 0–4.
+
+**Performance note:** Progress is computed by calling `weekly_performance()` once per **distinct**
+ISO week the current plan touches inside the range (not once per day) — at most ~54 calls for a
+full year, reusing the already-audited weekly formula rather than a new set-based one.
+
 ## 4. The EmberMorph component contract
 
 `DESIGN.md` §Motion specifies the morph itself (`Graphite home → ember bloom → terminal focus

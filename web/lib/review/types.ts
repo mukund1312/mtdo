@@ -109,3 +109,58 @@ export function asReviewDailySummary(value: unknown): ReviewDailySummary {
   }
   return value as unknown as ReviewDailySummary;
 }
+
+// ---------------------------------------------------------------------------
+// review_consistency() -- the Effort Score behind the Consistency heatmap
+// (migrations/0026, schema mtdo.review_consistency.v1). Same narrowing
+// precedent as above.
+//
+// THE ONE RULE THAT MATTERS: `effort_score`/`level` are `null` ONLY when the
+// user has no active plan at all ("no goal to measure this day against").
+// Whenever an active plan exists, a day with nothing computable is a REAL
+// `0` -- the heatmap's emptiest real level, not a missing-data state. Do not
+// render `0` and `null` the same way.
+
+export interface ConsistencyDay {
+  date: string;
+  focus_percentage: number | null;
+  execute_percentage: number | null;
+  /** Plan-scoped by necessity -- null for any ISO week the CURRENT active plan has no block in, even if a since-retired plan was active that week. See api.md sec3k. */
+  progress_percentage: number | null;
+  /** null only when the caller has no active plan at all. A real 0 otherwise. */
+  effort_score: number | null;
+  /** least(4, floor(effort_score / 20)) -- 0-4. Same null rule as effort_score. */
+  level: 0 | 1 | 2 | 3 | 4 | null;
+}
+
+export interface ReviewConsistency {
+  schema_version: "mtdo.review_consistency.v1";
+  from: string;
+  to: string;
+  timezone: string;
+  /** The caller's current active plan, or null if they have none -- not necessarily the plan that was active on every day below. */
+  plan_id: string | null;
+  computed_at: string;
+  metric_version: "effort_v1";
+  days: ConsistencyDay[];
+}
+
+export const REVIEW_CONSISTENCY_SCHEMA = "mtdo.review_consistency.v1";
+
+export class ReviewConsistencyError extends Error {}
+
+export function asReviewConsistency(value: unknown): ReviewConsistency {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new ReviewConsistencyError("review_consistency() returned no object.");
+  }
+  const obj = value as Record<string, unknown>;
+  if (obj.schema_version !== REVIEW_CONSISTENCY_SCHEMA) {
+    throw new ReviewConsistencyError(
+      `Unexpected review_consistency schema ${String(obj.schema_version)}; expected ${REVIEW_CONSISTENCY_SCHEMA}.`,
+    );
+  }
+  if (!Array.isArray(obj.days)) {
+    throw new ReviewConsistencyError("review_consistency() returned a malformed body -- days is not an array.");
+  }
+  return value as unknown as ReviewConsistency;
+}
