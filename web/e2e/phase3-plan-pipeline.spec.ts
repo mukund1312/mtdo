@@ -1,17 +1,47 @@
-import { test, expect } from "@playwright/test";
+import { test, expect, type Page } from "@playwright/test";
 
 // Phase 3 of the operating-engine plan: manual setup, import/export, and
 // the setup-method chooser. Real anonymous session, real Supabase writes --
 // not mocked.
+//
+// Tests 2 and 3 below EACH create a real, active plan via a different
+// method (Manual Setup, Import) -- this project enforces one active plan
+// per user, so those two cannot share a session without test 3 silently
+// testing "import while replacing an existing plan" instead of "import as
+// a fresh account's first plan," a real behavior change, not just a
+// performance one. They stay on their own separate sessions.
+//
+// Tests 1 and 4 never create a plan (method-chooser UI check, malformed-
+// import rejection before any submit) -- those two safely share ONE
+// session (test.describe.serial), cutting this file from 4 sign-ins to 3.
 
-test("method chooser offers all three paths", async ({ page }) => {
-  await page.goto("/architecture-02");
-  await page.getByRole("button", { name: /close walkthrough/i }).click();
-  await page.getByRole("link", { name: /set up your route/i }).click();
-  await expect(page.getByRole("heading", { name: /how do you.*want to start/is })).toBeVisible();
-  await expect(page.getByRole("button", { name: /guided ai/i })).toBeVisible();
-  await expect(page.getByRole("button", { name: /manual setup/i })).toBeVisible();
-  await expect(page.getByRole("button", { name: /import a plan/i })).toBeVisible();
+test.describe.serial("Phase 3: plan-free checks", () => {
+  let page: Page;
+
+  test.beforeAll(async ({ browser }) => {
+    page = await browser.newPage();
+  });
+
+  test.afterAll(async () => {
+    await page.close();
+  });
+
+  test("method chooser offers all three paths", async () => {
+    await page.goto("/architecture-02");
+    await page.getByRole("button", { name: /close walkthrough/i }).click();
+    await page.getByRole("link", { name: /set up your route/i }).click();
+    await expect(page.getByRole("heading", { name: /how do you.*want to start/is })).toBeVisible();
+    await expect(page.getByRole("button", { name: /guided ai/i })).toBeVisible();
+    await expect(page.getByRole("button", { name: /manual setup/i })).toBeVisible();
+    await expect(page.getByRole("button", { name: /import a plan/i })).toBeVisible();
+  });
+
+  test("Import rejects a malformed file with a real error, not a silent failure", async () => {
+    await page.goto("/architecture-02/onboarding/import");
+    await page.getByPlaceholder(/schema_version/i).fill('{"goal_line": "no categories at all"}');
+    await expect(page.getByText(/categories.*must be a non-empty array/i)).toBeVisible();
+    await expect(page.getByRole("button", { name: /import this route/i })).toBeDisabled();
+  });
 });
 
 test("Manual Setup builds a real route end-to-end", async ({ page }) => {
@@ -74,11 +104,4 @@ test("Import validates and persists a real mtdo.plan.v1 file, Export reads it ba
   expect(exported.goal_line).toBe("Master backend interviews");
   expect(exported.categories[0].label).toBe("System Design");
   expect(exported.categories[0].curriculum.flat()).toHaveLength(2);
-});
-
-test("Import rejects a malformed file with a real error, not a silent failure", async ({ page }) => {
-  await page.goto("/architecture-02/onboarding/import");
-  await page.getByPlaceholder(/schema_version/i).fill('{"goal_line": "no categories at all"}');
-  await expect(page.getByText(/categories.*must be a non-empty array/i)).toBeVisible();
-  await expect(page.getByRole("button", { name: /import this route/i })).toBeDisabled();
 });
