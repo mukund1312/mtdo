@@ -340,6 +340,17 @@ export function CalendarDeck() {
         setMovingId(null);
         return false;
       }
+      // Make a successful schedule write visible immediately. The follow-up
+      // read is still the source of truth, but waiting for that extra round
+      // trip made drag-and-drop feel unresponsive (and could leave a just
+      // moved task absent while a slow read was in flight).
+      const movedBlock: CalendarBlock = {
+        ...block,
+        scheduled_start_at: start.toISOString(),
+        scheduled_end_at: end.toISOString(),
+      };
+      setScheduled((current) => [...current.filter((item) => item.id !== block.id), movedBlock]);
+      setUnscheduled((current) => current.filter((item) => item.id !== block.id));
       await load();
       setMovingId(null);
       return true;
@@ -416,6 +427,12 @@ export function CalendarDeck() {
           method: "POST",
         }).catch((err) => console.error("[calendar] best-effort unsync failed:", err));
       }
+      // Mirror the committed clear before the verification read so the task
+      // returns to Unscheduled without depending on a second network round
+      // trip for perceived completion.
+      const clearedBlock: CalendarBlock = { ...block, scheduled_start_at: null, scheduled_end_at: null };
+      setScheduled((current) => current.filter((item) => item.id !== block.id));
+      setUnscheduled((current) => [...current.filter((item) => item.id !== block.id), clearedBlock]);
       setSelectedBlockId(null);
       await load();
       setMovingId(null);
