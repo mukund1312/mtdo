@@ -20,9 +20,19 @@ import {
   type SpotifyPlaylistSummary,
   type SpotifyTrackSummary,
 } from "./spotify-playlists";
+import {
+  fetchSpotifyDevices as fetchSpotifyDevicesRequest,
+  fetchSpotifyQueue as fetchSpotifyQueueRequest,
+  postSpotifyTransfer,
+  type SpotifyDevice,
+  type SpotifyQueue,
+} from "./spotify-player";
 import { loadSpotifyPlaybackSDK, Spotify as SpotifyTypes } from "./spotify-sdk";
 
 export type { SpotifyPlaylistSummary, SpotifyTrackSummary } from "./spotify-playlists";
+export type { SpotifyDevice, SpotifyQueue } from "./spotify-player";
+
+export type SpotifyRightColumnTab = "now-playing" | "queue" | "device";
 
 export type SpotifyResourceState = "idle" | "loading" | "ready" | "error";
 
@@ -135,6 +145,20 @@ type ListenState = {
   playSpotifyTrack: (track: SpotifyTrackSummary, contextUri: string) => Promise<void>;
   spotifyPlayRequestState: "idle" | "requesting";
   spotifyPlayError: string | null;
+
+  // Real Spotify (Phase 1, PR 3): the Now Playing / Queue / Device tab
+  // switcher in column 3.
+  rightColumnTab: SpotifyRightColumnTab;
+  setRightColumnTab: (tab: SpotifyRightColumnTab) => void;
+  spotifyQueue: SpotifyQueue;
+  spotifyQueueState: SpotifyResourceState;
+  refreshSpotifyQueue: () => Promise<void>;
+  spotifyDevices: SpotifyDevice[];
+  spotifyDevicesState: SpotifyResourceState;
+  refreshSpotifyDevices: () => Promise<void>;
+  transferSpotifyPlayback: (deviceId: string) => Promise<void>;
+  spotifyTransferRequestState: "idle" | "requesting";
+  spotifyTransferError: string | null;
 };
 
 const ListenContext = createContext<ListenState | null>(null);
@@ -189,6 +213,15 @@ export function SignalDeckListenProvider({ children }: { children: ReactNode }) 
   const [spotifyPlaylistTracksState, setSpotifyPlaylistTracksState] = useState<SpotifyResourceState>("idle");
   const [spotifyPlayRequestState, setSpotifyPlayRequestState] = useState<"idle" | "requesting">("idle");
   const [spotifyPlayError, setSpotifyPlayError] = useState<string | null>(null);
+
+  // --- Real Spotify: Now Playing / Queue / Device tabs (Phase 1, PR 3) ---
+  const [rightColumnTab, setRightColumnTab] = useState<SpotifyRightColumnTab>("now-playing");
+  const [spotifyQueue, setSpotifyQueue] = useState<SpotifyQueue>({ currentlyPlaying: null, queue: [] });
+  const [spotifyQueueState, setSpotifyQueueState] = useState<SpotifyResourceState>("idle");
+  const [spotifyDevices, setSpotifyDevices] = useState<SpotifyDevice[]>([]);
+  const [spotifyDevicesState, setSpotifyDevicesState] = useState<SpotifyResourceState>("idle");
+  const [spotifyTransferRequestState, setSpotifyTransferRequestState] = useState<"idle" | "requesting">("idle");
+  const [spotifyTransferError, setSpotifyTransferError] = useState<string | null>(null);
 
   const queue = useMemo(() => providerById(activeProviderId).tracks, [activeProviderId]);
   // A real Spotify track never appears in any provider's mock `tracks` array,
@@ -394,6 +427,11 @@ export function SignalDeckListenProvider({ children }: { children: ReactNode }) 
       setSelectedSpotifyPlaylist(null);
       setSpotifyPlaylistTracks([]);
       setSpotifyPlaylistTracksState("idle");
+      setSpotifyQueue({ currentlyPlaying: null, queue: [] });
+      setSpotifyQueueState("idle");
+      setSpotifyDevices([]);
+      setSpotifyDevicesState("idle");
+      setRightColumnTab("now-playing");
       await refreshSpotifyStatus();
     } catch (err) {
       console.error("[listen] failed to disconnect Spotify:", err);
@@ -482,6 +520,67 @@ export function SignalDeckListenProvider({ children }: { children: ReactNode }) 
         : "Couldn't start playback. Try again in a moment.",
     );
   }, [handleSpotifyApiFailure]);
+
+  const refreshSpotifyQueue = useCallback(async () => {
+    setSpotifyQueueState("loading");
+    const result = await fetchSpotifyQueueRequest();
+    if (!result.ok) {
+      console.error("[listen] failed to load Spotify queue:", result.kind);
+      handleSpotifyApiFailure(result.kind);
+      setSpotifyQueueState("error");
+      return;
+    }
+    setSpotifyQueue({ currentlyPlaying: result.currentlyPlaying, queue: result.queue });
+    setSpotifyQueueState("ready");
+  }, [handleSpotifyApiFailure]);
+
+  const refreshSpotifyDevices = useCallback(async () => {
+    setSpotifyDevicesState("loading");
+    const result = await fetchSpotifyDevicesRequest();
+    if (!result.ok) {
+      console.error("[listen] failed to load Spotify devices:", result.kind);
+      handleSpotifyApiFailure(result.kind);
+      setSpotifyDevicesState("error");
+      return;
+    }
+    setSpotifyDevices(result.devices);
+    setSpotifyDevicesState("ready");
+  }, [handleSpotifyApiFailure]);
+
+  // Fetches the tab's own data the first time it's actually opened, not
+  // eagerly on connect -- unlike the playlist browser (the panel's default
+  // view), Queue and Device are secondary tabs a user may never visit in a
+  // given session, and both hit Spotify's Web API on every load. Deferred one
+  // tick, matching this file's other mount/dependency-effects-that-set-state
+  // (refreshSpotifyStatus's own mount effect, the SDK init effect) -- calling
+  // a setState-triggering fetcher synchronously inside the effect body is a
+  // real lint error here (react-hooks/set-state-in-effect), not just style.
+  useEffect(() => {
+    if (!spotifyStatus?.connected) return;
+    const timer = window.setTimeout(() => {
+      if (rightColumnTab === "queue" && spotifyQueueState === "idle") void refreshSpotifyQueue();
+      if (rightColumnTab === "device" && spotifyDevicesState === "idle") void refreshSpotifyDevices();
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, [rightColumnTab, spotifyStatus?.connected, spotifyQueueState, spotifyDevicesState, refreshSpotifyQueue, refreshSpotifyDevices]);
+
+  const transferSpotifyPlayback = useCallback(async (deviceId: string) => {
+    setSpotifyTransferRequestState("requesting");
+    setSpotifyTransferError(null);
+    const result = await postSpotifyTransfer(deviceId, true);
+    setSpotifyTransferRequestState("idle");
+    if (result.ok) {
+      // The device list's own is_active flags are now stale -- refetch
+      // rather than guess which row to flip locally.
+      void refreshSpotifyDevices();
+      return;
+    }
+    if (result.kind === "reconnect-required" || result.kind === "not-connected") {
+      handleSpotifyApiFailure(result.kind);
+      return;
+    }
+    setSpotifyTransferError("Couldn't switch devices. Try again in a moment.");
+  }, [handleSpotifyApiFailure, refreshSpotifyDevices]);
 
   // --- Real Spotify: the Web Playback SDK ------------------------------
   // Only initializes once the connection is real (`connected`) and
@@ -841,7 +940,18 @@ export function SignalDeckListenProvider({ children }: { children: ReactNode }) 
     playSpotifyTrack,
     spotifyPlayRequestState,
     spotifyPlayError,
-  }), [activeProviderId, closeSpotifyPlaylist, connect, connections, currentTrack, currentTrackProviderId, disconnect, disconnectSpotify, favoriteStations, fetchSpotifyPlaylists, mode, musicPlaying, nextTrack, openSpotifyPlaylist, pauseRadio, playSpotifyTrack, position, previousTrack, queue, radioError, radioPlayback, refreshSpotifyStatus, repeat, seekOrSetPosition, selectedSpotifyPlaylist, selectedStation, selectStation, setTrack, shuffle, spotifyConnectHref, spotifyDisconnectError, spotifyDisconnecting, spotifyPlayError, spotifyPlayerError, spotifyPlayerState, spotifyPlayRequestState, spotifyPlaylists, spotifyPlaylistsState, spotifyPlaylistTracks, spotifyPlaylistTracksState, spotifyReconnectRequired, spotifyStatus, spotifyStatusState, spotifyWaitingForTransfer, stationAtOffset, toggleMusic, toggleRadio, volume]);
+    rightColumnTab,
+    setRightColumnTab,
+    spotifyQueue,
+    spotifyQueueState,
+    refreshSpotifyQueue,
+    spotifyDevices,
+    spotifyDevicesState,
+    refreshSpotifyDevices,
+    transferSpotifyPlayback,
+    spotifyTransferRequestState,
+    spotifyTransferError,
+  }), [activeProviderId, closeSpotifyPlaylist, connect, connections, currentTrack, currentTrackProviderId, disconnect, disconnectSpotify, favoriteStations, fetchSpotifyPlaylists, mode, musicPlaying, nextTrack, openSpotifyPlaylist, pauseRadio, playSpotifyTrack, position, previousTrack, queue, radioError, radioPlayback, refreshSpotifyDevices, refreshSpotifyQueue, refreshSpotifyStatus, repeat, rightColumnTab, seekOrSetPosition, selectedSpotifyPlaylist, selectedStation, selectStation, setTrack, shuffle, spotifyConnectHref, spotifyDevices, spotifyDevicesState, spotifyDisconnectError, spotifyDisconnecting, spotifyPlayError, spotifyPlayerError, spotifyPlayerState, spotifyPlayRequestState, spotifyPlaylists, spotifyPlaylistsState, spotifyPlaylistTracks, spotifyPlaylistTracksState, spotifyQueue, spotifyQueueState, spotifyReconnectRequired, spotifyStatus, spotifyStatusState, spotifyTransferError, spotifyTransferRequestState, spotifyWaitingForTransfer, stationAtOffset, toggleMusic, toggleRadio, transferSpotifyPlayback, volume]);
 
   return <ListenContext.Provider value={value}>{children}<audio ref={radioAudioRef} data-testid="signal-deck-radio-audio" preload="none" /></ListenContext.Provider>;
 }
