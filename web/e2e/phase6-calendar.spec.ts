@@ -1,4 +1,5 @@
 import { test, expect } from "@playwright/test";
+import { dragAndDrop } from "./helpers/drag";
 import { openSignalDeckDestination } from "./helpers/signal-deck";
 
 // Phase 6 frontend (migrations/0019-0020, docs/architecture/api.md §3d/§3e):
@@ -55,7 +56,7 @@ test("day, week and month views render a real scheduled block, drag-scheduled fr
 
   // Drag task A from Unscheduled onto today's 10:00 slot in Day view.
   const today = todayIso();
-  await unscheduledA.dragTo(page.getByTestId(`calendar-slot-${today}-10`));
+  await dragAndDrop(page, unscheduledA, page.getByTestId(`calendar-slot-${today}-10`));
 
   const eventChip = page.locator('[data-testid^="calendar-event-"]').filter({ hasText: taskA });
   await expect(eventChip).toBeVisible();
@@ -81,7 +82,7 @@ test("unscheduling a block clears its window and returns it to Unscheduled", asy
   await openTimeDeck(page);
 
   const today = todayIso();
-  await page.locator('button[data-testid^="calendar-unscheduled-"]').filter({ hasText: taskA }).dragTo(page.getByTestId(`calendar-slot-${today}-14`));
+  await dragAndDrop(page, page.locator('button[data-testid^="calendar-unscheduled-"]').filter({ hasText: taskA }), page.getByTestId(`calendar-slot-${today}-14`));
   const eventChip = page.locator('[data-testid^="calendar-event-"]').filter({ hasText: taskA });
   await expect(eventChip).toBeVisible();
 
@@ -105,7 +106,7 @@ test("a scheduled task accepts a directly entered start and end time", async ({ 
   await openTimeDeck(page);
 
   const today = todayIso();
-  await page.locator('button[data-testid^="calendar-unscheduled-"]').filter({ hasText: taskA }).dragTo(page.getByTestId(`calendar-slot-${today}-9`));
+  await dragAndDrop(page, page.locator('button[data-testid^="calendar-unscheduled-"]').filter({ hasText: taskA }), page.getByTestId(`calendar-slot-${today}-9`));
   const eventChip = page.locator('[data-testid^="calendar-event-"]').filter({ hasText: taskA });
   await eventChip.click();
 
@@ -130,7 +131,7 @@ test("Google Calendar's honest not-connected state renders with no console error
   await openTimeDeck(page);
 
   const today = todayIso();
-  await page.locator('button[data-testid^="calendar-unscheduled-"]').filter({ hasText: taskA }).dragTo(page.getByTestId(`calendar-slot-${today}-9`));
+  await dragAndDrop(page, page.locator('button[data-testid^="calendar-unscheduled-"]').filter({ hasText: taskA }), page.getByTestId(`calendar-slot-${today}-9`));
   await page.locator('[data-testid^="calendar-event-"]').filter({ hasText: taskA }).click();
 
   const popover = page.getByTestId("calendar-detail-popover");
