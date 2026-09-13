@@ -9,6 +9,54 @@ Add each session's PROGRESS.md entry to the same branch as the code it describes
 
 ---
 
+## [backend] 2026-09-13 (PR pending) — Task-tied soundtracks, PR A: schema + client plumbing
+
+First of three PRs (plan: `~/.claude/plans/adaptive-sleeping-turing.md`) for Phase 2 of the
+Spotify work: when a user opens a task whose category has a "topic type" (DSA, Backend,
+Database, System design -- the manual-setup UI's own fixed `<select>` options, though not
+DB-enforced), the Session screen will suggest a Spotify playlist mapped to that type, with a Play
+button the user clicks -- never auto-play. This PR is schema + typed client functions only, no UI.
+
+**`supabase/migrations/0026_soundtrack_preferences.sql`** (new table, applied to the linked
+project via `supabase db push` -- this also picked up `0025_review_daily_summary.sql`, from PR
+#177, which had been merged to `main` but not yet applied to the remote DB). Maps
+`(user_id, topic_type)` -> a chosen playlist (id/name/uri stored directly, no re-fetch needed to
+render it). Two decisions made explicit and verified against the real schema before committing:
+keyed on `topic_type`, not `plan_categories.id` (the only cross-plan-category signal that survives
+a user editing their route, and already selected by the session screen's own block query with no
+new join); an ordinary client-writable table under owner-only RLS, not service-role-gated like
+`music_connections` -- a chosen playlist is a preference the user picked, not a credential, the
+same posture `blocks.notes` already has. Types regenerated via the documented
+`supabase gen types typescript --linked` command.
+
+**New `web/lib/preferences/soundtrack-preferences.ts`** (list/get/save/clear, plain functions
+taking a Supabase client -- explicitly NOT following `lib/preferences/focus-timer.ts`/
+`focus-sandglass.ts`'s `localStorage`-hook shape, since this needs to survive a fresh browser) and
+**`web/lib/preferences/active-plan-topic-types.ts`** (`listActiveTopicTypes` -- the distinct topic
+types the user's *active* plan's categories actually use, so Settings' mapping UI in PR B never
+offers a type the user's own route has no category for; reuses `today-deck.tsx`'s existing
+active-plan lookup pattern, no new RPC).
+
+**Also added `playSpotifyPlaylist(uri)`** to `listen-state.tsx`, next to the existing
+`playSpotifyTrack` -- plays a whole playlist from its own start (bare `contextUri`, no
+`offset`/`uris`), already supported by PR #172's play route with zero backend change needed.
+Extracted the shared request-lifecycle/error-handling from `playSpotifyTrack` into
+`runSpotifyPlayRequest` rather than duplicating it, and fixed a stale comment along the way
+("until PR 3 adds device transfer" -- PR 3 shipped already).
+
+**Lesson applied from PR #176's own CI miss:** ran `npm run lint` locally this time, not just
+typecheck -- clean, no repeat of that gap.
+
+**Files changed:** `supabase/migrations/0026_soundtrack_preferences.sql` (new),
+`web/lib/supabase/database.types.ts` (regenerated), `web/lib/preferences/soundtrack-preferences.ts`
+(new, + test), `web/lib/preferences/active-plan-topic-types.ts` (new, + test),
+`web/app/(marketing)/architecture-02/listen-state.tsx`.
+
+**Verification:** `npm run typecheck`, `npm run lint`, and `npm run test` all clean (368/368 unit
+tests, 10 new). Migration applied cleanly to the linked project; generated types compile.
+
+---
+
 ## [frontend] 2026-09-13 (PR pending) — Spotify music control center Phase 1, PR 3: Now Playing / Queue / Device tabs
 
 Third and last PR of Phase 1 (plan: `~/.claude/plans/adaptive-sleeping-turing.md`). Adds the
