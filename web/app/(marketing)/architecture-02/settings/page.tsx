@@ -11,6 +11,14 @@ import { RadialMenu } from "../radial-menu";
 import { RadialNavigationWheel } from "../radial-navigation-wheel";
 import { useDockStyle } from "../dock-preference";
 import { isPlanningMode, type PlanningMode } from "../planning-mode";
+import { fetchSpotifyPlaylists, type SpotifyPlaylistSummary } from "../spotify-playlists";
+import { listActiveTopicTypes } from "@/lib/preferences/active-plan-topic-types";
+import {
+  clearSoundtrackPreference,
+  listSoundtrackPreferences,
+  saveSoundtrackPreference,
+  type SoundtrackPreference,
+} from "@/lib/preferences/soundtrack-preferences";
 import "../signal-deck.css";
 import "../planning-mode-selector.css";
 import "../theme-chooser.css";
@@ -47,6 +55,21 @@ type SpotifyStatus = {
   missing: string[];
   provider: string;
 };
+
+// plan_categories.topic_type is stored lowercase (the manual-setup form's
+// own <select> values, onboarding/manual/page.tsx's TOPIC_TYPES) -- this is
+// the one place that reads it back, so the label map lives here rather than
+// a shared util nothing else needs yet.
+const TOPIC_TYPE_LABELS: Record<string, string> = {
+  dsa: "DSA",
+  backend: "Backend",
+  database: "Database",
+  system_design: "System design",
+};
+
+function topicTypeLabel(topicType: string): string {
+  return TOPIC_TYPE_LABELS[topicType] ?? topicType;
+}
 
 // /api/music/spotify/callback round-trips back as ?spotify=<outcome>.
 const SPOTIFY_OUTCOMES: Record<string, string> = {
@@ -299,6 +322,107 @@ export default function SignalDeckSettingsPage() {
       setSpotifyDisconnecting(false);
     }
   }, [loadSpotify]);
+
+  // Task-tied soundtracks (Phase 2): mapping topic types (DSA/Backend/
+  // Database/System design -- the manual-setup UI's own fixed options) to a
+  // Spotify playlist, read by the Session screen to suggest one with a Play
+  // button. This section fetches its own playlists rather than reading
+  // SignalDeckListenProvider's -- this page does not consume that context
+  // today (it keeps its own independent Spotify status fetch above,
+  // mirroring the Calendar panel's pattern), and adding the global context
+  // here for one list is a bigger, riskier change than one more fetch.
+  const [topicTypes, setTopicTypes] = useState<string[]>([]);
+  const [topicTypesState, setTopicTypesState] = useState<LoadState | "no-active-plan">("loading");
+  const [soundtrackPlaylists, setSoundtrackPlaylists] = useState<SpotifyPlaylistSummary[]>([]);
+  const [soundtrackPlaylistsState, setSoundtrackPlaylistsState] = useState<LoadState>("loading");
+  const [soundtrackPreferences, setSoundtrackPreferences] = useState<Map<string, SoundtrackPreference>>(new Map());
+  const [soundtrackSavingType, setSoundtrackSavingType] = useState<string | null>(null);
+  const [soundtrackError, setSoundtrackError] = useState<string | null>(null);
+
+  const loadSoundtrackMapping = useCallback(async () => {
+    setTopicTypesState("loading");
+    setSoundtrackPlaylistsState("loading");
+    const supabase = createClient();
+
+    const [topicTypesResult, playlistsResult, preferencesResult] = await Promise.all([
+      listActiveTopicTypes(supabase),
+      fetchSpotifyPlaylists(),
+      listSoundtrackPreferences(supabase),
+    ]);
+
+    if (!topicTypesResult.ok) {
+      setTopicTypesState("error");
+    } else if ("noActivePlan" in topicTypesResult && topicTypesResult.noActivePlan) {
+      setTopicTypesState("no-active-plan");
+    } else {
+      setTopicTypes(topicTypesResult.topicTypes);
+      setTopicTypesState("ready");
+    }
+
+    setSoundtrackPlaylists(playlistsResult.ok ? playlistsResult.items : []);
+    setSoundtrackPlaylistsState(playlistsResult.ok ? "ready" : "error");
+
+    if (preferencesResult.ok) {
+      setSoundtrackPreferences(new Map(preferencesResult.preferences.map((pref) => [pref.topicType, pref])));
+    }
+  }, []);
+
+  // Fetches once Spotify is confirmed connected -- the mapping UI has
+  // nothing to show before that (no playlists to pick from).
+  useEffect(() => {
+    if (spotifyState !== "ready" || !spotify?.connected) return;
+    const timer = window.setTimeout(() => void loadSoundtrackMapping(), 0);
+    return () => window.clearTimeout(timer);
+  }, [spotifyState, spotify?.connected, loadSoundtrackMapping]);
+
+  const saveSoundtrack = useCallback(async (topicType: string, playlistId: string) => {
+    const playlist = soundtrackPlaylists.find((p) => p.id === playlistId);
+    if (!playlist) return;
+    setSoundtrackSavingType(topicType);
+    setSoundtrackError(null);
+    const supabase = createClient();
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+    if (!user) {
+      setSoundtrackError("No authenticated session.");
+      setSoundtrackSavingType(null);
+      return;
+    }
+    const result = await saveSoundtrackPreference(supabase, user.id, {
+      topicType,
+      playlistId: playlist.id,
+      playlistName: playlist.name,
+      playlistUri: playlist.uri,
+    });
+    setSoundtrackSavingType(null);
+    if (!result.ok) {
+      setSoundtrackError(result.message);
+      return;
+    }
+    setSoundtrackPreferences((current) => {
+      const next = new Map(current);
+      next.set(topicType, { topicType, spotifyPlaylistId: playlist.id, spotifyPlaylistName: playlist.name, spotifyPlaylistUri: playlist.uri });
+      return next;
+    });
+  }, [soundtrackPlaylists]);
+
+  const clearSoundtrack = useCallback(async (topicType: string) => {
+    setSoundtrackSavingType(topicType);
+    setSoundtrackError(null);
+    const supabase = createClient();
+    const result = await clearSoundtrackPreference(supabase, topicType);
+    setSoundtrackSavingType(null);
+    if (!result.ok) {
+      setSoundtrackError(result.message);
+      return;
+    }
+    setSoundtrackPreferences((current) => {
+      const next = new Map(current);
+      next.delete(topicType);
+      return next;
+    });
+  }, []);
 
   return (
     <main className="a02-shell a02-settings">
@@ -570,14 +694,83 @@ export default function SignalDeckSettingsPage() {
               </p>
             )}
             <p className="a02-settings-note">
-              The player itself lives on the Listen deck. Connecting here only grants the three
-              scopes playback needs (<code>streaming</code>, <code>user-read-email</code>,{" "}
-              <code>user-read-private</code>) -- mtdo never reads or changes your library,
-              playlists, or follows.
+              The player itself lives on the Listen deck. Connecting here grants playback
+              (<code>streaming</code>), reading your playlists and their tracks, your real queue,
+              and switching Spotify Connect devices -- mtdo never creates, edits, or deletes
+              anything in your Spotify account.
             </p>
           </>
         )}
           </section>}
+          {activeSection === "integrations" && spotifyState === "ready" && spotify?.configured && (
+            <section className="a02-product-state a02-settings-card" aria-labelledby="soundtrack-settings-title">
+              <b id="soundtrack-settings-title">Focus Soundtracks</b>
+              <p className="a02-settings-note">
+                Map a route category&apos;s topic type to a Spotify playlist -- the Session screen
+                will suggest it with a Play button when you open a matching task. Never plays on
+                its own.
+              </p>
+              {!spotify.connected ? (
+                <p>Connect Spotify above to set up soundtrack mappings.</p>
+              ) : (
+                <>
+                  {soundtrackError && (
+                    <p className="a02-settings-note" role="alert">
+                      {soundtrackError}
+                    </p>
+                  )}
+                  {topicTypesState === "loading" && <p>Checking your route&apos;s categories…</p>}
+                  {topicTypesState === "error" && (
+                    <>
+                      <p>Could not check your route&apos;s categories.</p>
+                      <button type="button" onClick={() => void loadSoundtrackMapping()}>
+                        Try again ↗
+                      </button>
+                    </>
+                  )}
+                  {topicTypesState === "no-active-plan" && <p>Set up a route first -- there are no categories to map yet.</p>}
+                  {topicTypesState === "ready" && topicTypes.length === 0 && (
+                    <p>None of your route&apos;s categories have a topic type set yet.</p>
+                  )}
+                  {topicTypesState === "ready" && topicTypes.length > 0 && (
+                    <div className="a02-settings-status">
+                      {topicTypes.map((topicType) => {
+                        const mapped = soundtrackPreferences.get(topicType);
+                        const saving = soundtrackSavingType === topicType;
+                        return (
+                          <div className="a02-settings-row" key={topicType}>
+                            <span>{topicTypeLabel(topicType)}</span>
+                            <select
+                              aria-label={`Soundtrack for ${topicType}`}
+                              value={mapped?.spotifyPlaylistId ?? ""}
+                              disabled={saving || soundtrackPlaylistsState !== "ready"}
+                              onChange={(event) => {
+                                if (event.target.value) void saveSoundtrack(topicType, event.target.value);
+                              }}
+                            >
+                              <option value="">
+                                {soundtrackPlaylistsState === "ready" ? "No soundtrack" : "Loading playlists…"}
+                              </option>
+                              {soundtrackPlaylists.map((playlist) => (
+                                <option key={playlist.id} value={playlist.id}>
+                                  {playlist.name}
+                                </option>
+                              ))}
+                            </select>
+                            {mapped && (
+                              <button type="button" disabled={saving} onClick={() => void clearSoundtrack(topicType)}>
+                                {saving ? "…" : "Clear"}
+                              </button>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </>
+              )}
+            </section>
+          )}
         </div>
       </div>
       {dockStyle === "wheel" ? (

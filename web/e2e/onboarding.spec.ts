@@ -120,8 +120,11 @@ test("Review shows an honest empty heatmap and view-only Record Card", async () 
   await openSignalDeckDestination(page, "Review");
 
   await expect(page.getByRole("heading", { name: /make effort legible/i })).toBeVisible();
-  await expect(page.getByLabel("Six-week focus heatmap")).toBeVisible();
-  await expect(page.getByText(/no recorded focus in this window yet/i)).toBeVisible();
+  // Renamed with the Consistency heatmap's move to review_consistency()'s
+  // Effort Score (Phase B/F3) -- this session has no active plan yet, so
+  // every cell reads level=null (hatched), not a real level=0.
+  await expect(page.getByLabel("Six-week consistency heatmap")).toBeVisible();
+  await expect(page.getByText(/set up your route first, then return here/i)).toBeVisible();
 
   await page.getByRole("button", { name: /view record/i }).click();
   const record = page.getByRole("dialog", { name: /the work is real/i });

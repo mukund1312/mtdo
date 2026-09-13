@@ -83,7 +83,18 @@ regressing the heatmap or weekly review panel that already live there.
 
 ---
 
-## F2 — Rings (ready now, backend Phase A locked 2026-09-13)
+## F2 — Rings — **BUILT, 2026-09-13 (PR #190)**
+
+Built by Mukund (Claude Code) while Janhwi was unavailable, so she can pick up cleanly from F3
+onward, or revisit F2 herself later. `review-rings.tsx`, wired into `review-deck.tsx`'s Today tab
+above the existing `ProgressDeck`. One incidental fix along the way: `progress-deck.tsx`'s own
+duplicate "MAKE EFFORT LEGIBLE." hero was removed (kept its Refresh/View record controls) since it
+now visibly repeated `ReviewDeck`'s (F1) header once rings sat between them — and `ReviewDeck`'s
+own title was promoted from a `<div>` to a real `<h1>` after that removal broke an existing e2e
+test expecting exactly one semantic heading on the page. Colors: `--coral`/`--acid` (existing
+palette) for Focus/Execute, one new `--cobalt` (blue, `signal-deck.css`) for Progress.
+
+## F2 — Rings, original brief text (kept for reference, backend Phase A locked 2026-09-13)
 
 **Depends on:** `review_daily_summary()` (`migrations/0025`, `api.md` §3j) — merged, tested
 (131/131 in `supabase/tests/run.sh`), typed in `web/lib/review/types.ts`.
@@ -145,7 +156,14 @@ the heatmap recoloring (F3, needs Phase B), any insight/recommendation text (F6,
 
 ---
 
-## F3 — Consistency heatmap (ready now, backend Phase B locked 2026-09-13)
+## F3 — Consistency heatmap — **BUILT, 2026-09-13 (PR #192)**
+
+Built by Mukund (Claude Code) while Janhwi was unavailable. `progress-deck.tsx`'s heatmap now
+colors by `review_consistency()`'s Effort Score; `level: null` renders as a distinct hatched
+pattern from a real `level: 0`. Section renamed `FOCUS FREQUENCY` → `CONSISTENCY`. `FOCUS TIME/6
+WEEKS` and `LAST 7 DAYS` panels untouched (still `daily_rollups`).
+
+## F3 — Consistency heatmap, original brief text (kept for reference, backend Phase B locked 2026-09-13)
 
 **Depends on:** `review_consistency()` (`migrations/0027`, `api.md` §3k) — merged, tested (156/156),
 typed in `web/lib/review/types.ts` (`ReviewConsistency`/`asReviewConsistency()`).

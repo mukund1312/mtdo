@@ -52,6 +52,38 @@
 .a02-review-coming-soon { min-height:0; padding-top:36px; }
 .a02-review-coming-soon .a02-product-state { display:grid; min-height:104px; margin:0 auto; place-items:center; text-align:center; }
 .a02-review-coming-soon .a02-product-state p { margin:0; color:var(--dim); font:10px "DM Mono",monospace; letter-spacing:.08em; text-transform:uppercase; }
+.a02-review-rings { display:flex; flex-wrap:wrap; gap:20px; margin:32px 0 0; padding:0 clamp(26px,7vw,112px); }
+.a02-review-rings-empty { margin:32px clamp(26px,7vw,112px) 0; padding:24px; border:1px solid var(--line); border-radius:10px; background:var(--a02-surface); color:var(--dim); font-size:13px; max-width:420px; }
+.a02-ring { position:relative; display:flex; flex-direction:column; align-items:center; gap:6px; padding:20px 22px 24px; border:1px solid var(--line); border-radius:12px; background:var(--a02-surface); min-width:172px; }
+.a02-ring:focus-visible { outline:2px solid var(--aqua); outline-offset:2px; }
+.a02-ring svg { display:block; }
+.a02-ring-track { fill:none; stroke:rgba(255,255,255,.08); stroke-width:10; }
+.a02-ring-arc { fill:none; stroke-width:10; stroke-linecap:round; transform:rotate(-90deg); transform-origin:60px 60px; transition:stroke-dashoffset .8s cubic-bezier(.16,1,.3,1); }
+@media (prefers-reduced-motion: reduce) { .a02-ring-arc { transition:none; } }
+.a02-ring-body { position:absolute; top:50%; left:50%; transform:translate(-50%,-50%); display:flex; flex-direction:column; align-items:center; gap:2px; text-align:center; width:90px; }
+.a02-ring-pct { font:900 26px/1 "Archivo Black",Arial,sans-serif; }
+.a02-ring-value { font:10px "DM Mono",monospace; color:var(--dim); }
+.a02-ring-label { margin-top:2px; font:10px "DM Mono",monospace; letter-spacing:.1em; }
+.a02-ring--focus .a02-ring-label { color:var(--coral); }
+.a02-ring--execute .a02-ring-label { color:var(--acid); }
+.a02-ring--progress .a02-ring-label { color:var(--cobalt); }
+.a02-ring-subtitle { font-size:10px; color:var(--dim); text-align:center; }
+.a02-ring-tooltip { position:absolute; z-index:5; bottom:calc(100% + 8px); left:50%; transform:translateX(-50%); display:none; flex-direction:column; gap:2px; padding:8px 10px; border:1px solid var(--line); border-radius:6px; background:var(--a02-surface-raised); font:10px "DM Mono",monospace; color:var(--ink); white-space:nowrap; }
+.a02-ring:hover .a02-ring-tooltip,.a02-ring:focus-visible .a02-ring-tooltip { display:flex; }
+@media(max-width:560px){.a02-review-rings{padding:0 18px;gap:14px}.a02-ring{min-width:0;flex:1 1 140px;padding:16px 14px 20px}}
+.a02-time-behavior { display:grid; grid-template-columns:1.3fr 1fr .8fr; gap:13px; margin:22px clamp(26px,7vw,112px) 0; }
+.a02-time-behavior > section { min-height:200px; padding:20px; border:1px solid var(--line); border-radius:11px; background:rgba(15,18,49,.72); }
+.a02-time-behavior header { font:10px "DM Mono",monospace; color:var(--dim); letter-spacing:.08em; }
+.a02-time-window-stat { margin:10px 0 0; color:var(--dim); font-size:11px; line-height:1.5; }
+.a02-hour-bars { display:flex; align-items:end; gap:2px; height:80px; margin-top:16px; border-bottom:1px solid var(--line); }
+.a02-hour-bars i { flex:1; min-width:2px; background:var(--aqua); border-radius:1px 1px 0 0; }
+.a02-duration-bars { display:flex; flex-direction:column; gap:8px; margin-top:16px; }
+.a02-duration-row { display:grid; grid-template-columns:52px 1fr 24px; align-items:center; gap:8px; }
+.a02-duration-row span { color:var(--dim); font:9px "DM Mono",monospace; }
+.a02-duration-row i { height:8px; border-radius:4px; background:var(--aqua); }
+.a02-duration-row b { text-align:right; font:10px "DM Mono",monospace; color:var(--dim); }
+.a02-momentum-score { display:block; margin:16px 0 0; font:900 56px/.8 "Archivo Black",Arial,sans-serif; letter-spacing:-.08em; color:var(--acid); }
+@media(max-width:900px){.a02-time-behavior{grid-template-columns:1fr;margin:22px 18px 0}}
 .a02-skeleton { min-height:104px; border-color:transparent; background:linear-gradient(100deg,#171a42 20%,#252a57 50%,#171a42 80%); background-size:200% 100%; animation:a02-product-shimmer 1.3s ease-in-out infinite; }
 .a02-skeleton--short { min-height:74px; opacity:.68; }
 .a02-review-grid.is-loading .a02-heat > div i,.a02-review-grid.is-loading .a02-line-graph i { opacity:.35; }

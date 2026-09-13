@@ -73,6 +73,10 @@ test.describe.serial("Spotify: Listen deck and Settings honesty states", () => {
     await expect(spotifyRow.getByText(/not configured/i)).toBeVisible();
     await expect(page.getByText(/Listen deck.s other sources still work/i)).toBeVisible();
     await expect(page.getByRole("link", { name: /connect spotify/i })).toHaveCount(0);
+    // Task-tied soundtracks (Phase 2): the whole section is gated on
+    // spotify.configured -- an unconfigured server shows nothing here, not a
+    // second copy of the "not configured" message.
+    await expect(page.getByText("Focus Soundtracks")).toHaveCount(0);
   });
 
   // Real routes must degrade, not crash -- an unconfigured server answers with
@@ -309,4 +313,82 @@ test.describe.serial("Spotify: Listen deck and Settings honesty states", () => {
     await page.unroute("**/api/music/spotify/player/devices");
     await page.unroute("**/api/music/spotify/player/transfer");
   });
+});
+
+// Task-tied soundtracks (Phase 2, PR B): the Settings mapping UI. Creates a
+// real plan with a real topic-typed category via Manual Setup -- unlike
+// every test above, this can NOT share the file's one session:
+// plan_categories.topic_type only exists on a real, owned plan, and this
+// project enforces one active plan per user. Own standalone session, the
+// same reasoning this project's other plan-creating tests already follow
+// (see phase3-plan-pipeline.spec.ts's own header comment).
+test("Settings: Focus Soundtracks maps a real topic-typed category to a playlist", async ({ page }) => {
+  await page.goto("/architecture-02/onboarding/manual");
+  await page.getByPlaceholder(/get fluent in sql joins/i).fill("Prepare for backend interviews");
+  await page.getByPlaceholder("e.g. SQL Joins").fill("Arrays");
+  await page.getByLabel(/topic type/i).selectOption("dsa");
+  await page.getByPlaceholder("Add a task").fill("Two-pointer basics");
+  await page.getByRole("button", { name: "Add", exact: true }).click();
+  const submit = page.getByRole("button", { name: /create my route/i });
+  await expect(submit).toBeEnabled();
+  await submit.click();
+  await expect(page).toHaveURL(/\/architecture-02\?deck=work$/);
+
+  await page.route("**/api/music/spotify/status", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        configured: true,
+        connected: true,
+        connection: {
+          connectedAt: new Date().toISOString(),
+          displayName: "Test Listener",
+          expired: false,
+          premium: true,
+          product: "premium",
+          refreshTokenExpiresAt: null,
+          scopes: [],
+        },
+        missing: [],
+        provider: "spotify",
+      }),
+    });
+  });
+  await page.route("**/api/music/spotify/playlists", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        items: [{ id: "p1", name: "Deep Focus", trackCount: 12, imageUrl: null, uri: "spotify:playlist:p1" }],
+        next: null,
+      }),
+    });
+  });
+
+  await page.goto("/architecture-02/settings");
+  await expect(page.getByRole("heading", { name: /under the hood/i })).toBeVisible();
+  await page.getByRole("button", { name: "Integrations" }).click();
+
+  await expect(page.getByText("Focus Soundtracks")).toBeVisible({ timeout: 20_000 });
+  await expect(page.getByText("DSA", { exact: true })).toBeVisible();
+
+  const select = page.getByLabel("Soundtrack for dsa");
+  await select.selectOption("p1");
+  await expect(page.getByRole("button", { name: "Clear" })).toBeVisible();
+
+  // Reload with the same routes still mocked -- confirms the mapping
+  // actually persisted to soundtrack_preferences, not just local state.
+  await page.reload();
+  await page.getByRole("button", { name: "Integrations" }).click();
+  await expect(page.getByLabel("Soundtrack for dsa")).toHaveValue("p1", { timeout: 20_000 });
+
+  await page.getByRole("button", { name: "Clear" }).click();
+  await expect(page.getByRole("button", { name: "Clear" })).toHaveCount(0);
+  await page.reload();
+  await page.getByRole("button", { name: "Integrations" }).click();
+  await expect(page.getByLabel("Soundtrack for dsa")).toHaveValue("", { timeout: 20_000 });
+
+  await page.unroute("**/api/music/spotify/status");
+  await page.unroute("**/api/music/spotify/playlists");
 });
