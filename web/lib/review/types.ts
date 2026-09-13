@@ -31,6 +31,8 @@ export interface FocusRing {
   session_count: number;
   completed_sessions: number;
   longest_session_minutes: number;
+  /** Real session_paused ledger events today (migrations/0032) -- "interruptions", not a session count. */
+  pause_count: number;
 }
 
 export interface ExecuteRing {
@@ -42,6 +44,8 @@ export interface ExecuteRing {
   /** Sum of picked blocks' category score_weight, weighted by done-ness. */
   score: number;
   score_max: number;
+  /** Real task_regressed ledger events today (migrations/0032) -- the closest tracked signal to "rescheduled"; this schema has no reschedule event at all. */
+  regressed_count: number;
 }
 
 export interface ProgressRing {

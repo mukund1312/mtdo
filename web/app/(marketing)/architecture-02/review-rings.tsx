@@ -1,14 +1,19 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import type { UseDailySummaryResult } from "./use-daily-summary";
+import type { UseMomentumResult } from "./use-momentum";
 
-import { createClient } from "@/lib/supabase/client";
-import { asReviewDailySummary, type ReviewDailySummary } from "@/lib/review/types";
-
-// F2 of docs/designs/review-frontend-briefs.md. Reads review_daily_summary()
-// (migrations/0025, api.md sec3j) and renders it as three rings -- never
-// re-derives a percentage client-side. `null` on any field means "no basis
-// to compute this," not zero, and is rendered as such, not as a fake 0%.
+// F2 of docs/designs/review-frontend-briefs.md, extended to match the
+// reference mock exactly: Focus/Execute/Progress rings plus a fourth
+// "DAILY SCORE" card (review_momentum()'s smoothed score, not a new metric).
+// Presentational -- the fetches live in ReviewDeck (use-daily-summary.ts,
+// use-momentum.ts) and are shared with ReviewTodaySignal.
+//
+// COLOR REVERSAL, disclosed: Progress now uses --ultra (purple), matching
+// the reference mock exactly. --ultra already exists and is used elsewhere
+// in this exact file (signal-deck.css) -- this is not a new color, and
+// reverses this plan's earlier "no purple" call, made before the mock's
+// exact-match instruction. See docs/designs/mtdo-web-review-study-profile-plan.md.
 
 type RingKind = "focus" | "execute" | "progress";
 
@@ -18,50 +23,27 @@ const RING_META: Record<RingKind, { label: string; subtitle: string; empty: stri
   progress: { label: "PROGRESS", subtitle: "Goal advancement", empty: "No category picked this week" },
 };
 
-// The three a02-scoped hues (signal-deck.css) closest to the reference mock's
-// pink/lime/blue, reusing the product's own existing palette rather than a
-// disconnected token set -- see docs/designs/mtdo-web-review-study-profile-plan.md
-// sec6 for why Progress is --cobalt (a new, non-purple addition) rather than
-// the already-present --ultra.
 const RING_COLOR: Record<RingKind, string> = {
   focus: "var(--coral)",
   execute: "var(--acid)",
-  progress: "var(--cobalt)",
+  progress: "var(--ultra)",
 };
 
-export function ReviewRings() {
-  const [summary, setSummary] = useState<ReviewDailySummary | null>(null);
-  const [state, setState] = useState<"loading" | "ready" | "error">("loading");
-
-  const load = useCallback(async () => {
-    setState("loading");
-    const supabase = createClient();
-    const { data, error } = await supabase.rpc("review_daily_summary", {});
-    if (error) {
-      console.error("[review] failed to load daily summary:", error);
-      setState("error");
-      return;
-    }
-    try {
-      setSummary(asReviewDailySummary(data));
-      setState("ready");
-    } catch (parseError) {
-      console.error("[review] malformed daily summary:", parseError);
-      setState("error");
-    }
-  }, []);
-
-  useEffect(() => {
-    const timer = window.setTimeout(() => void load(), 0);
-    return () => window.clearTimeout(timer);
-  }, [load]);
+export function ReviewRings({
+  daily,
+  momentum,
+}: {
+  daily: UseDailySummaryResult;
+  momentum: UseMomentumResult;
+}) {
+  const { summary, state } = daily;
 
   if (state === "error") {
     return (
       <section className="a02-product-state" role="alert">
         <b>Today&apos;s rings are unavailable.</b>
         <p>We could not read your daily review. Your data is unchanged.</p>
-        <button type="button" onClick={() => void load()}>Try again ↗</button>
+        <button type="button" onClick={daily.reload}>Try again ↗</button>
       </section>
     );
   }
@@ -77,7 +59,7 @@ export function ReviewRings() {
   const ok = state === "ready" && summary?.status === "ok" ? summary : null;
 
   return (
-    <section className="a02-review-rings" aria-label="Today's rings">
+    <section className="a02-review-rings" aria-label="Today&apos;s rings">
       <Ring
         kind="focus"
         loading={state === "loading"}
@@ -107,7 +89,56 @@ export function ReviewRings() {
         value={ok ? `${ok.progress.week_score} / ${ok.progress.week_score_max} pts` : undefined}
         detail={ok ? [`this week's goal so far`] : []}
       />
+      <DailyScore momentum={momentum} />
     </section>
+  );
+}
+
+function DailyScore({ momentum }: { momentum: UseMomentumResult }) {
+  const { momentum: m, state } = momentum;
+  const loading = state === "loading";
+  const ok = state === "ready" && m?.status === "ok" ? m : null;
+  const score = ok?.momentum_score ?? null;
+  const circumference = 2 * Math.PI * 50;
+  const offset = loading || score == null ? circumference : circumference * (1 - Math.min(100, score) / 100);
+
+  const label =
+    score == null
+      ? null
+      : score >= 75
+        ? "Good Momentum"
+        : score >= 50
+          ? "Building Momentum"
+          : score >= 25
+            ? "Low Momentum"
+            : "Just Getting Started";
+
+  return (
+    <article className="a02-daily-score" tabIndex={0}>
+      <svg viewBox="0 0 120 120" width="120" height="120" aria-hidden="true">
+        <circle cx="60" cy="60" r="50" className="a02-ring-track" />
+        <circle
+          cx="60"
+          cy="60"
+          r="50"
+          className="a02-ring-arc"
+          style={{ stroke: "var(--acid)", strokeDasharray: circumference, strokeDashoffset: offset }}
+        />
+      </svg>
+      <div className="a02-daily-score-body">
+        <b>{loading ? "···" : score ?? "—"}</b>
+        <span>/ 100</span>
+      </div>
+      <div className="a02-daily-score-copy">
+        <b>{loading ? "" : label ?? "Not enough data yet"}</b>
+        {ok && (
+          <p>
+            {ok.current_streak} day{ok.current_streak === 1 ? "" : "s"} current streak ·{" "}
+            {Math.round(ok.active_days_rate * 100)}% active over the last {ok.window_days} days.
+          </p>
+        )}
+      </div>
+    </article>
   );
 }
 

@@ -233,6 +233,43 @@ begin
     v_out->'focus'->>'longest_session_minutes', '20.0');
 end $test$;
 
+-- ===== 0032: focus.pause_count and execute.regressed_count =================
+do $test$
+declare
+  v_uid uuid := t.mkuser('review_daily_signal_fields');
+  v_plan uuid;
+  v_cat uuid;
+  v_block uuid;
+  v_out jsonb;
+begin
+  insert into public.plans (user_id, app_name, goal_line, is_active)
+    values (v_uid, 'test', 'signal fields', false) returning id into v_plan;
+  insert into public.plan_categories (plan_id, name, label, days, sort_order, created_at)
+    values (v_plan, 'cat', 'Cat', '{0,1,2}', 0, '2026-01-01'::timestamptz) returning id into v_cat;
+  insert into public.blocks (user_id, plan_id, category_id, date, position, text, status)
+    values (v_uid, v_plan, v_cat, '2026-09-01', 0, 'walked back', 'done') returning id into v_block;
+
+  -- Completed then walked back -- one real task_regressed event today.
+  perform t.ev(v_uid, 'task_completed', '2026-09-01 07:00+00', v_block::text);
+  perform t.ev(v_uid, 'task_regressed', '2026-09-01 08:00+00', v_block::text);
+
+  -- Three real session_paused events today (two sessions, one paused twice).
+  perform t.ev(v_uid, 'session_paused', '2026-09-01 09:00+00');
+  perform t.ev(v_uid, 'session_paused', '2026-09-01 09:30+00');
+  perform t.ev(v_uid, 'session_paused', '2026-09-01 10:00+00');
+
+  set local role authenticated;
+  perform set_config('request.jwt.claim.sub', v_uid::text, true);
+  perform public.activate_plan(v_plan);
+
+  v_out := public.review_daily_summary('2026-09-01'::date);
+
+  perform t.eq('10 focus.pause_count counts today''s real session_paused events',
+    v_out->'focus'->>'pause_count', '3');
+  perform t.eq('10b execute.regressed_count counts today''s real task_regressed events',
+    v_out->'execute'->>'regressed_count', '1');
+end $test$;
+
 do $test$
 begin
   raise notice '--- review_daily_summary: complete ---';
