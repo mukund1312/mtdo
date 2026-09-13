@@ -9,6 +9,39 @@ Add each session's PROGRESS.md entry to the same branch as the code it describes
 
 ---
 
+## [e2e] 2026-09-13 (PR pending) — fix a real walkthrough-close race in 5 e2e files, found by PR #172's CI
+
+PR #172 (Spotify backend, unrelated to this fix's files) went red in CI on a test in
+`onboarding.spec.ts` -- and failed identically on CI's automatic retry too, which per this
+project's own established distinction (documented in the e2e-volume-reduction PROGRESS.md entry)
+means a real reproducible bug, not the shared Supabase rate-limit flakiness this project has
+chased before. It wasn't.
+
+**Root cause, traced to `architecture-02/page.tsx`:** the first-time walkthrough tour doesn't
+open synchronously at mount -- it opens via `window.setTimeout(() => setWalkthroughOpen(true), 0)`
+inside a `useEffect` gated on the anonymous session's auth state resolving. Every
+`closeWalkthroughIfPresent(page)` helper this session wrote across the e2e-volume-reduction work
+(`fixed-layer-safety.spec.ts`, `phase7-weekly-review.spec.ts`, `onboarding.spec.ts`,
+`spotify-listen.spec.ts`, `signal-deck-home-session.spec.ts`) did a single *immediate*
+`isVisible()`/`count()` check with no wait -- correct the instant it ran, but capable of running
+before the delayed tour actually opens, then having the very next click (opening the nav menu)
+intercepted by the dialog appearing a moment later. Never caught locally: this machine's own
+auth round-trip is fast enough that the check and the delayed open rarely land in the wrong order,
+but CI's slower environment hits the race reliably.
+
+**Fix:** every copy of the helper now does `await close.waitFor({ state: "visible", timeout: 2000
+}).catch(() => {})` before the existing `isVisible()` check -- gives the delayed open a bounded
+window to actually happen before deciding it isn't going to, rather than deciding instantly.
+Re-verified all 19 tests across the five files pass against a production build with Spotify
+credentials stripped from `.env.local` (this machine now has real ones from earlier manual
+testing, which made the "not configured" assertions fail locally for an unrelated, already-known
+reason -- see PR #172's own PROGRESS.md entry for that same collision).
+
+**Files changed:** the `closeWalkthroughIfPresent` helper in each of the five e2e files listed
+above. No app code touched -- this was purely a test-helper timing bug, not a product bug.
+
+---
+
 ## [frontend] 2026-09-13 (PR #170, fix before merge) — `spotify-listen.spec.ts`'s one non-flaky CI failure was a real bug, not more rate-limit noise
 
 PR #170's CI failed four times. Three of the four failures spread across files this PR
