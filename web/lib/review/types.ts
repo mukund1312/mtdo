@@ -316,3 +316,126 @@ export function asReviewMomentum(value: unknown): ReviewMomentum {
   }
   return value as unknown as ReviewMomentum;
 }
+
+// ---------------------------------------------------------------------------
+// study_profile() -- the composed learner profile (migrations/0031, schema
+// mtdo.study_profile.v1). PURE COMPOSITION over review_consistency()/
+// review_time_patterns()/review_momentum()/weekly_performance() -- no field
+// here is a second implementation of a formula those already define.
+//
+// Every aggregate this function actually computes (focus/execution/planning/
+// the three subject fields) carries confidence: "insufficient_data" | "low" |
+// "medium" | "high", from the shared study_profile_confidence() gate. A field
+// below its own minimum sample is null with confidence "insufficient_data" --
+// never a value inferred from too little evidence. best_study_window/
+// best_weekday/ideal_session_length are BestHour/BestWeekday/
+// BestDurationBucket pass-throughs from ReviewTimePatterns (already gated by
+// review_time_patterns()'s own min_sample_size).
+
+export interface StudyProfileAggregate {
+  metric_version: "study_profile_v1";
+  avg_percentage: number | null;
+  sample_size: number;
+  window_days: number;
+  confidence: "insufficient_data" | "low" | "medium" | "high";
+}
+
+export interface StudyProfilePlanning {
+  metric_version: "study_profile_v1";
+  avg_completion_rate: number | null;
+  /** Independent of avg_completion_rate's gate -- a plan can clear one and not the other. */
+  avg_pace_ratio: number | null;
+  weeks_sampled: number;
+  confidence: "insufficient_data" | "low" | "medium" | "high";
+}
+
+export interface StudyProfileConsistency {
+  metric_version: "momentum_v1";
+  active_days_rate: number;
+  momentum_score: number;
+  current_streak: number;
+  longest_streak: number;
+  window_days: number;
+}
+
+export interface StudyProfileSubject {
+  category_id: string;
+  name: string;
+  label: string;
+  completion_rate: number;
+  sample_size: number;
+  confidence: "insufficient_data" | "low" | "medium" | "high";
+}
+
+export interface StudyProfileAvoidedSubject {
+  category_id: string;
+  name: string;
+  label: string;
+  /** Always > 0 -- most_avoided_subject is null rather than surfacing a category with a real rate of 0. */
+  postponement_rate: number;
+  sample_size: number;
+  confidence: "insufficient_data" | "low" | "medium" | "high";
+}
+
+export interface StudyProfileOk {
+  schema_version: "mtdo.study_profile.v1";
+  computed_at: string;
+  from: string;
+  to: string;
+  window_days: number;
+  timezone: string;
+  plan_id: string;
+  status: "ok";
+  focus: StudyProfileAggregate;
+  execution: StudyProfileAggregate;
+  consistency: StudyProfileConsistency;
+  planning: StudyProfilePlanning;
+  best_study_window: BestHour | null;
+  best_weekday: BestWeekday | null;
+  ideal_session_length: BestDurationBucket | null;
+  strongest_subject: StudyProfileSubject | null;
+  weakest_subject: StudyProfileSubject | null;
+  most_avoided_subject: StudyProfileAvoidedSubject | null;
+}
+
+export interface StudyProfileNoPlan {
+  schema_version: "mtdo.study_profile.v1";
+  computed_at: string;
+  from: string;
+  to: string;
+  window_days: number;
+  timezone: string;
+  status: "no_active_plan";
+  focus: null;
+  execution: null;
+  consistency: null;
+  planning: null;
+  best_study_window: null;
+  best_weekday: null;
+  ideal_session_length: null;
+  strongest_subject: null;
+  weakest_subject: null;
+  most_avoided_subject: null;
+}
+
+export type StudyProfile = StudyProfileOk | StudyProfileNoPlan;
+
+export const STUDY_PROFILE_SCHEMA = "mtdo.study_profile.v1";
+
+export class StudyProfileError extends Error {}
+
+export function asStudyProfile(value: unknown): StudyProfile {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new StudyProfileError("study_profile() returned no object.");
+  }
+  const obj = value as Record<string, unknown>;
+  if (obj.schema_version !== STUDY_PROFILE_SCHEMA) {
+    throw new StudyProfileError(
+      `Unexpected study_profile schema ${String(obj.schema_version)}; expected ${STUDY_PROFILE_SCHEMA}.`,
+    );
+  }
+  if (obj.status !== "ok" && obj.status !== "no_active_plan") {
+    throw new StudyProfileError(`Unexpected study_profile status ${String(obj.status)}.`);
+  }
+  return value as unknown as StudyProfile;
+}

@@ -1530,6 +1530,74 @@ a "day with real activity" already means throughout this schema: `effort_score >
 day in the window (today) — a run that ended three days ago is history, not a current streak, and
 is reflected only in `longest_streak`.
 
+## 3n. `study_profile()` — the composed learner profile (Phase D, migrations/0031)
+
+```sql
+public.study_profile_confidence(p_sample_size bigint) returns text
+public.study_profile(p_window_days integer default 42) returns jsonb
+```
+
+`authenticated`-callable, `security definer`, `stable`, `auth.uid()`-derived, no plan id (resolves
+the caller's own active plan, same convention as §3k/§3l/§3m).
+
+**Pure composition — this adds no new formula for anything §3f/§3k/§3l/§3m already compute.** It
+calls `review_consistency()`, `review_time_patterns()`, and `review_momentum()` exactly as a
+frontend caller would, plus `weekly_performance()` once per distinct ISO week the active plan
+touched in the window (same bounded-loop pattern as `review_consistency()`). The only two things
+this function actually computes are (1) aggregating `review_consistency()`'s daily Focus/Execute
+percentages across the window, and (2) aggregating `weekly_performance()`'s per-category numbers
+across the sampled weeks to surface a strongest/weakest/most-avoided subject. Progress/momentum/
+time-of-day/session-length are pass-throughs of their own RPC's fields, unchanged.
+
+**`study_profile_confidence(sample_size)`** is the one shared convention every aggregate below
+uses: `insufficient_data` (<5), `low` (5–9), `medium` (10–19), `high` (20+). Pure arithmetic, safe
+to expose broadly (`anon`/`authenticated`/`service_role`) — same posture as `session_focus_seconds()`.
+
+**Return shape** (`mtdo.study_profile.v1`, `status: "ok"`):
+
+```jsonc
+{
+  "schema_version": "mtdo.study_profile.v1",
+  "computed_at": "…", "from": "…", "to": "…", "window_days": 42, "timezone": "UTC",
+  "plan_id": "…", "status": "ok",
+  "focus": { "avg_percentage": 71.2, "sample_size": 12, "window_days": 42, "confidence": "low" },
+  "execution": { "avg_percentage": null, "sample_size": 2, "window_days": 42, "confidence": "insufficient_data" },
+  "consistency": { "active_days_rate": 0.73, "momentum_score": 78.0, "current_streak": 4, "longest_streak": 11, "window_days": 42 },
+  "planning": { "avg_completion_rate": 0.69, "avg_pace_ratio": 1.08, "weeks_sampled": 5, "confidence": "medium" },
+  "best_study_window": { "hour": 8, "sample_size": 18, "session_completion_rate": 0.83 },
+  "best_weekday": { "weekday": 6, "sample_size": 9, "session_completion_rate": 0.78 },
+  "ideal_session_length": { "bucket": "30-45m", "sample_size": 14, "session_completion_rate": 0.81 },
+  "strongest_subject": { "category_id": "…", "name": "backend", "label": "Backend", "completion_rate": 0.91, "sample_size": 14, "confidence": "medium" },
+  "weakest_subject": { "category_id": "…", "name": "dsa", "label": "DSA", "completion_rate": 0.24, "sample_size": 8, "confidence": "low" },
+  "most_avoided_subject": { "category_id": "…", "name": "system_design", "label": "System Design", "postponement_rate": 0.31, "sample_size": 9, "confidence": "insufficient_data" }
+}
+```
+
+`status: "no_active_plan"` mirrors §3j/§3k/§3l/§3m — every field is `null`, `best_study_window`
+included, never a fake trait.
+
+**Minimum-sample gates, all real, none skippable:**
+
+| field | gate | below it |
+|---|---|---|
+| `focus.avg_percentage` / `execution.avg_percentage` | ≥5 days with a non-null daily percentage | `null`, `confidence: "insufficient_data"`, real `sample_size` |
+| `planning.avg_completion_rate` | ≥2 distinct ISO weeks sampled | `null` |
+| `planning.avg_pace_ratio` | ≥2 weeks with a non-null `pace_ratio` that week | `null` (independent of the completion gate — a plan can clear one and not the other) |
+| `strongest_subject` / `weakest_subject` | a category's summed `picked_count` ≥3 across sampled weeks | excluded from the candidate pool entirely, not returned as a weak guess |
+| `most_avoided_subject` | summed `(picked_count + postponement_count)` ≥3, and `postponement_rate > 0` | `null` — a plan with zero real postponements returns `null` here, never a manufactured "least avoided" |
+
+**Why `most_avoided_subject` requires `postponement_rate > 0`, not just the sample gate.** Ordering
+by `postponement_rate desc limit 1` would otherwise always return *some* category, even one with a
+real rate of exactly `0` — which is not avoidance, it's the opposite. Excluding non-positive rates
+before ordering is what makes this field's presence itself informative.
+
+**Why the two-week `weeks_sampled` floor for planning, not five like the day-level gates.** ISO
+weeks are a much coarser unit than days — five *weeks* is over a month of history, which is too
+high a bar for a Review page a new user opens in their first fortnight. Two is the minimum for
+"trend" to mean anything at all (one data point has no trend); `confidence` still separates a
+2-week `"low"` reading from an 8-week `"high"` one, so the distinction isn't lost, just not gated
+on it.
+
 ## 4. The EmberMorph component contract
 
 `DESIGN.md` §Motion specifies the morph itself (`Graphite home → ember bloom → terminal focus

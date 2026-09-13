@@ -223,18 +223,27 @@ once caught — `api.md` §3j/§3k/§3l/§3m and every test file already referen
 No functions or data were affected either time; both were pure filename renumbers, verified by diff
 before renaming.
 
-### Phase D — Study Profile
+### Phase D — Study Profile — **CONTRACT LOCKED, 2026-09-14**
 
-- `study_profile()`: one RPC that composes A–C plus `weekly_performance()`'s existing category
-  breakdown into the profile shape from the brief (§23 of the paste) — best study window, ideal
-  session length, strongest/weakest/most-avoided subject, planning accuracy. **Every field carries
-  `sample_size`, `window_days`, and a `confidence` tag** — this is the one rule from the brief that
-  is completely non-optional; a UI stating "your ideal session is 45 minutes" off 3 sessions is a
-  worse product than not saying it.
-- No new raw data needed — this phase is pure composition of A/B/C's outputs plus
-  `weekly_performance()`. If that turns out false during implementation (some field genuinely can't
-  be derived from what exists), that's a stop-and-report moment, not a silent invention — same rule
-  the founder's paste states directly ("mark it INSUFFICIENT DATA, don't fake it").
+`migrations/0031_study_profile.sql` (`study_profile()` + the shared `study_profile_confidence()`
+helper), `docs/architecture/api.md` §3n, `web/lib/review/types.ts` (`StudyProfile`/
+`asStudyProfile()`), `supabase/tests/21_study_profile.sql` (25 assertions: subjects correctly
+ranked with a hand-verified planning average, the null-not-guessed rule on every gated field, the
+`postponement_rate > 0` requirement on `most_avoided_subject`, no-active-plan, validation,
+cross-user isolation). Full suite: 213/213. Applied to the live linked Supabase project and
+`database.types.ts` regenerated (`supabase gen types typescript --linked`) — the same step F4
+needed and PR #184 already flagged as easy to forget.
+
+**What shipped is pure composition, confirmed true, not just hoped true**: `study_profile()` calls
+`review_consistency()`/`review_time_patterns()`/`review_momentum()`/`weekly_performance()` exactly
+as a frontend caller would — it computes exactly two new things (the day-level Focus/Execute
+average, and the per-category rollup behind the three subject fields), nothing else. Every
+aggregate carries `sample_size`/`window_days`/`confidence`, gated by the shared
+`study_profile_confidence()` convention (`insufficient_data` <5, `low` 5-9, `medium` 10-19, `high`
+20+) — `null` below the gate, never a value inferred from too little evidence, matching the "mark
+it INSUFFICIENT DATA, don't fake it" rule this whole plan is built around.
+
+**Janhwi can start F5 (Study Profile panel) against this contract now.**
 
 ### Phase E — Insights (structured, not prose)
 

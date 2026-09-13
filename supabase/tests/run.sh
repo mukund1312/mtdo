@@ -90,7 +90,8 @@ fail=0
   -f "$ROOT/supabase/tests/17_review_daily_summary.sql" \
   -f "$ROOT/supabase/tests/18_review_consistency.sql" \
   -f "$ROOT/supabase/tests/19_review_time_patterns.sql" \
-  -f "$ROOT/supabase/tests/20_review_momentum.sql" 2>&1 \
+  -f "$ROOT/supabase/tests/20_review_momentum.sql" \
+  -f "$ROOT/supabase/tests/21_study_profile.sql" 2>&1 \
   | sed 's/^psql:[^ ]* //; s/^NOTICE:  //' | grep -E "^(PASS|FAIL|ERROR|---)" || fail=1
 
 echo

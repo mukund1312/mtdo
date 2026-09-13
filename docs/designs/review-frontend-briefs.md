@@ -256,16 +256,66 @@ Phase E).
 
 ---
 
-## F5 onward — not contract-locked yet, do not start
+## F5 — Study Profile panel (ready now, backend Phase D locked 2026-09-14)
+
+**Depends on:** `study_profile()` (`migrations/0031`, `api.md` §3n) — merged, tested (213/213 full
+suite), typed in `web/lib/review/types.ts` (`StudyProfile`/`asStudyProfile()`).
+
+**Goal:** a new card summarizing the learner's traits — best study window, ideal session length,
+strongest/weakest/most-avoided subject, planning accuracy — each with a visible sample-size caption.
+
+**Data contract:**
+
+```ts
+import { createClient } from "@/lib/supabase/client";
+import { asStudyProfile, type StudyProfile } from "@/lib/review/types";
+
+const { data, error } = await supabase.rpc("study_profile", { p_window_days: 42 });
+if (error) { /* -> "error" state */ }
+const profile: StudyProfile = asStudyProfile(data);
+```
+
+`profile.status` is `"ok"` or `"no_active_plan"` — branch before reading any field, same convention
+as every other Review RPC. When `"ok"`, **every field on `focus`/`execution`/`planning` and every
+subject field is independently nullable** — this is not one big loading/ready toggle, it's a card
+where some traits show and others say "not enough data yet" *at the same time*, on the same load.
+Render each field's own state:
+
+- `focus.avg_percentage` / `execution.avg_percentage`: when `null`, show "Not enough days yet"
+  under that trait specifically, not a blank space and not a `0%`.
+- `planning.avg_completion_rate` / `avg_pace_ratio`: same treatment, independently — a plan can have
+  one and not the other (see `api.md` §3n's note on why they're gated separately).
+- `strongest_subject` / `weakest_subject` / `most_avoided_subject`: each is `null` or a full object
+  (`category_id`, `name`, `label`, plus `completion_rate` or `postponement_rate`, `sample_size`,
+  `confidence`). **`most_avoided_subject` being `null` is a genuinely good state** — it means
+  nothing is being avoided — don't render it as an error or an empty placeholder that reads
+  negatively; something like "Nothing you're avoiding right now" is closer to the truth than silence.
+- `confidence` (`"insufficient_data" | "low" | "medium" | "high"`) is present on every gated field —
+  surface it, even briefly (a small dot, a one-word caption) per `review-visual-spec.md`'s existing
+  "sample size, always" rule for Study Profile fields. Never present a `"low"`-confidence trait with
+  the same visual weight as a `"high"`-confidence one.
+- `best_study_window`/`best_weekday`/`ideal_session_length` are the exact same
+  `BestHour`/`BestWeekday`/`BestDurationBucket` shapes F4 already renders — reuse that formatting
+  logic (`formatHour()`, the duration-bucket label map) from `review-time-behavior.tsx` rather than
+  re-deriving it.
+
+**States:** `loading` → `ready` (with every field independently nullable as above) → `error`
+(RPC failed) → `no_active_plan` (same "Set up your route first…" copy as every other card).
+
+**Explicitly not this phase:** Insights card (F6, needs Phase E), any recommendation/action button —
+this is a read-only summary panel.
+
+---
+
+## F6 onward — not contract-locked yet, do not start
 
 | Phase | Depends on backend | Status |
 |---|---|---|
-| F5 — Study Profile panel | Backend Phase D | not started |
 | F6 — Insights card | Backend Phase E | not started |
 | F7 (stretch) — Effort Terrain toggle | F3 | not started, optional |
 
 This table is the single source of truth for "is it safe to start yet" — when a backend phase
-locks, this row gets updated with the RPC name and `api.md` section, the same way F2/F3/F4's rows
-above were updated. Building ahead of a locked row here reproduces the exact problem
+locks, this row gets updated with the RPC name and `api.md` section, the same way F2/F3/F4/F5's
+rows above were updated. Building ahead of a locked row here reproduces the exact problem
 `wave1-frontend-briefs.md` was written to prevent (an ambiguous/early brief producing silently-wrong
 output).
