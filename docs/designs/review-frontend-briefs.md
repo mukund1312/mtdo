@@ -1,6 +1,6 @@
 # Review page frontend build briefs — for Janhwi (Codex)
 
-**Status:** ACTIVE — F1–F5 are built. F6 is next once backend Phase E locks.
+**Status:** ACTIVE — F1–F5 are built. F6 (Insights card) is ready now, backend Phase E locked 2026-09-14.
 **Owner:** Janhwi builds, Mukund (Claude Code) keeps this doc current before announcing a phase
 "contract locked" — same rule `wave1-frontend-briefs.md` and `mtdo-web-dev-split-plan.md` §3 already
 use.
@@ -315,15 +315,58 @@ this is a read-only summary panel.
 
 ---
 
-## F6 onward — not contract-locked yet, do not start
+## F6 — Insights card (ready now, backend Phase E locked 2026-09-14)
+
+**Depends on:** `web/lib/review/insights.ts`'s `buildReviewInsights()` (`api.md` §3o) — merged,
+unit-tested (18/18, boundary-tested at every threshold). **Not an RPC** — a pure TS function over
+`study_profile()`'s already-fetched output, so this card needs no new network call of its own.
+
+**Goal:** a short, factual list of findings under the Study Profile card — "your strongest sessions
+are around 30-45m," never a chatbot, never AI-generated prose.
+
+**Data contract:**
+
+```ts
+import { buildReviewInsights } from "@/lib/review/insights";
+
+// Reuse the SAME study_profile() fetch F5 already made -- do not call the
+// RPC a second time. If F5 and F6 are separate components, lift the fetch
+// to their shared parent (ReviewDeck) and pass the narrowed StudyProfile
+// down as a prop, rather than each card fetching it independently.
+const insights = buildReviewInsights(profile);
+```
+
+**Rendering, per `review-visual-spec.md` §Insights card:**
+- A small `--acid` (lime) or `--aqua` (cyan) signal glyph per line, matching the spec's "analytical,
+  not conversational" framing — never an avatar or chat bubble.
+- Order insights exactly as `buildReviewInsights()` returns them (notices, then positives, then
+  plain info) — don't re-sort by type or alphabetically.
+- Bold the concrete numbers/times inside each `insight.text` (e.g. `35–50 minutes`, `08:00`) if your
+  rendering approach supports it easily; if not, plain text is an acceptable v1 rather than adding a
+  text-parsing step for this alone — ask before building a parser for this.
+- An empty array (`insights.length === 0`) is a **real, calm state** — a profile with nothing
+  currently worth flagging. Render something like "Nothing stands out yet — keep going," never a
+  blank card or an error-shaped placeholder.
+- `insight.evidence` is an audit trail, not for display — don't render it in the UI.
+
+**States:** this card has no `loading`/`error` of its own — it inherits F5's `StudyProfile` fetch
+state entirely (if F5 is loading or errored, F6 doesn't render its own separate spinner/error card
+for the same failure).
+
+**Explicitly not this phase:** any accept/dismiss/apply action on an insight (that's the plan's own
+later Interventions concept, explicitly out of scope — see the plan doc's Phase F note), any
+AI-generated summary text.
+
+---
+
+## F7 onward — not contract-locked yet, do not start
 
 | Phase | Depends on backend | Status |
 |---|---|---|
-| F6 — Insights card | Backend Phase E | not started |
 | F7 (stretch) — Effort Terrain toggle | F3 | not started, optional |
 
 This table is the single source of truth for "is it safe to start yet" — when a backend phase
-locks, this row gets updated with the RPC name and `api.md` section, the same way F2/F3/F4/F5's
+locks, this row gets updated with the RPC name and `api.md` section, the same way F2/F3/F4/F5/F6's
 rows above were updated. Building ahead of a locked row here reproduces the exact problem
 `wave1-frontend-briefs.md` was written to prevent (an ambiguous/early brief producing silently-wrong
 output).

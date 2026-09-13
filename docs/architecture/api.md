@@ -1598,6 +1598,51 @@ high a bar for a Review page a new user opens in their first fortnight. Two is t
 2-week `"low"` reading from an 8-week `"high"` one, so the distinction isn't lost, just not gated
 on it.
 
+## 3o. `review_insights()` — deterministic findings, in TypeScript not SQL (Phase E)
+
+**This is not a database function**, unlike every other entry in this section — deliberately.
+Same architectural split the weekly engine already established (§3g): raw/derived metrics live in
+Postgres (`weekly_performance()`, `study_profile()`), business-rule evaluation over already-computed
+numbers lives in TypeScript (`web/lib/planning/classify.ts`/`propose.ts`). `study_profile()`
+**already is** the composed data this needs; `buildReviewInsights()` adds no new query, no new
+metric — it is pure functions over `study_profile()`'s own output, exactly the shape
+`classifyCategory()` is pure functions over `weekly_performance()`'s output.
+
+| layer | file |
+|---|---|
+| thresholds | `web/lib/review/insight-thresholds.ts` — every constant, with its reasoning attached |
+| rule evaluation | `web/lib/review/insights.ts` — `buildReviewInsights(profile: StudyProfile): Insight[]`, pure, no I/O |
+
+```ts
+export interface Insight {
+  type: "planning_overcommitment" | "subject_avoidance" | "strong_subject"
+      | "ideal_session_length" | "best_study_window" | "consistency_dip";
+  severity: "positive" | "notice" | "info";
+  text: string;             // plain, specific, built from real computed numbers
+  evidence: Record<string, unknown>; // an audit trail, not for display
+}
+```
+
+**No AI anywhere in this file**, matching `decisions.md` 2026-09-11's standing rule for the weekly
+engine — metrics and the rules built on them stay deterministic. An AI layer that turns these
+structured findings into prose is the plan's own later, separately-opted-into Phase 15 concept, not
+something this file backs into.
+
+**Every insight requires its underlying field to have cleared `study_profile()`'s own confidence
+gate.** An insight built from an `"insufficient_data"` field would be the exact mistake the whole
+backend side of this plan exists to prevent, moved one layer up — `buildReviewInsights()` checks
+`confidence !== "insufficient_data"` (where the field has one) before ever reading the value.
+`best_study_window`/`ideal_session_length` have no separate confidence field because
+`review_time_patterns()` (§3l) already gates them at the RPC layer — non-null there already means
+the sample was real.
+
+`status: "no_active_plan"` returns `[]` — there is nothing to observe about a goal that does not
+exist yet, same convention as every RPC in this file.
+
+Unit-tested at every threshold boundary (`web/lib/review/insights.test.ts`), same convention as
+`classify.test.ts` — a rules engine's off-by-one comparison silently reclassifies real users and
+nothing else would notice.
+
 ## 4. The EmberMorph component contract
 
 `DESIGN.md` §Motion specifies the morph itself (`Graphite home → ember bloom → terminal focus
