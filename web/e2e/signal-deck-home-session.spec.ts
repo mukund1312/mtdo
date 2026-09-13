@@ -154,6 +154,11 @@ test("Home reflects a real picked task and Session shows real, non-fake coaching
   await page.reload();
   await expect(page.getByRole("button", { name: "Timer off" })).toBeVisible();
   await expect(page.getByRole("meter")).toHaveCount(0);
+  // The reload above is real -- it wipes coachOpen's client-only state back
+  // to closed along with everything else that isn't persisted, same as any
+  // fresh page load. Re-open it before the coaching-content assertions
+  // below, which need the drawer actually visible.
+  await page.getByRole("button", { name: "Your coach" }).click();
   const sandglassToggle = page.getByRole("button", { name: "Sandglass off" });
   await sandglassToggle.click();
   await expect(page.getByRole("button", { name: "Sandglass on" })).toBeVisible();
