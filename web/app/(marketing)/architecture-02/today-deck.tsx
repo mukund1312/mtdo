@@ -230,10 +230,18 @@ export function TodayDeck({ onOpenBlock }: { onOpenBlock: (block: TodayBlock) =>
     setUpdatingId(null);
   }, [updatingId]);
 
-  const draggedBlock = draggedBlockId ? blocks.find((block) => block.id === draggedBlockId) ?? null : null;
-
-  const dropBlock = (nextStatus: BlockStatus) => {
-    if (draggedBlock) void moveBlock(draggedBlock, nextStatus);
+  // Reads the dragged block id from the native DragEvent's dataTransfer
+  // (set synchronously in onDragStart, same drag session) rather than only
+  // the draggedBlockId React state set by that same onDragStart -- state
+  // set in one native event isn't guaranteed to have committed to a new
+  // render by the time a separately-dispatched drop event fires, so a
+  // handler that trusted only React state could read a stale (pre-drag)
+  // closure and silently no-op. See calendar-deck.tsx's dropAtSlot for the
+  // same fix, applied there first.
+  const dropBlock = (nextStatus: BlockStatus, droppedId: string | null) => {
+    const id = droppedId || draggedBlockId;
+    const block = id ? (blocks.find((item) => item.id === id) ?? null) : null;
+    if (block) void moveBlock(block, nextStatus);
     setDraggedBlockId(null);
     setDropTarget(null);
   };
@@ -333,7 +341,7 @@ export function TodayDeck({ onOpenBlock }: { onOpenBlock: (block: TodayBlock) =>
     {state === "error" ? <section className="a02-product-state" role="alert"><b>Today is unavailable.</b><p>We could not load your blocks. Your route is unchanged.</p><button type="button" onClick={() => void load()}>Try again ↗</button></section> : <div className={`a02-board a02-board--today ${state === "loading" ? "is-loading" : ""}`} aria-busy={state === "loading"}>{LANES.map((lane) => {
       const laneBlocks = visibleBlocks.filter((block) => block.status === lane.id);
       const totalInLane = blocks.filter((block) => block.status === lane.id).length;
-      return <section key={lane.id} className={`a02-lane a02-today-lane a02-today-lane--${lane.id} ${dropTarget === lane.id ? "is-drop-target" : ""}`} onDragOver={(event) => { event.preventDefault(); setDropTarget(lane.id); }} onDragLeave={() => setDropTarget((current) => current === lane.id ? null : current)} onDrop={(event) => { event.preventDefault(); dropBlock(lane.id); }}><header><span>{lane.index}</span><b>{lane.label}</b><i>{state === "loading" ? "…" : laneBlocks.length === totalInLane ? totalInLane : `${laneBlocks.length}/${totalInLane}`}</i></header>{state === "loading" ? <LoadingBlocks /> : laneBlocks.length === 0 ? <p className="a02-lane-empty">{hasFilters ? "No signals match." : "Drop a signal here."}</p> : laneBlocks.map((block) => <KanbanCard key={block.id} block={block} updating={updatingId === block.id} onOpen={() => onOpenBlock(block)} onDragStart={(event) => { event.dataTransfer.effectAllowed = "move"; event.dataTransfer.setData("text/plain", block.id); setDraggedBlockId(block.id); }} onDragEnd={() => { setDraggedBlockId(null); setDropTarget(null); }} />)}</section>;
+      return <section key={lane.id} className={`a02-lane a02-today-lane a02-today-lane--${lane.id} ${dropTarget === lane.id ? "is-drop-target" : ""}`} onDragOver={(event) => { event.preventDefault(); setDropTarget(lane.id); }} onDragLeave={() => setDropTarget((current) => current === lane.id ? null : current)} onDrop={(event) => { event.preventDefault(); dropBlock(lane.id, event.dataTransfer.getData("text/plain")); }}><header><span>{lane.index}</span><b>{lane.label}</b><i>{state === "loading" ? "…" : laneBlocks.length === totalInLane ? totalInLane : `${laneBlocks.length}/${totalInLane}`}</i></header>{state === "loading" ? <LoadingBlocks /> : laneBlocks.length === 0 ? <p className="a02-lane-empty">{hasFilters ? "No signals match." : "Drop a signal here."}</p> : laneBlocks.map((block) => <KanbanCard key={block.id} block={block} updating={updatingId === block.id} onOpen={() => onOpenBlock(block)} onDragStart={(event) => { event.dataTransfer.effectAllowed = "move"; event.dataTransfer.setData("text/plain", block.id); setDraggedBlockId(block.id); }} onDragEnd={() => { setDraggedBlockId(null); setDropTarget(null); }} />)}</section>;
     })}</div>}
     {state === "ready" && blocks.length === 0 && <p className="a02-product-note">No blocks are scheduled for today. Add a route item to begin.</p>}
     {writeError && <p className="a02-product-write-error" role="alert">{writeError}</p>}

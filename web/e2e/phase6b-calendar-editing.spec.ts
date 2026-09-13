@@ -1,4 +1,5 @@
 import { test, expect, type Page } from "@playwright/test";
+import { dragAndDrop } from "./helpers/drag";
 import { openSignalDeckDestination } from "./helpers/signal-deck";
 
 import { categoryColorToken } from "../app/(marketing)/architecture-02/category-color";
@@ -78,17 +79,13 @@ async function openKanbanDeck(page: Page) {
 
 async function scheduleFromUnscheduled(page: Page, taskText: string, hour: number) {
   const today = todayIso();
-  // targetPosition biased to the bottom of the slot cell: a slot that
-  // already holds a scheduled block (this file's overlap test does exactly
-  // that on purpose) has its OWN chip painted on top of most of the row --
-  // the chip is the 40px legibility floor tall, the row is 48px, leaving
-  // only an ~8px sliver at the row's bottom genuinely exposed. Targeting
-  // that sliver (rather than dragTo's default centre, which a same-hour
-  // second drop would land squarely on the existing chip) works whether or
-  // not the slot already has something in it.
-  await page.locator('button[data-testid^="calendar-unscheduled-"]').filter({ hasText: taskText }).dragTo(page.getByTestId(`calendar-slot-${today}-${hour}`), {
-    targetPosition: { x: 10, y: 45 },
-  });
+  // dragAndDrop dispatches drop directly against the slot element rather
+  // than hit-testing a screen coordinate, so a slot that already holds a
+  // scheduled block (this file's overlap test does exactly that on
+  // purpose) needs no special targeting to receive a second drop -- unlike
+  // dragTo(), which a same-hour second drop could land squarely on the
+  // existing chip instead of the slot underneath it.
+  await dragAndDrop(page, page.locator('button[data-testid^="calendar-unscheduled-"]').filter({ hasText: taskText }), page.getByTestId(`calendar-slot-${today}-${hour}`));
   const chip = page.locator('[data-testid^="calendar-event-"]').filter({ hasText: taskText });
   await expect(chip).toBeVisible();
   return chip;
@@ -227,7 +224,7 @@ test.describe.serial("Calendar editing: resize, overlap lanes, category colour, 
     // lane layout recomputes back to a single, full-inset lane for A
     // once nothing overlaps it any more.
     const today = todayIso();
-    await chipB.dragTo(page.getByTestId(`calendar-slot-${today}-16`), { targetPosition: { x: 10, y: 20 } });
+    await dragAndDrop(page, chipB, page.getByTestId(`calendar-slot-${today}-16`));
     await expect(page.locator('[data-testid^="calendar-event-"]').filter({ hasText: TASK_OVERLAP_B })).toHaveCSS("top", `${(16 - 6) * 48}px`);
     const chipAAfter = page.locator('[data-testid^="calendar-event-"]').filter({ hasText: TASK_OVERLAP_A });
     await expect(chipAAfter).toHaveCSS("top", `${(9 - 6) * 48}px`);

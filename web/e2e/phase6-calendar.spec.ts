@@ -1,4 +1,5 @@
 import { test, expect } from "@playwright/test";
+import { dragAndDrop } from "./helpers/drag";
 import { openSignalDeckDestination } from "./helpers/signal-deck";
 
 // Phase 6 frontend (migrations/0019-0020, docs/architecture/api.md §3d/§3e):
@@ -55,10 +56,16 @@ test("day, week and month views render a real scheduled block, drag-scheduled fr
 
   // Drag task A from Unscheduled onto today's 10:00 slot in Day view.
   const today = todayIso();
-  await unscheduledA.dragTo(page.getByTestId(`calendar-slot-${today}-10`));
+  await dragAndDrop(page, unscheduledA, page.getByTestId(`calendar-slot-${today}-10`));
 
   const eventChip = page.locator('[data-testid^="calendar-event-"]').filter({ hasText: taskA });
-  await expect(eventChip).toBeVisible();
+  // dragTo() completing is not the schedule_block() RPC round-trip completing
+  // -- the default 5s timeout has been observed flaking under CI's slower
+  // network latency to the linked Supabase project (not reproducible locally,
+  // where the same drag settles in well under a second). 15s matches the
+  // timeout this suite already uses elsewhere for an RPC-round-trip-dependent
+  // visibility check (e.g. settings.spec.ts, phase3-plan-pipeline.spec.ts).
+  await expect(eventChip).toBeVisible({ timeout: 15_000 });
   await expect(page.locator('button[data-testid^="calendar-unscheduled-"]').filter({ hasText: taskA })).toHaveCount(0);
   // Positioned, not just present -- 10:00 falls at (10-6)*48=192px from the
   // top of the 6a-10p grid.
@@ -81,13 +88,16 @@ test("unscheduling a block clears its window and returns it to Unscheduled", asy
   await openTimeDeck(page);
 
   const today = todayIso();
-  await page.locator('button[data-testid^="calendar-unscheduled-"]').filter({ hasText: taskA }).dragTo(page.getByTestId(`calendar-slot-${today}-14`));
+  await dragAndDrop(page, page.locator('button[data-testid^="calendar-unscheduled-"]').filter({ hasText: taskA }), page.getByTestId(`calendar-slot-${today}-14`));
   const eventChip = page.locator('[data-testid^="calendar-event-"]').filter({ hasText: taskA });
-  await expect(eventChip).toBeVisible();
+  // Same schedule_block() round-trip as the drag test above -- same 15s.
+  await expect(eventChip).toBeVisible({ timeout: 15_000 });
 
   await eventChip.click();
   const popover = page.getByTestId("calendar-detail-popover");
-  await expect(popover).toBeVisible();
+  // Observed flaking on CI at the default 5s here too, immediately after the
+  // same drag -- same reasoning as the eventChip wait above.
+  await expect(popover).toBeVisible({ timeout: 15_000 });
   await popover.getByTestId("calendar-unschedule-button").click();
   await expect(popover).toHaveCount(0);
 
@@ -105,7 +115,7 @@ test("a scheduled task accepts a directly entered start and end time", async ({ 
   await openTimeDeck(page);
 
   const today = todayIso();
-  await page.locator('button[data-testid^="calendar-unscheduled-"]').filter({ hasText: taskA }).dragTo(page.getByTestId(`calendar-slot-${today}-9`));
+  await dragAndDrop(page, page.locator('button[data-testid^="calendar-unscheduled-"]').filter({ hasText: taskA }), page.getByTestId(`calendar-slot-${today}-9`));
   const eventChip = page.locator('[data-testid^="calendar-event-"]').filter({ hasText: taskA });
   await eventChip.click();
 
@@ -130,11 +140,12 @@ test("Google Calendar's honest not-connected state renders with no console error
   await openTimeDeck(page);
 
   const today = todayIso();
-  await page.locator('button[data-testid^="calendar-unscheduled-"]').filter({ hasText: taskA }).dragTo(page.getByTestId(`calendar-slot-${today}-9`));
+  await dragAndDrop(page, page.locator('button[data-testid^="calendar-unscheduled-"]').filter({ hasText: taskA }), page.getByTestId(`calendar-slot-${today}-9`));
   await page.locator('[data-testid^="calendar-event-"]').filter({ hasText: taskA }).click();
 
   const popover = page.getByTestId("calendar-detail-popover");
-  await expect(popover).toBeVisible();
+  // Same post-drag-click CI latency as the unscheduling test above.
+  await expect(popover).toBeVisible({ timeout: 15_000 });
   // No GOOGLE_CLIENT_ID/GOOGLE_CLIENT_SECRET in this environment --
   // GET /api/calendar/status genuinely reports configured:false, and the
   // popover must say so plainly rather than showing a toggle that looks
