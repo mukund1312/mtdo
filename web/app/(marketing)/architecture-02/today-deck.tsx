@@ -10,6 +10,7 @@ import { utcToday } from "./product-data";
 import { isTaskPriority, priorityLabel, type TaskPriority } from "./kanban-metadata";
 
 export type BlockStatus = "backlog" | "todo" | "in_progress" | "done";
+type KanbanDateScope = "today" | "tomorrow" | "week" | "all" | "custom";
 
 export type TodayBlock = {
   category_id: string;
@@ -60,6 +61,23 @@ function roughDuration(seconds: number): string | null {
   return seconds > 0 ? `${Math.max(1, Math.round(seconds / 60))} min logged` : null;
 }
 
+function addDays(isoDate: string, days: number): string {
+  const date = new Date(`${isoDate}T00:00:00Z`);
+  date.setUTCDate(date.getUTCDate() + days);
+  return date.toISOString().slice(0, 10);
+}
+
+function weekWindow(isoDate: string): { start: string; end: string } {
+  const date = new Date(`${isoDate}T00:00:00Z`);
+  const weekday = (date.getUTCDay() + 6) % 7;
+  const start = addDays(isoDate, -weekday);
+  return { start, end: addDays(start, 6) };
+}
+
+function formatKanbanDate(isoDate: string, timezone: string): string {
+  return new Intl.DateTimeFormat("en", { month: "short", day: "numeric", timeZone: timezone }).format(new Date(`${isoDate}T12:00:00Z`));
+}
+
 function menuPreview(meta: unknown): string | null {
   if (!meta || typeof meta !== "object" || Array.isArray(meta)) return null;
   const focusPoints = (meta as { focus_points?: unknown }).focus_points;
@@ -82,6 +100,8 @@ export function TodayDeck({ onOpenBlock }: { onOpenBlock: (block: TodayBlock) =>
   const [draggedBlockId, setDraggedBlockId] = useState<string | null>(null);
   const [dropTarget, setDropTarget] = useState<BlockStatus | null>(null);
   const [timezone, setTimezone] = useState("UTC");
+  const [dateScope, setDateScope] = useState<KanbanDateScope>("today");
+  const [customDate, setCustomDate] = useState(utcToday());
   const [isExhausted, setIsExhausted] = useState(false);
   const [checkInState, setCheckInState] = useState<"idle" | "loading" | "done" | "error">("idle");
   const [checkInMessage, setCheckInMessage] = useState("");
@@ -117,11 +137,22 @@ export function TodayDeck({ onOpenBlock }: { onOpenBlock: (block: TodayBlock) =>
     // This RPC intentionally writes the active plan's ISO-week unlock cursor.
     // It is called from this explicit load path (never render) and returns every
     // unlocked, unpicked curriculum item for the current user.
-    const [{ data, error }, { data: menuData, error: menuError }, { data: categoryRows, error: categoryError }] = await Promise.all([
-      supabase
+    const today = utcToday(userTimezone);
+    const selectedDate = dateScope === "custom" ? customDate : today;
+    let blocksQuery = supabase
       .from("blocks")
       .select("id, text, status, notes, claimed, elapsed_seconds, position, priority, estimated_minutes, category_id, plan_categories(label)")
-      .eq("user_id", user.id).eq("date", utcToday(userTimezone)).order("position"),
+      .eq("user_id", user.id);
+    if (dateScope === "today") blocksQuery = blocksQuery.eq("date", today);
+    if (dateScope === "tomorrow") blocksQuery = blocksQuery.eq("date", addDays(today, 1));
+    if (dateScope === "custom") blocksQuery = blocksQuery.eq("date", selectedDate);
+    if (dateScope === "week") {
+      const { start, end } = weekWindow(today);
+      blocksQuery = blocksQuery.gte("date", start).lte("date", end);
+    }
+
+    const [{ data, error }, { data: menuData, error: menuError }, { data: categoryRows, error: categoryError }] = await Promise.all([
+      blocksQuery.order("date").order("position"),
       supabase.rpc("ensure_curriculum_menu"),
       activePlan
         ? supabase.from("plan_categories").select("id, menu_unlocked_week_index, curriculum_items(week_index)").eq("plan_id", activePlan.id)
@@ -173,7 +204,7 @@ export function TodayDeck({ onOpenBlock }: { onOpenBlock: (block: TodayBlock) =>
     );
     setIsExhausted(allPinned && (menuData ?? []).length <= 3);
     setState("ready");
-  }, []);
+  }, [customDate, dateScope]);
 
   const runCheckIn = useCallback(async () => {
     setCheckInState("loading");
@@ -314,18 +345,23 @@ export function TodayDeck({ onOpenBlock }: { onOpenBlock: (block: TodayBlock) =>
   // Categories to offer are whatever's actually on today's board -- no
   // point filtering by a category with nothing here today, and this needs
   // no extra query beyond what load() already fetched.
-  const categoryOptions = Array.from(
-    new Map(blocks.map((block) => [block.category_id, block.category_label ?? "Uncategorized"])).entries(),
-  );
+  // Categories are grouped by their visible label. A route can contain two
+  // distinct category rows with the same label, but showing "Job applications"
+  // twice makes the filter misleading; selecting it should include both.
+  const categoryOptions = Array.from(new Set(blocks.map((block) => block.category_label ?? "Uncategorized"))).sort((a, b) => a.localeCompare(b));
   const hasFilters = statusFilter !== "all" || priorityFilter !== "all" || categoryFilter !== "all";
   const visibleBlocks = blocks.filter((block) =>
     (statusFilter === "all" || block.status === statusFilter) &&
     (priorityFilter === "all" || block.priority === priorityFilter) &&
-    (categoryFilter === "all" || block.category_id === categoryFilter),
+    (categoryFilter === "all" || (block.category_label ?? "Uncategorized") === categoryFilter),
   );
+  const today = utcToday(timezone);
+  const dateScopeLabel = dateScope === "today" ? `Today · ${formatKanbanDate(today, timezone)}`
+    : dateScope === "tomorrow" ? `Tomorrow · ${formatKanbanDate(addDays(today, 1), timezone)}`
+      : dateScope === "week" ? "This week" : dateScope === "all" ? "All tasks" : `Custom · ${formatKanbanDate(customDate, timezone)}`;
 
   return <section className="a02-work" aria-labelledby="today-title">
-    <div className="a02-view-head"><div><span className="a02-eyebrow">KANBAN / TODAY</span><h1 id="today-title">Move the<br /><em>right pieces.</em></h1></div><div className="a02-view-controls"><button type="button" onClick={() => void load()}>Refresh</button><button type="button" disabled>Today / {timezone}</button><button className="a02-add" type="button" onClick={openComposer} disabled={state === "loading"}>+ Add from route</button></div></div>
+    <div className="a02-view-head"><div><span className="a02-eyebrow">KANBAN / TODAY</span><h1 id="today-title">Move the<br /><em>right pieces.</em></h1></div><div className="a02-view-controls"><button type="button" onClick={() => void load()}>Refresh</button><label className="a02-date-select"><span className="sr-only">Choose task date range</span><select aria-label="Choose task date range" value={dateScope} onChange={(event) => setDateScope(event.target.value as KanbanDateScope)}><option value="today">Today · {formatKanbanDate(today, timezone)}</option><option value="tomorrow">Tomorrow · {formatKanbanDate(addDays(today, 1), timezone)}</option><option value="week">This week</option><option value="all">All tasks</option><option value="custom">Custom date</option></select></label>{dateScope === "custom" && <input className="a02-custom-date" type="date" aria-label="Custom task date" value={customDate} onChange={(event) => setCustomDate(event.target.value)} />}<span className="sr-only" aria-live="polite">Showing {dateScopeLabel}</span><button className="a02-add" type="button" onClick={openComposer} disabled={state === "loading"}>+ Add from route</button></div></div>
     {isExhausted && state === "ready" && checkInState !== "done" && <section className="a02-checkin-banner" role="status">
       {checkInState === "idle" && <><p>Your route menu is running low across every subject.</p><button type="button" onClick={() => void runCheckIn()}>Check in for more ↗</button></>}
       {checkInState === "loading" && <p>Reading your progress and generating more…</p>}
@@ -333,15 +369,35 @@ export function TodayDeck({ onOpenBlock }: { onOpenBlock: (block: TodayBlock) =>
     </section>}
     {checkInState === "done" && <p className="a02-checkin-done" role="status">{checkInMessage}</p>}
     <section className="a02-kanban-filters" aria-label="Kanban filters">
-      <div className="a02-filter-group" role="group" aria-label="Filter by status"><span>STATUS</span><button type="button" className={statusFilter === "all" ? "is-active" : ""} aria-pressed={statusFilter === "all"} onClick={() => setStatusFilter("all")}>All</button>{LANES.map((lane) => <button type="button" key={lane.id} className={statusFilter === lane.id ? "is-active" : ""} aria-pressed={statusFilter === lane.id} onClick={() => setStatusFilter(lane.id)}>{lane.label}</button>)}</div>
-      <div className="a02-filter-group" role="group" aria-label="Filter by priority"><span>PRIORITY</span><button type="button" className={priorityFilter === "all" ? "is-active" : ""} aria-pressed={priorityFilter === "all"} onClick={() => setPriorityFilter("all")}>All</button>{(["high", "medium", "low"] as TaskPriority[]).map((priority) => <button type="button" key={priority} className={priorityFilter === priority ? `is-active is-${priority}` : ""} aria-pressed={priorityFilter === priority} onClick={() => setPriorityFilter(priority)}>{priorityLabel(priority)}</button>)}</div>
-      {categoryOptions.length > 1 && <div className="a02-filter-group" role="group" aria-label="Filter by category"><span>CATEGORY</span><button type="button" className={categoryFilter === "all" ? "is-active" : ""} aria-pressed={categoryFilter === "all"} onClick={() => setCategoryFilter("all")}>All</button>{categoryOptions.map(([id, label]) => <button type="button" key={id} className={categoryFilter === id ? "is-active" : ""} aria-pressed={categoryFilter === id} onClick={() => setCategoryFilter(id)}>{label}</button>)}</div>}
+      <span className="a02-filter-label">Filter</span>
+      <div className="a02-filter-controls">
+        <label className="a02-filter-select">
+          <select aria-label="Filter by status" value={statusFilter} onChange={(event) => setStatusFilter(event.target.value as BlockStatus | "all")}>
+            <option value="all">Status: All</option>
+            {LANES.map((lane) => <option key={lane.id} value={lane.id}>Status: {lane.label}</option>)}
+          </select>
+        </label>
+        <label className="a02-filter-select">
+          <select aria-label="Filter by priority" value={priorityFilter} onChange={(event) => setPriorityFilter(event.target.value as TaskPriority | "all")}>
+            <option value="all">Priority: All</option>
+            {(["high", "medium", "low"] as TaskPriority[]).map((priority) => <option key={priority} value={priority}>Priority: {priorityLabel(priority)}</option>)}
+          </select>
+        </label>
+        {categoryOptions.length > 1 && <label className="a02-filter-select">
+          <select aria-label="Filter by category" value={categoryFilter} onChange={(event) => setCategoryFilter(event.target.value)}>
+            <option value="all">Category: All</option>
+            {categoryOptions.map((label) => <option key={label} value={label}>Category: {label}</option>)}
+          </select>
+        </label>}
+      </div>
+      <span className="a02-filter-count">{visibleBlocks.length} task{visibleBlocks.length === 1 ? "" : "s"}</span>
       {hasFilters && <button className="a02-filter-reset" type="button" onClick={() => { setStatusFilter("all"); setPriorityFilter("all"); setCategoryFilter("all"); }}>Reset</button>}
     </section>
     {state === "error" ? <section className="a02-product-state" role="alert"><b>Today is unavailable.</b><p>We could not load your blocks. Your route is unchanged.</p><button type="button" onClick={() => void load()}>Try again ↗</button></section> : <div className={`a02-board a02-board--today ${state === "loading" ? "is-loading" : ""}`} aria-busy={state === "loading"}>{LANES.map((lane) => {
       const laneBlocks = visibleBlocks.filter((block) => block.status === lane.id);
       const totalInLane = blocks.filter((block) => block.status === lane.id).length;
-      return <section key={lane.id} className={`a02-lane a02-today-lane a02-today-lane--${lane.id} ${dropTarget === lane.id ? "is-drop-target" : ""}`} onDragOver={(event) => { event.preventDefault(); setDropTarget(lane.id); }} onDragLeave={() => setDropTarget((current) => current === lane.id ? null : current)} onDrop={(event) => { event.preventDefault(); dropBlock(lane.id, event.dataTransfer.getData("text/plain")); }}><header><span>{lane.index}</span><b>{lane.label}</b><i>{state === "loading" ? "…" : laneBlocks.length === totalInLane ? totalInLane : `${laneBlocks.length}/${totalInLane}`}</i></header>{state === "loading" ? <LoadingBlocks /> : laneBlocks.length === 0 ? <p className="a02-lane-empty">{hasFilters ? "No signals match." : "Drop a signal here."}</p> : laneBlocks.map((block) => <KanbanCard key={block.id} block={block} updating={updatingId === block.id} onOpen={() => onOpenBlock(block)} onDragStart={(event) => { event.dataTransfer.effectAllowed = "move"; event.dataTransfer.setData("text/plain", block.id); setDraggedBlockId(block.id); }} onDragEnd={() => { setDraggedBlockId(null); setDropTarget(null); }} />)}</section>;
+      const activeLane = lane.id === "in_progress";
+      return <section key={lane.id} className={`a02-lane a02-today-lane a02-today-lane--${lane.id} ${activeLane ? "is-active-workspace" : ""} ${dropTarget === lane.id ? "is-drop-target" : ""}`} onDragOver={(event) => { event.preventDefault(); setDropTarget(lane.id); }} onDragLeave={() => setDropTarget((current) => current === lane.id ? null : current)} onDrop={(event) => { event.preventDefault(); dropBlock(lane.id, event.dataTransfer.getData("text/plain")); }}><header><span>{lane.index}</span><b>{lane.label}</b><i className={activeLane ? "a02-lane-active-count" : undefined} aria-label={activeLane ? `${laneBlocks.length} in progress` : undefined}>{state === "loading" ? "…" : laneBlocks.length === totalInLane ? totalInLane : `${laneBlocks.length}/${totalInLane}`}</i></header>{state === "loading" ? <LoadingBlocks /> : laneBlocks.length === 0 ? <p className="a02-lane-empty">{hasFilters ? "No signals match." : "Drop a signal here."}</p> : laneBlocks.map((block) => <KanbanCard key={block.id} block={block} dragging={draggedBlockId === block.id} updating={updatingId === block.id} onOpen={() => onOpenBlock(block)} onDragStart={(event) => { event.dataTransfer.effectAllowed = "move"; event.dataTransfer.setData("text/plain", block.id); setDraggedBlockId(block.id); }} onDragEnd={() => { setDraggedBlockId(null); setDropTarget(null); }} />)}</section>;
     })}</div>}
     {state === "ready" && blocks.length === 0 && <p className="a02-product-note">No blocks are scheduled for today. Add a route item to begin.</p>}
     {writeError && <p className="a02-product-write-error" role="alert">{writeError}</p>}
@@ -349,15 +405,16 @@ export function TodayDeck({ onOpenBlock }: { onOpenBlock: (block: TodayBlock) =>
   </section>;
 }
 
-function KanbanCard({ block, updating, onOpen, onDragEnd, onDragStart }: {
+function KanbanCard({ block, dragging, updating, onOpen, onDragEnd, onDragStart }: {
   block: TodayBlock;
+  dragging: boolean;
   updating: boolean;
   onOpen: () => void;
   onDragEnd: () => void;
   onDragStart: (event: DragEvent<HTMLElement>) => void;
 }) {
   const stateLabel = block.status === "backlog" ? "BACKLOG" : block.status === "in_progress" ? "IN MOTION" : block.status === "done" ? "CLOSED" : "READY";
-  return <article className={`a02-work-unit a02-live-block ${block.claimed || block.status === "in_progress" ? "is-claimed" : ""}`} key={block.id} aria-busy={updating} draggable={!updating} onDragStart={onDragStart} onDragEnd={onDragEnd}>
+  return <article className={`a02-work-unit a02-live-block ${block.claimed || block.status === "in_progress" ? "is-claimed" : ""} ${dragging ? "is-dragging" : ""}`} key={block.id} aria-busy={updating} draggable={!updating} onDragStart={onDragStart} onDragEnd={onDragEnd}>
     <div className="a02-card-signal"><em>{stateLabel}</em><span className={`a02-priority a02-priority--${block.priority}`}>{priorityLabel(block.priority)}</span></div>
     <button type="button" className="a02-work-open" onClick={onOpen}><strong>{block.text}</strong></button>
     <div className="a02-card-footer"><small>{roughDuration(block.elapsed_seconds) ?? (block.notes?.trim() || "Personal route")}</small>{block.estimated_minutes && <span className="a02-card-estimate">{block.estimated_minutes} min</span>}</div>
@@ -370,9 +427,20 @@ function LoadingBlocks() { return <><div className="a02-work-unit a02-skeleton" 
 
 function CurriculumMenu({ hasActiveRoute, items, error, pickingIds, onClose, onPick }: { hasActiveRoute: boolean; items: CurriculumMenuItem[]; error: string | null; pickingIds: Set<string>; onClose: () => void; onPick: (items: CurriculumMenuItem[]) => void }) {
   const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set());
+  const [search, setSearch] = useState("");
   const isPicking = pickingIds.size > 0;
 
   const selectedItems = items.filter((item) => selectedIds.has(item.curriculum_item_id));
+  const searchTerm = search.trim().toLocaleLowerCase();
+  const matchingItems = searchTerm.length === 0 ? items : items.filter((item) => [item.category_label, item.task, menuPreview(item.meta) ?? ""].join(" ").toLocaleLowerCase().includes(searchTerm));
+  const groupedItems = Array.from(matchingItems.reduce((groups, item) => {
+    const label = item.category_label || "Uncategorized";
+    const group = groups.get(label) ?? [];
+    group.push(item);
+    groups.set(label, group);
+    return groups;
+  }, new Map<string, CurriculumMenuItem[]>()).entries());
+  const allMatchingSelected = matchingItems.length > 0 && matchingItems.every((item) => selectedIds.has(item.curriculum_item_id));
   const toggleItem = (id: string) => {
     if (isPicking) return;
     setSelectedIds((current) => {
@@ -383,5 +451,26 @@ function CurriculumMenu({ hasActiveRoute, items, error, pickingIds, onClose, onP
     });
   };
 
-  return <section className="a02-record-overlay" role="dialog" aria-modal="true" aria-labelledby="route-menu-title"><section className="a02-composer"><button className="a02-lens-close" type="button" onClick={onClose} disabled={isPicking}>ESC / close ×</button><span className="a02-eyebrow">TODAY / ROUTE MENU</span><h2 id="route-menu-title">Choose the<br /><em>next pieces.</em></h2>{items.length > 0 ? <><p className="a02-composer-selection" id="route-menu-selection">Select one or more pieces to add together.</p><div className="a02-curriculum-menu" aria-describedby="route-menu-selection">{items.map((item) => { const selected = selectedIds.has(item.curriculum_item_id); return <button className="a02-curriculum-item" type="button" key={item.curriculum_item_id} onClick={() => toggleItem(item.curriculum_item_id)} aria-pressed={selected} disabled={isPicking}><span>{item.category_label}</span><b>{item.task}</b>{menuPreview(item.meta) && <small>{menuPreview(item.meta)}</small>}<i>{pickingIds.has(item.curriculum_item_id) ? "Adding…" : selected ? "Selected ✓" : "Select"}</i></button>; })}</div></> : <p className="a02-composer-empty">{hasActiveRoute ? "Your route menu is clear for now. Time for a check-in before you extend it." : "Set up your route first, then return here for its first useful piece."}</p>}{error && <p className="a02-composer-error" role="alert">{error}</p>}<div className="a02-composer-actions"><button type="button" onClick={onClose} disabled={isPicking}>Cancel</button>{items.length > 0 && <button className="a02-add" type="button" onClick={() => onPick(selectedItems)} disabled={selectedItems.length === 0 || isPicking}>{isPicking ? "Adding…" : `Add selected (${selectedItems.length})`}</button>}</div></section></section>;
+  const toggleAllMatching = () => {
+    if (isPicking || matchingItems.length === 0) return;
+    setSelectedIds((current) => {
+      const next = new Set(current);
+      if (allMatchingSelected) matchingItems.forEach((item) => next.delete(item.curriculum_item_id));
+      else matchingItems.forEach((item) => next.add(item.curriculum_item_id));
+      return next;
+    });
+  };
+
+  useEffect(() => {
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key !== "Escape" || isPicking) return;
+      event.preventDefault();
+      onClose();
+    };
+    window.addEventListener("keydown", closeOnEscape);
+    return () => window.removeEventListener("keydown", closeOnEscape);
+  }, [isPicking, onClose]);
+
+  const selectedCount = selectedItems.length;
+  return <section className="a02-record-overlay" role="dialog" aria-modal="true" aria-labelledby="route-menu-title"><section className="a02-composer"><button className="a02-lens-close" type="button" aria-label="Close route menu" onClick={onClose} disabled={isPicking}>×</button><span className="a02-eyebrow">TODAY / ROUTE MENU</span><h2 id="route-menu-title">Build your<br /><em>next set.</em></h2>{items.length > 0 ? <><p className="a02-composer-selection" id="route-menu-selection">Select one or more pieces to add together.</p><div className="a02-curriculum-search-row"><label className="a02-curriculum-search"><span className="sr-only">Search route pieces</span><i aria-hidden="true">⌕</i><input type="search" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search route pieces..." /></label><button className="a02-curriculum-select-all" type="button" onClick={toggleAllMatching} disabled={isPicking || matchingItems.length === 0}>{allMatchingSelected ? "Clear selection" : "Select all"}</button></div>{groupedItems.length > 0 ? <div className="a02-curriculum-menu" aria-describedby="route-menu-selection">{groupedItems.map(([label, group]) => <section className="a02-curriculum-group" key={label}><header><b>{label}</b><span>{group.length}</span></header>{group.map((item) => { const selected = selectedIds.has(item.curriculum_item_id); return <button className="a02-curriculum-item" type="button" key={item.curriculum_item_id} onClick={() => toggleItem(item.curriculum_item_id)} aria-pressed={selected} disabled={isPicking}><b>{item.task}</b>{menuPreview(item.meta) && <small>{menuPreview(item.meta)}</small>}<i className="a02-curriculum-check" aria-hidden="true">{pickingIds.has(item.curriculum_item_id) ? "…" : selected ? "✓" : ""}</i></button>; })}</section>)}</div> : <p className="a02-composer-empty">No route pieces match “{search.trim()}”.</p>}</> : <p className="a02-composer-empty">{hasActiveRoute ? "Your route menu is clear for now. Time for a check-in before you extend it." : "Set up your route first, then return here for its first useful piece."}</p>}{error && <p className="a02-composer-error" role="alert">{error}</p>}<footer className="a02-composer-footer"><p aria-live="polite">{selectedCount} piece{selectedCount === 1 ? "" : "s"} selected</p><div className="a02-composer-actions"><button type="button" onClick={onClose} disabled={isPicking}>Cancel</button>{items.length > 0 && <button className="a02-add" type="button" onClick={() => onPick(selectedItems)} disabled={selectedCount === 0 || isPicking}>{isPicking ? "Adding…" : selectedCount > 0 ? `Add ${selectedCount} piece${selectedCount === 1 ? "" : "s"} →` : "Add pieces"}</button>}</div></footer></section></section>;
 }

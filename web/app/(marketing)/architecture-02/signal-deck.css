@@ -17,6 +17,12 @@
 .a02-calendar-event { box-sizing:border-box; justify-content:center; }
 .a02-calendar-event b { line-height:1; }
 .a02-calendar-event span { line-height:1.2; }
+.a02-date-select { position:relative; display:block; }
+.a02-date-select::after { position:absolute; top:50%; right:10px; color:var(--aqua); content:"▾"; font:10px "DM Mono",monospace; pointer-events:none; transform:translateY(-50%); }
+.a02-date-select select,.a02-custom-date { min-height:35px; appearance:none; border:1px solid var(--line); border-radius:5px; padding:0 27px 0 11px; outline:none; color:var(--ink); background:rgba(255,255,255,.03); font:10px "DM Mono",monospace; cursor:pointer; }
+.a02-date-select select:hover,.a02-date-select select:focus-visible,.a02-custom-date:focus-visible { border-color:var(--aqua); }
+.a02-custom-date { padding-right:8px; color-scheme:dark; }
+@media (prefers-reduced-motion:reduce) { .a02-date-select select { transition:none; } }
 /* The old .a02-time-map>aside:first-child/.a02-time-lines row-height
    override that used to live here (repeat(13,56px), plus a 50px mobile
    variant) is gone, not just harmless-dead: :first-child gave it higher

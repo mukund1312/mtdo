@@ -32,7 +32,7 @@ type LinkedBlock = {
   // A to-one embed via blocks_category_fk (the only FK from blocks to
   // plan_categories) -- PostgREST returns a single object, not an array,
   // for the many-to-one direction this query walks.
-  plan_categories: CategoryMeta | null;
+  plan_categories: (CategoryMeta & { label?: string | null }) | null;
   text: string;
 };
 
@@ -47,6 +47,12 @@ const UNLINKED_TASK = {
   title: "Open focus",
   detail: "This session isn't linked to a specific task. Stay with one clear question for the full block.",
 };
+
+const FOCUS_STEPS = [
+  "Sketch the two tables and decide what belongs in the join condition.",
+  "Write an inner join, then explain exactly which rows it excludes.",
+  "Change it to a left join and check the null side deliberately.",
+] as const;
 
 function focusSeconds(session: FocusSession, now = Date.now()) {
   const wallSeconds = Math.max(0, Math.floor((now - new Date(session.started_at).getTime()) / 1000));
@@ -119,6 +125,8 @@ export default function SessionPage() {
   const listen = useSignalDeckListen();
   const [showFocusTimer, setShowFocusTimer] = useFocusTimerPreference();
   const [showSandglass, setShowSandglass] = useFocusSandglassPreference();
+  const [coachOpen, setCoachOpen] = useState(false);
+  const [currentStepIndex, setCurrentStepIndex] = useState(0);
   const [phase, setPhase] = useState<SessionPhase>("ready");
   const [session, setSession] = useState<FocusSession | null>(null);
   const [elapsedS, setElapsedS] = useState(0);
@@ -236,7 +244,7 @@ export default function SessionPage() {
       }
       const { data, error } = await supabase
         .from("blocks")
-        .select("id, text, notes, coaching, plan_categories(coaching_framework, topic_type)")
+        .select("id, text, notes, coaching, plan_categories(label, coaching_framework, topic_type)")
         .eq("id", requestedBlockId)
         .eq("user_id", user.id)
         .maybeSingle();
@@ -399,6 +407,34 @@ export default function SessionPage() {
     if (!session || isSettling || extensionMinutes < 1 || extensionMinutes > 1440) return;
     setIsSettling(true);
     setNotice(null);
+    // Once time is up, the server has honestly closed the original session
+    // before asking for the task outcome. "Focus longer" therefore creates a
+    // new session on the same in-progress block instead of trying to extend a
+    // completed row.
+    if (phase === "outcome") {
+      const plan = breakPlanFor(extensionMinutes, 0, breakMinutes);
+      const { data, error } = await createClient().rpc("start_session", {
+        p_planned_duration_s: extensionMinutes * 60,
+        p_break_plan: plan ?? { breaks: [] },
+        ...(linkedBlock ? { p_block_id: linkedBlock.id } : {}),
+      });
+      if (error || !updateSessionFromRpc(data)) {
+        setIsSettling(false);
+        setNotice(messageFrom(error));
+        return;
+      }
+      if (linkedBlock) {
+        const { error: blockError } = await createClient()
+          .from("blocks")
+          .update({ claimed: true, status: "in_progress" })
+          .eq("id", linkedBlock.id);
+        if (blockError) console.error("[session] could not keep linked block in progress:", blockError);
+      }
+      setExtensionOpen(false);
+      setIsSettling(false);
+      setPhase("active");
+      return;
+    }
     const { data, error } = await createClient().rpc("extend_session", {
       p_id: session.id,
       p_additional_s: extensionMinutes * 60,
@@ -410,7 +446,7 @@ export default function SessionPage() {
     }
     extensionPromptedFor.current = null;
     setExtensionOpen(false);
-  }, [extensionMinutes, isSettling, session, updateSessionFromRpc]);
+  }, [breakMinutes, extensionMinutes, isSettling, linkedBlock, phase, session, updateSessionFromRpc]);
 
   const resolveExpiryOutcome = useCallback(async (outcome: "done" | "in_progress") => {
     if (!session || isSettling) return;
@@ -603,26 +639,37 @@ export default function SessionPage() {
         onTimerVisibilityChange={setShowFocusTimer}
         showSandglass={showSandglass}
         onSandglassVisibilityChange={setShowSandglass}
+        sessionLabel={linkedBlock?.plan_categories?.label ?? linkedBlock?.plan_categories?.topic_type ?? "Focus"}
       >
-        <div className={styles.focusLayout}>
+        <div className={`${styles.focusLayout} ${coachOpen ? styles.coachOpen : ""}`}>
           <section className={styles.taskPanel} aria-labelledby="focus-task-title">
             <p className={styles.cardEyebrow}>{task.eyebrow}</p>
             <h1 id="focus-task-title">{task.title}</h1>
             <p>{task.detail}</p>
 
-            <ol className={styles.steps}>
-              <li>
-                <span>01</span>
-                Sketch the two tables and decide what belongs in the join condition.
-              </li>
-              <li>
-                <span>02</span>
-                Write an inner join, then explain exactly which rows it excludes.
-              </li>
-              <li>
-                <span>03</span>
-                Change it to a left join and check the null side deliberately.
-              </li>
+            <div className={styles.stepProgress} aria-live="polite">
+              <span>Current step</span>
+              <strong>{String(currentStepIndex + 1).padStart(2, "0")} / {String(FOCUS_STEPS.length).padStart(2, "0")}</strong>
+            </div>
+            <ol className={styles.steps} aria-label="Focus steps">
+              {FOCUS_STEPS.map((step, index) => {
+                const status = index < currentStepIndex ? "complete" : index === currentStepIndex ? "current" : "next";
+                const statusLabel = status === "complete" ? "✓ Completed" : status === "current" ? "● Current" : "○ Next";
+                return (
+                  <li key={step} className={styles[`step${status.charAt(0).toUpperCase()}${status.slice(1)}`]}>
+                    <button
+                      type="button"
+                      onClick={() => setCurrentStepIndex(index)}
+                      aria-current={status === "current" ? "step" : undefined}
+                      aria-label={`Step ${index + 1} of ${FOCUS_STEPS.length}: ${step}. ${statusLabel}`}
+                    >
+                      <span>{String(index + 1).padStart(2, "0")}</span>
+                      <span className={styles.stepCopy}>{step}</span>
+                      <small>{statusLabel}</small>
+                    </button>
+                  </li>
+                );
+              })}
             </ol>
 
             {phase === "celebrating" ? (
@@ -640,6 +687,9 @@ export default function SessionPage() {
                     <button className={styles.completeButton} type="button" disabled={isSettling} onClick={() => void resolveExpiryOutcome("done")}>
                       {isSettling ? "Saving…" : "I finished"}
                     </button>
+                    <button className={styles.pauseButton} type="button" disabled={isSettling} onClick={() => setExtensionOpen(true)}>
+                      Focus longer
+                    </button>
                     <button className={styles.abandonButton} type="button" disabled={isSettling} onClick={() => setOutcomeNeedsNote(true)}>
                       Something&apos;s left
                     </button>
@@ -651,6 +701,9 @@ export default function SessionPage() {
                       <textarea value={leftoverNote} onChange={(event) => setLeftoverNote(event.target.value)} maxLength={2000} placeholder="Leave a clear next step…" />
                     </label>
                     <div className={styles.sessionActions}>
+                      <button className={styles.pauseButton} type="button" disabled={isSettling} onClick={() => setExtensionOpen(true)}>
+                        Focus longer
+                      </button>
                       <button className={styles.completeButton} type="button" disabled={isSettling || !leftoverNote.trim()} onClick={() => void resolveExpiryOutcome("in_progress")}>
                         {isSettling ? "Saving…" : "Keep in progress"}
                       </button>
@@ -690,7 +743,18 @@ export default function SessionPage() {
             {notice && <p className={styles.focusNotice} role="status">{notice}</p>}
           </section>
 
-          <aside className={styles.coachRail} aria-labelledby="coach-title">
+          <button
+            className={styles.coachToggle}
+            type="button"
+            aria-controls="focus-coach-drawer"
+            aria-expanded={coachOpen}
+            onClick={() => setCoachOpen((open) => !open)}
+          >
+            {coachOpen ? "Hide coach" : "Your coach"}
+            <span aria-hidden="true">{coachOpen ? "→" : "←"}</span>
+          </button>
+
+          <aside id="focus-coach-drawer" className={styles.coachRail} aria-labelledby="coach-title" aria-hidden={!coachOpen} inert={!coachOpen ? true : undefined}>
             <div className={styles.coachHead}>
               <span className={styles.coachMark} aria-hidden="true">↗</span>
               <div>
@@ -720,18 +784,18 @@ export default function SessionPage() {
           </aside>
         </div>
         <FocusListeningStudio />
-        {extensionOpen && phase === "active" && !session?.paused_at && (
+        {extensionOpen && (phase === "active" || phase === "outcome") && !session?.paused_at && (
           <div className={styles.extensionDialog} role="dialog" aria-modal="true" aria-labelledby="extension-title">
             <div>
-              <p className={styles.cardEyebrow}>Five minutes remaining</p>
-              <h2 id="extension-title">Do you need more time to finish?</h2>
+              <p className={styles.cardEyebrow}>{phase === "outcome" ? "Continue focus" : "Five minutes remaining"}</p>
+              <h2 id="extension-title">{phase === "outcome" ? "How much longer do you need?" : "Do you need more time to finish?"}</h2>
               <label className={styles.extensionField}>
                 <span>Add minutes</span>
                 <input aria-label="Additional focus minutes" type="number" min={1} max={1440} value={extensionMinutes} onChange={(event) => setExtensionMinutes(Number(event.target.value))} />
               </label>
               <div className={styles.sessionActions}>
                 <button className={styles.completeButton} type="button" disabled={isSettling || extensionMinutes < 1} onClick={() => void extendSession()}>
-                  {isSettling ? "Saving…" : "Add time"}
+                  {isSettling ? "Saving…" : phase === "outcome" ? "Start added focus" : "Add time"}
                 </button>
                 <button className={styles.abandonButton} type="button" disabled={isSettling} onClick={() => setExtensionOpen(false)}>No, continue</button>
               </div>

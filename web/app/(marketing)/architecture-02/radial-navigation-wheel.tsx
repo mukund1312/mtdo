@@ -6,7 +6,6 @@ import {
   Columns3,
   Headphones,
   Layers3,
-  Menu,
   Settings2,
   Target,
   type LucideIcon,
@@ -196,7 +195,6 @@ export function RadialNavigationWheel({ active, onDeck, onKanban, onGoals, onTim
         aria-keyshortcuts="M"
         onClick={toggle}
       >
-        <Menu size={21} strokeWidth={2} aria-hidden="true" />
         <span>Menu</span>
       </button>
 
@@ -304,7 +302,7 @@ export function RadialNavigationWheel({ active, onDeck, onKanban, onGoals, onTim
 
               <div className="a02-wheel-center" aria-live="polite">
                 <span>{selected ? selected.label : "Navigation"}</span>
-                <strong>{selected ? selected.description : "Press M to close or choose a direction"}</strong>
+                <strong>{selected ? selected.description : "Choose a direction"}</strong>
                 <em>{selected ? "Click to open" : "M"}</em>
               </div>
             </motion.div>

@@ -40,6 +40,7 @@ export interface EmberMorphProps {
   onTimerVisibilityChange?: (visible: boolean) => void;
   showSandglass?: boolean;
   onSandglassVisibilityChange?: (visible: boolean) => void;
+  sessionLabel?: string;
 }
 
 const BLOOM_EXIT_MS = 420;
@@ -78,6 +79,7 @@ export function EmberMorph({
   onTimerVisibilityChange,
   showSandglass = false,
   onSandglassVisibilityChange,
+  sessionLabel = "Focus",
 }: EmberMorphProps) {
   const reducedMotion = useReducedMotion();
   const exitHandledFor = useRef<string | null>(null);
@@ -132,7 +134,7 @@ export function EmberMorph({
 
       <header className={styles.header}>
         <span className={styles.wordmark}>mtdo</span>
-        <span className={styles.deckId}>MTDO / ARCHITECTURE 02 — SIGNAL DECK</span>
+        <span className={styles.deckId}>Focus session · {sessionLabel}</span>
         <div className={styles.headerStatus}>
           {onTimerVisibilityChange && (
             <button
@@ -163,44 +165,47 @@ export function EmberMorph({
 
         <div className={`${styles.frame} ${!showTimer && !showSandglass ? styles.timerHidden : ""}`}>
         {(showTimer || showSandglass) && <div className={styles.timerArea}>
-          {showTimer && <>
           <div className={styles.timerReadout}>
           <div className={styles.ringWrap}>
-            <svg
-              className={styles.ring}
-              viewBox="0 0 112 112"
-              role="meter"
-              aria-label={`${Math.round(progress * 100)}% of focus session elapsed`}
-              aria-valuemin={0}
-              aria-valuemax={100}
-              aria-valuenow={Math.round(progress * 100)}
-            >
-              <circle className={styles.ringTrack} cx="56" cy="56" r="46" />
-              <circle
-                className={styles.ringProgress}
-                cx="56"
-                cy="56"
-                r="46"
-                style={{
-                  strokeDasharray: ringCircumference,
-                  strokeDashoffset: ringOffset,
-                }}
-              />
-            </svg>
-            <span className={styles.ringMark} aria-hidden="true" />
+            {showSandglass ? (
+              <Sandglass progress={progress} complete={timerExpired} integrated />
+            ) : (
+              <>
+                <svg
+                  className={styles.ring}
+                  viewBox="0 0 112 112"
+                  role="meter"
+                  aria-label={`${Math.round(progress * 100)}% of focus session elapsed`}
+                  aria-valuemin={0}
+                  aria-valuemax={100}
+                  aria-valuenow={Math.round(progress * 100)}
+                >
+                  <circle className={styles.ringTrack} cx="56" cy="56" r="46" />
+                  <circle
+                    className={styles.ringProgress}
+                    cx="56"
+                    cy="56"
+                    r="46"
+                    style={{
+                      strokeDasharray: ringCircumference,
+                      strokeDashoffset: ringOffset,
+                    }}
+                  />
+                </svg>
+                <span className={styles.ringMark} aria-hidden="true" />
+              </>
+            )}
           </div>
-          <div>
-            <p className={styles.timerLabel}>Focus remaining</p>
-            <p className={`${styles.timer} num`} aria-live="off">
-              {formatClock(remainingS)}
-            </p>
-            <p className={styles.elapsed}>
-              <span className="num">{formatClock(elapsedS)}</span> invested
-            </p>
+          {showTimer && <div>
+              <p className={styles.timerLabel}>Focus remaining</p>
+              <p className={`${styles.timer} num`} aria-live="off">
+                {formatClock(remainingS)}
+              </p>
+              <p className={styles.elapsed}>
+                <span className="num">{formatClock(elapsedS)}</span> invested
+              </p>
+            </div>}
           </div>
-          </div>
-          </>}
-          {showSandglass && <Sandglass progress={progress} complete={timerExpired} />}
         </div>}
 
         <div className={styles.content}>{children}</div>
@@ -209,10 +214,10 @@ export function EmberMorph({
   );
 }
 
-function Sandglass({ progress, complete }: { progress: number; complete: boolean }) {
+function Sandglass({ progress, complete, integrated = false }: { progress: number; complete: boolean; integrated?: boolean }) {
   const filled = Math.max(0, Math.min(1, progress));
   return (
-    <div className={`${styles.sandglass} ${complete ? styles.sandglassComplete : ""}`} role="img" aria-label={complete ? "Focus sandglass complete" : "Focus sandglass in progress"}>
+    <div className={`${styles.sandglass} ${integrated ? styles.sandglassTimer : ""} ${complete ? styles.sandglassComplete : ""}`} role="img" aria-label={complete ? "Focus sandglass complete" : "Focus sandglass in progress"}>
       <svg viewBox="0 0 62 96" aria-hidden="true">
         <path className={styles.sandglassFrame} d="M12 7H50M12 89H50M15 8C15 30 24 39 31 48C38 57 47 66 47 88M47 8C47 30 38 39 31 48C24 57 15 66 15 88" />
         <path className={styles.sandTop} d="M17 11H45L31 43Z" style={{ transform: `scaleY(${1 - filled})` }} />
