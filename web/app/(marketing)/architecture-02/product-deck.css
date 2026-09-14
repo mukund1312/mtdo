@@ -144,4 +144,5 @@
 .a02-insight-glyph { flex-shrink:0; font-style:normal; line-height:1.5; }
 .a02-insight-glyph--acid { color:var(--acid); }
 .a02-insight-glyph--aqua { color:var(--aqua); }
+.a02-insight-list li.is-early-signal { color:var(--dim); }
 @media(max-width:900px){.a02-insights{margin:22px 18px 32px}}
