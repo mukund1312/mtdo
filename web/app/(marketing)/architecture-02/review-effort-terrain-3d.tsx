@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useRef, useState } from "react";
-import { Canvas, useThree } from "@react-three/fiber";
+import { Canvas, useFrame, useThree } from "@react-three/fiber";
 import { OrthographicCamera } from "@react-three/drei";
 import * as THREE from "three";
 
@@ -69,8 +69,15 @@ interface BlockProps {
   onHover: (day: ConsistencyDay | null, screen: { x: number; y: number } | null) => void;
 }
 
+// Towers grow upward from the base tile on mount -- never fall from above
+// (audit item 43/25) -- 0.6s roughly matching the 500-900ms band the rest
+// of the page's transitions use.
+const GROW_SECONDS = 0.6;
+
 function Block({ cell, selected, isToday, onHover }: BlockProps) {
   const [hovered, setHovered] = useState(false);
+  const towerRef = useRef<THREE.Mesh>(null);
+  const growRef = useRef(0);
   const x = cell.week * SPACING;
   const z = cell.weekday * SPACING;
   const day = cell.day;
@@ -79,6 +86,16 @@ function Block({ cell, selected, isToday, onHover }: BlockProps) {
   const height = effortToHeight(score);
   const { color, emissive } = tierForScore(score);
   const hasTower = hasScore && score > 0;
+  const restY = height / 2 + 0.04;
+
+  useFrame((_, delta) => {
+    if (!towerRef.current) return;
+    if (growRef.current < 1) growRef.current = Math.min(1, growRef.current + delta / GROW_SECONDS);
+    const eased = 1 - Math.pow(1 - growRef.current, 3); // ease-out cubic
+    const hoverBump = hovered ? 1.04 : 1;
+    towerRef.current.scale.y = eased * hoverBump;
+    towerRef.current.position.y = restY * eased;
+  });
 
   return (
     <group position={[x, 0, z]}>
@@ -119,8 +136,9 @@ function Block({ cell, selected, isToday, onHover }: BlockProps) {
 
       {hasTower && (
         <mesh
-          position={[0, height / 2 + 0.04, 0]}
-          scale={[1, hovered ? 1.04 : 1, 1]}
+          ref={towerRef}
+          position={[0, 0, 0]}
+          scale={[1, 0, 1]}
           onPointerOver={(e) => {
             e.stopPropagation();
             setHovered(true);

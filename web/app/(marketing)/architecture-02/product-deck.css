@@ -55,7 +55,7 @@
 .a02-duration-bars { display:flex; flex-direction:column; gap:8px; margin-top:16px; }
 .a02-duration-row { display:grid; grid-template-columns:52px 1fr 24px; align-items:center; gap:8px; }
 .a02-duration-row span { color:var(--dim); font:9px "DM Mono",monospace; }
-.a02-duration-row i { height:8px; border-radius:4px; background:var(--aqua); }
+.a02-duration-row i { height:8px; border-radius:4px; background:var(--aqua); transition:width .7s cubic-bezier(.16,1,.3,1); }
 .a02-duration-row b { text-align:right; font:10px "DM Mono",monospace; color:var(--dim); }
 .a02-momentum-score { display:block; margin:16px 0 0; font:900 56px/.8 "Archivo Black",Arial,sans-serif; letter-spacing:-.08em; color:var(--acid); }
 @media(max-width:900px){.a02-time-behavior{grid-template-columns:1fr;margin:22px 18px 0}}
