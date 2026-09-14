@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 
 import { createClient } from "@/lib/supabase/client";
 import { asStudyProfile, type StudyProfile } from "@/lib/review/types";
+import { buildReviewFixture, getDevReviewStateOverride } from "@/lib/review/dev-fixtures";
 
 // Shared by ReviewStudyProfile (F5) and ReviewInsights (F6) -- both read the
 // SAME study_profile() result, so the fetch lives here, once, in their
@@ -23,6 +24,12 @@ export function useStudyProfile(): UseStudyProfileResult {
 
   const load = useCallback(async () => {
     setState("loading");
+    const devState = getDevReviewStateOverride();
+    if (devState) {
+      setProfile(buildReviewFixture(devState).studyProfile);
+      setState("ready");
+      return;
+    }
     const supabase = createClient();
     const { data, error } = await supabase.rpc("study_profile", { p_window_days: 42 });
     if (error) {

@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 
 import { createClient } from "@/lib/supabase/client";
 import { asReviewConsistency, type ReviewConsistency } from "@/lib/review/types";
+import { buildReviewFixture, getDevReviewStateOverride } from "@/lib/review/dev-fixtures";
 
 import { fetchProfileTimezone } from "./profile-timezone";
 import { utcDateRange, utcToday } from "./product-data";
@@ -28,6 +29,12 @@ export function useConsistency(): UseConsistencyResult {
 
   const load = useCallback(async () => {
     setState("loading");
+    const devState = getDevReviewStateOverride();
+    if (devState) {
+      setConsistency(buildReviewFixture(devState).consistency);
+      setState("ready");
+      return;
+    }
     const supabase = createClient();
     const {
       data: { user },

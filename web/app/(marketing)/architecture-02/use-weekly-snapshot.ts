@@ -5,6 +5,7 @@ import { useCallback, useEffect, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { asWeeklyPerformance, type WeeklyPerformance } from "@/lib/planning/types";
 import { isoWeekOf } from "@/lib/planning/iso-week";
+import { buildReviewFixture, getDevReviewStateOverride } from "@/lib/review/dev-fixtures";
 
 import { fetchProfileTimezone } from "./profile-timezone";
 import { utcToday } from "./product-data";
@@ -34,6 +35,12 @@ export function useWeeklySnapshot(): UseWeeklySnapshotResult {
 
   const load = useCallback(async () => {
     setState("loading");
+    const devState = getDevReviewStateOverride();
+    if (devState) {
+      setWeekly(buildReviewFixture(devState).weekly);
+      setState("ready");
+      return;
+    }
     const supabase = createClient();
     const {
       data: { user },
