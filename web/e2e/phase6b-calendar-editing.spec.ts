@@ -86,6 +86,13 @@ async function scheduleFromUnscheduled(page: Page, taskText: string, hour: numbe
   // dragTo(), which a same-hour second drop could land squarely on the
   // existing chip instead of the slot underneath it.
   await dragAndDrop(page, page.locator('button[data-testid^="calendar-unscheduled-"]').filter({ hasText: taskText }), page.getByTestId(`calendar-slot-${today}-${hour}`));
+  // A drop onto an already-occupied slot (this file's overlap test does
+  // that on purpose) now opens a "Time Conflict" confirmation dialog
+  // instead of scheduling immediately -- click through it when it shows.
+  // No-op for every other call here, which never lands on an occupied slot.
+  const moveAnyway = page.getByRole("button", { name: "Move anyway" });
+  const conflictShown = await moveAnyway.waitFor({ state: "visible", timeout: 2_000 }).then(() => true).catch(() => false);
+  if (conflictShown) await moveAnyway.click();
   const chip = page.locator('[data-testid^="calendar-event-"]').filter({ hasText: taskText });
   await expect(chip).toBeVisible();
   return chip;
@@ -181,7 +188,7 @@ test.describe.serial("Calendar editing: resize, overlap lanes, category colour, 
     await chipAfterReload.click();
     const popover = page.getByTestId("calendar-detail-popover");
     await expect(popover).toBeVisible();
-    await expect(popover.locator(".a02-calendar-detail-time")).toContainText(/6:00.*7:30|7:30.*6:00/i);
+    await expect(popover.locator(".a02-calendar-schedule-summary")).toContainText(/6:00.*7:30|7:30.*6:00/i);
     await popover.getByRole("button", { name: "Close", exact: true }).click();
   });
 

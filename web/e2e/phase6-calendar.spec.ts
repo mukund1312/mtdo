@@ -99,6 +99,8 @@ test("unscheduling a block clears its window and returns it to Unscheduled", asy
   // same drag -- same reasoning as the eventChip wait above.
   await expect(popover).toBeVisible({ timeout: 15_000 });
   await popover.getByTestId("calendar-unschedule-button").click();
+  await expect(popover.getByText(/This won't delete the task/i)).toBeVisible();
+  await popover.getByTestId("calendar-unschedule-confirm").click();
   await expect(popover).toHaveCount(0);
 
   // schedule_block(id) with every optional arg omitted clears the window --
@@ -120,6 +122,7 @@ test("a scheduled task accepts a directly entered start and end time", async ({ 
   await eventChip.click();
 
   const popover = page.getByTestId("calendar-detail-popover");
+  await popover.getByRole("button", { name: /edit schedule/i }).click();
   await popover.getByLabel("Start time").fill("13:15");
   await popover.getByLabel("End time").fill("14:45");
   await popover.getByRole("button", { name: /save time/i }).click();
@@ -151,7 +154,8 @@ test("Google Calendar's honest not-connected state renders with no console error
   // popover must say so plainly rather than showing a toggle that looks
   // live and isn't.
   await expect(popover.getByTestId("calendar-sync-not-configured")).toBeVisible();
-  await expect(popover.getByTestId("calendar-sync-not-configured")).toContainText(/isn.t connected yet/i);
+  await expect(popover.getByTestId("calendar-sync-not-configured")).toContainText(/not connected to google calendar/i);
+  await expect(popover.getByTestId("calendar-sync-not-configured")).toContainText(/saved in mtdo/i);
   await expect(popover.locator(".a02-calendar-sync-toggle")).toHaveCount(0);
 
   expect(consoleErrors).toEqual([]);

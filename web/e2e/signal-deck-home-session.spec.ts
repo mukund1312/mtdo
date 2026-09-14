@@ -110,7 +110,7 @@ test("Home reflects a real picked task and Session shows real, non-fake coaching
   await expect(page).toHaveURL(/\/architecture-02\?deck=work$/);
 
   await page.getByRole("button", { name: /add from route/i }).click();
-  const routeMenu = page.getByRole("dialog", { name: /choose the next piece/i });
+  const routeMenu = page.getByRole("dialog", { name: /build your next set/i });
   const routeItem = routeMenu.locator(".a02-curriculum-item").first();
   await expect(routeItem).toBeVisible();
   const taskText = (await routeItem.locator("b").textContent())?.trim();
@@ -141,6 +141,7 @@ test("Home reflects a real picked task and Session shows real, non-fake coaching
   await expect(page.getByRole("heading", { name: taskText! })).toBeVisible();
   await expect(page.getByLabel("Focus minutes")).toHaveValue("50");
   await page.getByRole("button", { name: /begin focus/i }).click();
+  await page.getByRole("button", { name: "Your coach" }).click();
   await expect(page.getByRole("heading", { name: /stay with the question/i })).toBeVisible();
   const timerToggle = page.getByRole("button", { name: "Timer on" });
   await expect(timerToggle).toBeVisible();
@@ -153,6 +154,11 @@ test("Home reflects a real picked task and Session shows real, non-fake coaching
   await page.reload();
   await expect(page.getByRole("button", { name: "Timer off" })).toBeVisible();
   await expect(page.getByRole("meter")).toHaveCount(0);
+  // The reload above is real -- it wipes coachOpen's client-only state back
+  // to closed along with everything else that isn't persisted, same as any
+  // fresh page load. Re-open it before the coaching-content assertions
+  // below, which need the drawer actually visible.
+  await page.getByRole("button", { name: "Your coach" }).click();
   const sandglassToggle = page.getByRole("button", { name: "Sandglass off" });
   await sandglassToggle.click();
   await expect(page.getByRole("button", { name: "Sandglass on" })).toBeVisible();
