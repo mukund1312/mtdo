@@ -57,7 +57,7 @@ export function ReviewTodaySignal({ summary, state, reload }: UseDailySummaryRes
         <Row label="Tasks completed" value={`${s.execute.tasks_done} / ${s.execute.tasks_picked}`} />
         <Row label="Sessions" value={String(s.focus.session_count)} />
         <Row label="Average session" value={averageSession == null ? "—" : `${Math.round(averageSession)}m`} />
-        <Row label="Longest session" value={`${s.focus.longest_session_minutes}m`} />
+        <Row label="Longest session" value={s.focus.session_count === 0 ? "—" : `${s.focus.longest_session_minutes}m`} />
         <Row label="Interruptions" value={String(s.focus.pause_count)} />
         <Row label="Tasks rescheduled" value={String(s.execute.regressed_count)} />
       </div>

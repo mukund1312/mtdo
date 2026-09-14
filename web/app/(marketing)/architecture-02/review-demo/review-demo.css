@@ -1,30 +1,36 @@
 /* Visual-reference demo route only -- see data/review-demo-data.ts's header.
-   Self-contained stylesheet, deliberately not sharing signal-deck.css's
-   a02-* tokens so this can match the reference screenshot's exact palette
-   without touching the real Review page's design system. */
+   Fonts and color tokens are now deliberately the SAME ones the real
+   Review page uses (signal-deck.css's @import + --ultra/--acid/--ink/etc)
+   -- variable names here stay --rd-* to keep this file self-contained and
+   avoid coupling to signal-deck.css's cascade, but the values are no
+   longer independently invented. Previously this file declared "Inter" /
+   "JetBrains Mono" / "Archivo Black" without ever importing any of them
+   (the root layout only loads Satoshi globally), so every one of those
+   names silently fell back to the browser's default font -- fixed below. */
+@import url("https://fonts.googleapis.com/css2?family=Archivo+Black&family=DM+Mono:wght@400;500&family=Space+Grotesk:wght@400;500;600;700&display=swap");
 
 .rd-root {
-  --rd-bg-0: #050812;
-  --rd-bg-1: #080c18;
-  --rd-card-0: #0a1020;
-  --rd-card-1: #0d1324;
-  --rd-card-2: #10172a;
-  --rd-border: rgba(105, 125, 180, 0.16);
+  --rd-bg-0: #090a20;
+  --rd-bg-1: #101332;
+  --rd-card-0: rgba(18, 22, 54, 0.78);
+  --rd-card-1: #171a42;
+  --rd-card-2: #171a42;
+  --rd-border: rgba(216, 221, 255, 0.18);
   --rd-grid: rgba(90, 110, 160, 0.035);
-  --rd-text-primary: #f7f8ff;
-  --rd-text-secondary: #a4acbb;
-  --rd-text-secondary-2: #a4acbb;
-  --rd-text-muted: #737d9e;
-  --rd-purple: #8b5cf6;
-  --rd-purple-2: #a66bff;
-  --rd-lime: #b7ff56;
-  --rd-lime-2: #9fe64e;
-  --rd-pink: #ff426d;
-  --rd-cyan: #3dd9ff;
+  --rd-text-primary: #e9ebff;
+  --rd-text-secondary: #8e93bd;
+  --rd-text-secondary-2: #8e93bd;
+  --rd-text-muted: #8e93bd;
+  --rd-purple: #8975ff;
+  --rd-purple-2: #a89bff;
+  --rd-lime: #d7ff52;
+  --rd-lime-2: #c2e64a;
+  --rd-pink: #ff8071;
+  --rd-cyan: #57e7ff;
 
   background: linear-gradient(160deg, var(--rd-bg-1), var(--rd-bg-0));
   color: var(--rd-text-primary);
-  font-family: "Inter", system-ui, sans-serif;
+  font-family: "Space Grotesk", Arial, sans-serif;
   min-height: 100vh;
   position: relative;
 }
@@ -225,7 +231,7 @@
 }
 
 .rd-sidebar-quote {
-  font-family: "JetBrains Mono", "Menlo", monospace;
+  font-family: "DM Mono", monospace;
   text-transform: uppercase;
   font-size: 10.5px;
   color: #6c6ea6;
@@ -249,7 +255,7 @@
 }
 
 .rd-eyebrow {
-  font-family: "JetBrains Mono", monospace;
+  font-family: "DM Mono", monospace;
   font-size: 12px;
   letter-spacing: 0.08em;
   color: var(--rd-purple-2);
@@ -387,7 +393,7 @@
   color: var(--rd-text-muted);
 }
 .rd-ring-label {
-  font-family: "JetBrains Mono", monospace;
+  font-family: "DM Mono", monospace;
   font-size: 12px;
   letter-spacing: 0.06em;
   margin-top: 6px;
@@ -412,7 +418,7 @@
   padding: 20px;
 }
 .rd-daily-score-title {
-  font-family: "JetBrains Mono", monospace;
+  font-family: "DM Mono", monospace;
   font-size: 12px;
   color: var(--rd-text-muted);
   letter-spacing: 0.06em;
@@ -438,7 +444,7 @@
   margin-bottom: 16px;
 }
 .rd-card-title {
-  font-family: "JetBrains Mono", monospace;
+  font-family: "DM Mono", monospace;
   font-size: 13px;
   letter-spacing: 0.06em;
   color: var(--rd-text-secondary);

@@ -49,6 +49,13 @@ export function ReviewDeck() {
   const weekly = useWeeklySnapshot();
   const studyProfile = useStudyProfile();
 
+  // A route exists (has_active_plan) but zero active days have ever been
+  // recorded -- the "brand-new account" empty state from the reference
+  // design, distinct from "no_active_plan" (no route configured at all,
+  // handled separately by each card's own early-return).
+  const isFreshRoute =
+    momentum.state === "ready" && momentum.momentum?.status === "ok" && momentum.momentum.active_days_rate === 0;
+
   return (
     <div className="a02-review-layout">
       <ReviewSideNav />
@@ -59,6 +66,11 @@ export function ReviewDeck() {
               <span className="a02-eyebrow">REVIEW / TODAY</span>
               <h1 className="a02-review-title" id="review-title">MAKE EFFORT<br /><em>LEGIBLE.</em></h1>
               <p>Track. Understand. Improve. Repeat.</p>
+              {isFreshRoute && (
+                <p className="a02-review-first-time">
+                  Your effort history starts today. Complete your first focus session to begin building your study profile.
+                </p>
+              )}
             </div>
             <div className="a02-review-head-right">
               <div className="a02-review-date-nav">

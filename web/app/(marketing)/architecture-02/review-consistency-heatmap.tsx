@@ -64,6 +64,21 @@ export function ReviewConsistencyHeatmap({ consistency, state, reload }: UseCons
     return { longestStreak: longest, currentStreak: current };
   }, [days]);
 
+  // review_consistency()'s window always ends today -- see use-consistency.ts.
+  const todayDate = days.at(-1)?.date ?? null;
+
+  // Client-side only, from the SAME days[] the heatmap already renders --
+  // not a new RPC field. "—" (not a fabricated 0%) when there's no prior
+  // week to compare against yet.
+  const vsLastWeek = useMemo(() => {
+    if (days.length < 14) return null;
+    const countActive = (slice: ConsistencyDay[]) => slice.filter((d) => d.level !== null && d.level > 0).length;
+    const last7 = countActive(days.slice(-7));
+    const prior7 = countActive(days.slice(-14, -7));
+    if (prior7 === 0) return last7 === 0 ? null : 100;
+    return Math.round(((last7 - prior7) / prior7) * 100);
+  }, [days]);
+
   if (state === "error") {
     return (
       <section className="a02-product-state" role="alert">
@@ -99,19 +114,28 @@ export function ReviewConsistencyHeatmap({ consistency, state, reload }: UseCons
             <div className="a02-year-grid-weeks">
               {weeks.map((week, wi) => (
                 <div className="a02-year-grid-week" key={wi}>
-                  {week.map((day, di) =>
-                    day ? (
+                  {week.map((day, di) => {
+                    if (!day) return <i key={di} className="is-empty" aria-hidden="true" />;
+                    const isToday = day.date === todayDate;
+                    const isActive = day.level !== null && day.level > 0;
+                    const levelClass = day.level === null ? "level-none" : `level-${day.level}`;
+                    const title = isToday
+                      ? isActive
+                        ? `${day.date} · effort ${day.effort_score}`
+                        : "Today · Your journey starts here"
+                      : isActive
+                        ? `${day.date} · effort ${day.effort_score}${
+                            day.focus_percentage != null ? ` · focus ${day.focus_percentage}%` : ""
+                          }${day.execute_percentage != null ? ` · execute ${day.execute_percentage}%` : ""}`
+                        : `${day.date} · No activity`;
+                    return (
                       <i
                         key={di}
-                        className={day.level === null ? "level-none" : `level-${day.level}`}
-                        title={`${day.date} · effort ${day.level === null ? "—" : day.effort_score}${
-                          day.focus_percentage != null ? ` · focus ${day.focus_percentage}%` : ""
-                        }${day.execute_percentage != null ? ` · execute ${day.execute_percentage}%` : ""}`}
+                        className={`${levelClass}${isToday ? " is-today" : ""}`}
+                        title={title}
                       />
-                    ) : (
-                      <i key={di} className="is-empty" aria-hidden="true" />
-                    ),
-                  )}
+                    );
+                  })}
                 </div>
               ))}
             </div>
@@ -130,6 +154,7 @@ export function ReviewConsistencyHeatmap({ consistency, state, reload }: UseCons
         <div><b>{Math.round(activeDaysRate * 100)}%</b><span>Active days</span></div>
         <div><b>{longestStreak} days</b><span>Longest streak</span></div>
         <div><b>{currentStreak} days</b><span>Current streak</span></div>
+        <div><b>{vsLastWeek === null ? "—" : `${vsLastWeek >= 0 ? "+" : ""}${vsLastWeek}%`}</b><span>vs last week</span></div>
       </div>
     </section>
   );
