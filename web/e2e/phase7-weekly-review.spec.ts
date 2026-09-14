@@ -165,12 +165,12 @@ test.describe.serial("Review deck -- weekly engine review, honest states and see
     // 0%/empty chart (api.md §3f's existed_before_week rule).
     await expect(page.getByText(/your route is brand new/i)).toBeVisible();
 
-    // Generating a review for a route with no real history must still be a
-    // normal, non-error result: zero changes, categories marked "not enough
-    // data yet" -- never an error and never a fabricated proposal.
-    await page.getByTestId("weekly-review-generate").click();
-    await expect(page.getByTestId("weekly-review-no-changes")).toBeVisible();
-    await expect(page.getByText(/not enough history yet to review/i)).toBeVisible();
+    // A brand-new route is deliberately insufficient for a proposal: the
+    // backend must collect one complete week before it can form a judgment.
+    // Do not expose the old Generate action just to manufacture an empty
+    // proposal -- that would make a missing data basis look like a result.
+    await expect(page.getByTestId("weekly-review-generate")).toHaveCount(0);
+    await expect(page.getByText(/your route needs one full week of activity/i)).toBeVisible();
     await expect(page.locator(".a02-weekly-change-card")).toHaveCount(0);
     await expect(page.locator(".a02-weekly-question-card")).toHaveCount(0);
   });

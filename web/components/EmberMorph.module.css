@@ -233,6 +233,19 @@
   overflow: visible;
 }
 
+/* The hourglass occupies the exact visual slot the progress ring used to
+   occupy. It is the clock's time glyph, never a detached secondary card. */
+.sandglassTimer {
+  width: 100%;
+  height: 100%;
+  border-radius: 50%;
+}
+
+.sandglassTimer svg {
+  width: 54px;
+  height: 82px;
+}
+
 .sandglassFrame {
   fill: none;
   stroke: rgba(233, 235, 255, 0.72);

@@ -19,13 +19,13 @@
   bottom: 0;
   left: 50%;
   display: inline-flex;
-  width: 62px;
-  height: 54px;
+  width: 64px;
+  height: 64px;
   align-items: center;
   justify-content: center;
   gap: 6px;
   border: 1px solid rgba(216, 221, 255, 0.28);
-  border-radius: 15px;
+  border-radius: 50%;
   background: rgba(17, 20, 51, 0.9);
   box-shadow: 0 14px 45px rgba(0, 0, 0, 0.45), inset 0 1px rgba(255, 255, 255, 0.06);
   color: var(--ink);
@@ -33,6 +33,7 @@
   pointer-events: auto;
   transform: translateX(-50%);
   backdrop-filter: blur(18px);
+  transition: transform 170ms cubic-bezier(.2,.8,.2,1), border-color 170ms ease, background 170ms ease, box-shadow 170ms ease;
 }
 
 .a02-radial-menu-trigger span,
@@ -119,9 +120,9 @@
 }
 
 .a02-radial-menu--rail .a02-radial-menu-trigger {
-  width: 74px;
-  height: 50px;
-  border-radius: 12px;
+  width: 64px;
+  height: 64px;
+  border-radius: 50%;
   background: rgba(17, 20, 51, 0.94);
 }
 
@@ -150,9 +151,9 @@
 }
 
 .a02-radial-menu--inline .a02-radial-menu-trigger {
-  width: 74px;
-  height: 54px;
-  border-radius: 12px;
+  width: 64px;
+  height: 64px;
+  border-radius: 50%;
 }
 
 .a02-radial-menu--inline .a02-radial-menu-item {
@@ -193,7 +194,9 @@
 .a02-radial-menu-trigger:focus-visible {
   border-color: rgba(87, 231, 255, 0.72);
   background: rgba(27, 32, 73, 0.95);
+  box-shadow: 0 18px 50px rgba(0, 0, 0, 0.52), 0 0 0 4px rgba(87, 231, 255, 0.08), inset 0 1px rgba(255, 255, 255, 0.1);
   outline: none;
+  transform: translateX(-50%) translateY(-3px) scale(1.04);
 }
 
 .a02-radial-menu-item {
@@ -293,7 +296,7 @@
     height: 300px;
   }
 
-  .a02-radial-menu-trigger { width: 58px; height: 50px; }
+  .a02-radial-menu-trigger { width: 54px; height: 54px; border-radius:50%; }
   .a02-radial-menu-icon { width: 52px; height: 52px; border-radius: 15px; }
   .a02-radial-menu-item { left: calc(50% - 38px); }
 
@@ -303,8 +306,9 @@
   }
 
   .a02-radial-menu--rail .a02-radial-menu-trigger {
-    width: 68px;
-    height: 46px;
+    width: 54px;
+    height: 54px;
+    border-radius:50%;
   }
 
   .a02-radial-menu--rail .a02-radial-menu-icon {
@@ -328,9 +332,9 @@
   }
 
   .a02-radial-menu--inline .a02-radial-menu-trigger {
-    width: 58px;
-    height: 46px;
-    border-radius: 11px;
+    width: 54px;
+    height: 54px;
+    border-radius: 50%;
   }
 
   .a02-radial-menu--inline .a02-radial-menu-item {

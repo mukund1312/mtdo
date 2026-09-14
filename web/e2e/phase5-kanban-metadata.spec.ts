@@ -47,9 +47,9 @@ test("priority and category filters narrow the board using real data", async ({ 
 
   await expect(page.locator(".a02-live-block")).toHaveCount(2);
 
-  const categoryFilters = page.getByRole("group", { name: /filter by category/i });
+  const categoryFilters = page.getByLabel("Filter by category");
   await expect(categoryFilters).toBeVisible();
-  await categoryFilters.getByRole("button", { name: "SQL" }).click();
+  await categoryFilters.selectOption("SQL");
   await expect(page.locator(".a02-live-block")).toHaveCount(1);
   await expect(page.locator(".a02-live-block")).toContainText("SQL task one");
 
@@ -58,8 +58,8 @@ test("priority and category filters narrow the board using real data", async ({ 
 
   // Both tasks default to 'medium' priority -- filtering to High or Low
   // should leave nothing, since nothing here really has that priority.
-  const priorityFilters = page.getByRole("group", { name: /filter by priority/i });
-  await priorityFilters.getByRole("button", { name: "High" }).click();
+  const priorityFilters = page.getByLabel("Filter by priority");
+  await priorityFilters.selectOption("high");
   await expect(page.locator(".a02-live-block")).toHaveCount(0);
   // Every lane (backlog/todo/in_progress/done) shows this same empty-state
   // text once filtered to nothing -- assert at least one, not exactly one.
