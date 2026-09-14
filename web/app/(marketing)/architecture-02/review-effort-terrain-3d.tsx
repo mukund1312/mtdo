@@ -1,0 +1,206 @@
+"use client";
+
+import { useMemo, useRef, useState } from "react";
+import { Canvas, useThree } from "@react-three/fiber";
+import { OrthographicCamera } from "@react-three/drei";
+
+import type { ConsistencyDay } from "@/lib/review/types";
+
+// Real 3D "Effort Terrain" for the Review page -- a GitHub-contribution-
+// style 52-week x 7-weekday grid extruded by review_consistency()'s
+// server-computed Effort Score (migrations/0026/0027), same data the
+// Heatmap view already renders. Ported from the visual-reference demo
+// route's rebuilt terrain (architecture-02/review-demo) after the R3F/drei
+// dependency was already added there -- see that route's EffortTerrain.tsx
+// for the original build notes on grid alignment, nonlinear height, and
+// camera framing.
+//
+// Honesty rule carried over from the Heatmap view: a day with level===null
+// (no active plan that day, not "zero effort") renders as a bare base tile
+// with no tower and no fabricated numbers in its tooltip -- never treated
+// the same as a real 0.
+
+const CELL_SIZE = 0.5;
+const CELL_GAP = 0.28;
+const SPACING = CELL_SIZE + CELL_GAP;
+
+interface GridCell {
+  day: ConsistencyDay | null;
+  week: number;
+  weekday: number;
+}
+
+function buildGrid(days: ConsistencyDay[]): GridCell[][] {
+  if (days.length === 0) return [];
+  const first = new Date(`${days[0]!.date}T00:00:00Z`);
+  const firstWeekday = (first.getUTCDay() + 6) % 7;
+  const padded: (ConsistencyDay | null)[] = [...Array(firstWeekday).fill(null), ...days];
+  const weeks: GridCell[][] = [];
+  for (let w = 0; w * 7 < padded.length; w++) {
+    const week: GridCell[] = [];
+    for (let d = 0; d < 7; d++) week.push({ day: padded[w * 7 + d] ?? null, week: w, weekday: d });
+    weeks.push(week);
+  }
+  return weeks;
+}
+
+function effortToHeight(score: number): number {
+  if (score <= 0) return 0.08;
+  return 0.1 + Math.pow(score / 100, 2.1) * 5.0;
+}
+
+function tierForScore(score: number): { color: string; emissive: number } {
+  if (score <= 0) return { color: "#16251e", emissive: 0.03 };
+  if (score < 20) return { color: "#16251e", emissive: 0.05 };
+  if (score < 40) return { color: "#315c35", emissive: 0.07 };
+  if (score < 60) return { color: "#5f9d45", emissive: 0.12 };
+  if (score < 78) return { color: "#93d74e", emissive: 0.2 };
+  if (score < 92) return { color: "#bfff5f", emissive: 0.3 };
+  return { color: "#d5ff74", emissive: 0.42 };
+}
+
+interface BlockProps {
+  cell: GridCell;
+  selected: boolean;
+  onHover: (day: ConsistencyDay | null, screen: { x: number; y: number } | null) => void;
+}
+
+function Block({ cell, selected, onHover }: BlockProps) {
+  const [hovered, setHovered] = useState(false);
+  const x = cell.week * SPACING;
+  const z = cell.weekday * SPACING;
+  const day = cell.day;
+  const hasScore = day != null && day.effort_score !== null;
+  const score = hasScore ? day!.effort_score! : 0;
+  const height = effortToHeight(score);
+  const { color, emissive } = tierForScore(score);
+
+  return (
+    <group position={[x, 0, z]}>
+      <mesh position={[0, 0.02, 0]}>
+        <boxGeometry args={[CELL_SIZE, 0.04, CELL_SIZE]} />
+        <meshStandardMaterial color="#0c1426" roughness={0.9} metalness={0} />
+      </mesh>
+
+      {hasScore && score > 0 && (
+        <mesh
+          position={[0, height / 2 + 0.04, 0]}
+          scale={[1, hovered ? 1.04 : 1, 1]}
+          onPointerOver={(e) => {
+            e.stopPropagation();
+            setHovered(true);
+            onHover(day, { x: (e.nativeEvent as PointerEvent).clientX, y: (e.nativeEvent as PointerEvent).clientY });
+          }}
+          onPointerOut={(e) => {
+            e.stopPropagation();
+            setHovered(false);
+            onHover(null, null);
+          }}
+        >
+          <boxGeometry args={[CELL_SIZE, height, CELL_SIZE]} />
+          <meshStandardMaterial
+            color={color}
+            emissive={color}
+            emissiveIntensity={hovered ? emissive + 0.5 : emissive}
+            roughness={0.65}
+            metalness={0.04}
+          />
+        </mesh>
+      )}
+
+      {selected && day && (
+        <mesh position={[0, height + 0.22, 0]}>
+          <sphereGeometry args={[0.08, 12, 12]} />
+          <meshStandardMaterial color="#9c7cff" emissive="#9c7cff" emissiveIntensity={1.1} />
+        </mesh>
+      )}
+    </group>
+  );
+}
+
+function Scene({ weeks, onHover }: { weeks: GridCell[][]; onHover: BlockProps["onHover"] }) {
+  const peakDate = useMemo(() => {
+    let best: ConsistencyDay | null = null;
+    for (const week of weeks) {
+      for (const cell of week) {
+        if (cell.day && cell.day.effort_score !== null && (!best || cell.day.effort_score > (best.effort_score ?? -1))) {
+          best = cell.day;
+        }
+      }
+    }
+    return best?.date ?? null;
+  }, [weeks]);
+
+  const gridWidth = weeks.length * SPACING;
+  const gridDepth = 7 * SPACING;
+
+  return (
+    <>
+      <ambientLight intensity={0.8} />
+      <directionalLight position={[-10, 16, 10]} intensity={1.8} />
+      <directionalLight position={[10, 6, -10]} intensity={0.4} />
+      <group position={[-gridWidth / 2, 0, -gridDepth / 2]}>
+        {weeks.map((week) =>
+          week.map((cell) => (
+            <Block key={`${cell.week}-${cell.weekday}`} cell={cell} selected={cell.day?.date === peakDate} onHover={onHover} />
+          )),
+        )}
+      </group>
+    </>
+  );
+}
+
+function IsometricCamera({ gridWidth }: { gridWidth: number }) {
+  const width = useThree((state) => state.size.width);
+  const zoom = (width * 0.85) / (gridWidth * 0.86);
+
+  return (
+    <OrthographicCamera
+      makeDefault
+      position={[-16, 12, 22]}
+      zoom={zoom}
+      onUpdate={(cam) => cam.lookAt(0, 0.6, 0)}
+    />
+  );
+}
+
+export function ReviewEffortTerrain3D({ days }: { days: ConsistencyDay[] }) {
+  const [hover, setHover] = useState<{ day: ConsistencyDay; left: number; top: number } | null>(null);
+  const wrapRef = useRef<HTMLDivElement>(null);
+  const weeks = useMemo(() => buildGrid(days), [days]);
+  const gridWidth = weeks.length * SPACING;
+
+  const handleHover = (day: ConsistencyDay | null, screen: { x: number; y: number } | null) => {
+    if (day && screen && wrapRef.current) {
+      const rect = wrapRef.current.getBoundingClientRect();
+      setHover({
+        day,
+        left: Math.min(Math.max(screen.x - rect.left + 14, 4), rect.width - 230),
+        top: Math.max(screen.y - rect.top - 90, 4),
+      });
+    } else {
+      setHover(null);
+    }
+  };
+
+  return (
+    <div className="a02-terrain-3d-wrap" ref={wrapRef}>
+      <Canvas dpr={[1, 1.5]} gl={{ antialias: true }}>
+        <IsometricCamera gridWidth={gridWidth} />
+        <Scene weeks={weeks} onHover={handleHover} />
+      </Canvas>
+      {hover && (
+        <div className="a02-terrain-tooltip" style={{ left: hover.left, top: hover.top, position: "absolute" }}>
+          <b>{hover.day.date}</b>
+          <div className="a02-terrain-tooltip-row"><span>Effort</span><b>{hover.day.effort_score}</b></div>
+          {hover.day.focus_percentage != null && (
+            <div className="a02-terrain-tooltip-row"><span>Focus</span><b>{hover.day.focus_percentage}%</b></div>
+          )}
+          {hover.day.execute_percentage != null && (
+            <div className="a02-terrain-tooltip-row"><span>Execute</span><b>{hover.day.execute_percentage}%</b></div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}

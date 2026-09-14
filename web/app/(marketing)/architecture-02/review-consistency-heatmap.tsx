@@ -5,6 +5,7 @@ import { useMemo, useState } from "react";
 import type { ConsistencyDay } from "@/lib/review/types";
 
 import type { UseConsistencyResult } from "./use-consistency";
+import { ReviewEffortTerrain3D } from "./review-effort-terrain-3d";
 
 // "CONSISTENCY — LAST 365 DAYS" from the reference mock: a real GitHub-style
 // calendar grid (columns = weeks, rows = Mon..Sun), colored by
@@ -12,10 +13,10 @@ import type { UseConsistencyResult } from "./use-consistency";
 // -- never raw minutes. level:null (no active plan that day) renders as the
 // existing hatched pattern, distinct from a real level:0.
 //
-// "Terrain" is a secondary, simplified view of the SAME per-day data (a
-// stylized CSS skyline, not a real 3D/WebGL render -- adding a 3D library is
-// a dependency decision this file doesn't make unilaterally). Heatmap stays
-// the default view.
+// "Terrain" is a secondary view of the SAME per-day data as a real 3D grid
+// (react-three-fiber -- see review-effort-terrain-3d.tsx), ported from the
+// /architecture-02/review-demo reference route once the R3F/drei dependency
+// was already in package.json. Heatmap stays the default view.
 
 const WEEKDAY_LABELS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 const MONTH_LABELS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
@@ -122,7 +123,7 @@ export function ReviewConsistencyHeatmap({ consistency, state, reload }: UseCons
           </div>
         </div>
       ) : (
-        <ReviewEffortTerrain days={days} />
+        <ReviewEffortTerrain3D days={days} />
       )}
 
       <div className="a02-consistency-stats">
@@ -137,35 +138,4 @@ export function ReviewConsistencyHeatmap({ consistency, state, reload }: UseCons
 function monthOfWeek(week: (ConsistencyDay | null)[]): number | null {
   const firstReal = week.find((d) => d !== null);
   return firstReal ? new Date(`${firstReal.date}T00:00:00Z`).getUTCMonth() : null;
-}
-
-/**
- * A stylized CSS "skyline" over the same per-day effort scores -- not a real
- * 3D/WebGL render. Bar height = effort_score, color ramps with level, a
- * subtle skew approximates depth without a new rendering dependency.
- */
-function ReviewEffortTerrain({ days }: { days: ConsistencyDay[] }) {
-  const [hovered, setHovered] = useState<ConsistencyDay | null>(null);
-  return (
-    <div className="a02-terrain" onMouseLeave={() => setHovered(null)}>
-      <div className="a02-terrain-bars">
-        {days.map((d) => (
-          <i
-            key={d.date}
-            className={d.level === null ? "level-none" : `level-${d.level}`}
-            style={{ height: `${Math.max(3, d.effort_score ?? 0)}%` }}
-            onMouseEnter={() => setHovered(d)}
-          />
-        ))}
-      </div>
-      {hovered && (
-        <div className="a02-terrain-tooltip">
-          <b>{hovered.date}</b>
-          <span>Effort {hovered.level === null ? "—" : hovered.effort_score}</span>
-          {hovered.focus_percentage != null && <span>Focus {hovered.focus_percentage}%</span>}
-          {hovered.execute_percentage != null && <span>Execute {hovered.execute_percentage}%</span>}
-        </div>
-      )}
-    </div>
-  );
 }
