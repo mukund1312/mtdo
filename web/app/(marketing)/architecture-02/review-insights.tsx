@@ -56,7 +56,7 @@ export function ReviewInsights({ profile, state }: UseStudyProfileResult) {
       ) : (
         <ul className="a02-insight-list">
           {insights.map((insight) => (
-            <li key={insight.type}>
+            <li key={insight.type} className={insight.earlySignal ? "is-early-signal" : undefined}>
               <i className={`a02-insight-glyph ${SEVERITY_GLYPH[insight.severity] ?? ""}`} aria-hidden="true">✦</i>
               <span>{insight.text}</span>
             </li>

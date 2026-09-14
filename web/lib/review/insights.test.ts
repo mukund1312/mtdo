@@ -64,6 +64,20 @@ describe("buildReviewInsights — planning_overcommitment", () => {
     const p = baseProfile({ planning: { metric_version: "study_profile_v1", avg_completion_rate: 0.1, avg_pace_ratio: null, weeks_sampled: 1, confidence: "insufficient_data" } });
     expect(buildReviewInsights(p).some((i) => i.type === "planning_overcommitment")).toBe(false);
   });
+
+  it("uses early-signal wording and sets earlySignal at 'low' confidence", () => {
+    const p = baseProfile({ planning: { metric_version: "study_profile_v1", avg_completion_rate: 0.33, avg_pace_ratio: null, weeks_sampled: 2, confidence: "low" } });
+    const insight = buildReviewInsights(p).find((i) => i.type === "planning_overcommitment");
+    expect(insight?.earlySignal).toBe(true);
+    expect(insight?.text).toContain("Early signal");
+  });
+
+  it("uses confident wording and leaves earlySignal unset at 'medium'/'high' confidence", () => {
+    const p = baseProfile({ planning: { metric_version: "study_profile_v1", avg_completion_rate: 0.33, avg_pace_ratio: null, weeks_sampled: 10, confidence: "high" } });
+    const insight = buildReviewInsights(p).find((i) => i.type === "planning_overcommitment");
+    expect(insight?.earlySignal).toBeFalsy();
+    expect(insight?.text).not.toContain("Early signal");
+  });
 });
 
 describe("buildReviewInsights — subject_avoidance", () => {
@@ -93,6 +107,13 @@ describe("buildReviewInsights — subject_avoidance", () => {
     expect(insight?.text).toContain("DSA");
     expect(insight?.text).toContain("40%");
   });
+
+  it("uses tentative wording and sets earlySignal at 'low' confidence", () => {
+    const p = baseProfile({ most_avoided_subject: avoided({ postponement_rate: 0.4, confidence: "low" }) });
+    const insight = buildReviewInsights(p).find((i) => i.type === "subject_avoidance");
+    expect(insight?.earlySignal).toBe(true);
+    expect(insight?.text).toContain("too little data");
+  });
 });
 
 describe("buildReviewInsights — strong_subject", () => {
@@ -109,6 +130,13 @@ describe("buildReviewInsights — strong_subject", () => {
   it("does NOT fire when strongest_subject is null", () => {
     const p = baseProfile({ strongest_subject: null });
     expect(buildReviewInsights(p).some((i) => i.type === "strong_subject")).toBe(false);
+  });
+
+  it("uses tentative wording and sets earlySignal at 'low' confidence", () => {
+    const p = baseProfile({ strongest_subject: subject({ completion_rate: 0.9, confidence: "low" }) });
+    const insight = buildReviewInsights(p).find((i) => i.type === "strong_subject");
+    expect(insight?.earlySignal).toBe(true);
+    expect(insight?.text).toContain("Early pattern");
   });
 });
 
