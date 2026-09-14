@@ -14,6 +14,7 @@ import { ReviewPlanVsReality } from "./review-plan-vs-reality";
 import { ReviewGoalBalance } from "./review-goal-balance";
 import { ReviewStudyProfile } from "./review-study-profile";
 import { ProgressDeck } from "./progress-deck";
+import { WeeklyReviewPanel } from "./weekly-review";
 
 import { useDailySummary } from "./use-daily-summary";
 import { useMomentum } from "./use-momentum";
@@ -38,6 +39,7 @@ function todayLabel(): string {
 
 export function ReviewDeck() {
   const [range, setRange] = useState<ReviewRange>("today");
+  const [sideNav, setSideNav] = useState("Overview");
 
   // Every fetch lives here, once, shared by whichever cards read it -- never
   // one RPC call per card. See each use-*.ts hook's own header for which
@@ -58,7 +60,7 @@ export function ReviewDeck() {
 
   return (
     <div className="a02-review-layout">
-      <ReviewSideNav />
+      <ReviewSideNav active={sideNav} onSelect={setSideNav} />
       <div className="a02-review-main">
         <section className="a02-review-shell" aria-labelledby="review-title">
           <header className="a02-view-head a02-review-head">
@@ -96,7 +98,13 @@ export function ReviewDeck() {
           <ReviewQuote />
         </section>
 
-        {range === "today" ? (
+        {sideNav === "Deep Dive" ? (
+          // Deep Dive: the Study Profile, moved out of the Today flow per
+          // the audit -- it's a standing behavioral profile, not a "what
+          // happened today" observation, so it doesn't belong stacked under
+          // the Today dashboard's 11 core blocks.
+          <ReviewStudyProfile {...studyProfile} />
+        ) : range === "today" ? (
           <>
             <ReviewRings daily={daily} momentum={momentum} />
 
@@ -113,23 +121,17 @@ export function ReviewDeck() {
               <ReviewPlanVsReality {...weekly} />
               <ReviewGoalBalance {...weekly} />
             </div>
-
-            <ReviewStudyProfile {...studyProfile} />
-
-            {/* Not in the reference mock's screenshot, but ProgressDeck is
-                the ONLY place in the app that renders (a) the six-week
-                consistency heatmap + Record Card export dialog (real,
-                tested functionality -- e2e/onboarding.spec.ts's "Review
-                shows an honest empty heatmap and view-only Record Card")
-                and (b) the weekly engine's accept/reject proposal UI, which
-                it mounts internally (WeeklyReviewPanel). Kept mounted below
-                the fold rather than silently cutting off reachability to
-                real, working functionality -- flagged to the user directly,
-                not buried. Do not also import WeeklyReviewPanel directly
-                here -- ProgressDeck already renders it, and a second mount
-                would duplicate it on the page. */}
-            <ProgressDeck />
           </>
+        ) : range === "week" ? (
+          // Week: the weekly engine's real numbers and accept/reject
+          // proposal review -- previously mounted unconditionally under
+          // Today via ProgressDeck; now lives where it's actually scoped.
+          <WeeklyReviewPanel />
+        ) : range === "6weeks" ? (
+          // 6 Weeks: the 42-day consistency pulse + Record Card export --
+          // previously mounted unconditionally under Today; same component,
+          // now only rendered when this scope is actually selected.
+          <ProgressDeck />
         ) : (
           <section className="a02-review a02-review-coming-soon" aria-live="polite">
             <div className="a02-product-state">

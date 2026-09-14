@@ -119,10 +119,13 @@ async function closeWalkthroughIfPresent(page: Page) {
 
 async function openReviewDeck(page: Page) {
   await openSignalDeckDestination(page, "Review");
-  // The 6-week pulse's own outer section, always rendered regardless of
-  // whether the weekly-engine panel below it has a route to show yet --
-  // the panel's own testid only exists in its "ready, has a route" branch.
-  await expect(page.locator("section.a02-review")).toBeVisible();
+  // Weekly review moved from being unconditionally mounted under Today to
+  // living under the "Week" range tab (2026-09-14 Review-page restructure:
+  // Study Profile -> Deep Dive, Six-Week Pulse -> 6 Weeks, Weekly Review ->
+  // Week -- see review-deck.tsx). WeeklyReviewPanel's own root class is
+  // stable across all its states (loading/no_active_plan/ready).
+  await page.getByRole("button", { name: "Week", exact: true }).click();
+  await expect(page.locator("section.a02-weekly-review")).toBeVisible();
 }
 
 test.describe.serial("Review deck -- weekly engine review, honest states and seeded thresholds", () => {

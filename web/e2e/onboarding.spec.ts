@@ -122,6 +122,10 @@ test("Review shows an honest empty heatmap and view-only Record Card", async () 
   await openSignalDeckDestination(page, "Review");
 
   await expect(page.getByRole("heading", { name: /make effort legible/i })).toBeVisible();
+  // ProgressDeck (six-week heatmap + Record Card) moved from being
+  // unconditionally mounted under Today to living under the "6 Weeks" range
+  // tab (2026-09-14 Review-page restructure -- see review-deck.tsx).
+  await page.getByRole("button", { name: "6 Weeks", exact: true }).click();
   // Renamed with the Consistency heatmap's move to review_consistency()'s
   // Effort Score (Phase B/F3) -- this session has no active plan yet, so
   // every cell reads level=null (hatched), not a real level=0.

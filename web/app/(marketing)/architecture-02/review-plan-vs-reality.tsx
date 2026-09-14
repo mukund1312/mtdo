@@ -46,7 +46,13 @@ export function ReviewPlanVsReality({ weekly, state, reload }: UseWeeklySnapshot
   // plan-level mirror of that, expressed as "how close actual landed to
   // planned", capped at 100 (running longer than planned is not "more
   // accurate" than running exactly on time).
-  const accuracy = planned > 0 ? Math.min(100, Math.round((1 - Math.abs(actual - planned) / planned) * 100)) : null;
+  //
+  // Audit finding: this used to compute a real (often 0%) accuracy the
+  // instant planned > 0, even with actual still 0 because the in-progress
+  // week simply hasn't happened yet -- indistinguishable from a real
+  // execution failure. Accuracy stays unknown until there's at least some
+  // real execution to compare against.
+  const accuracy = planned > 0 && actual > 0 ? Math.min(100, Math.round((1 - Math.abs(actual - planned) / planned) * 100)) : null;
 
   return (
     <section className="a02-plan-vs-reality" aria-label="Plan vs reality">
