@@ -60,12 +60,18 @@ export function ReviewGoalBalance({ weekly, state, reload }: UseWeeklySnapshotRe
   }
   const totalTarget = categories.reduce((n, c) => n + c.current_target, 0);
   const totalActual = categories.reduce((n, c) => n + actualValue(c, mode), 0);
+  // No observations at all this week for ANY category -- the comparison
+  // period hasn't produced anything to compare yet, so "actual" and "delta"
+  // are unknown, not a real 0%/-N% (audit finding: this previously showed
+  // every category at a confident negative delta before the user had done
+  // anything this week).
+  const hasActual = totalActual > 0;
 
   const rows = categories
     .map((c) => ({
       c,
       plannedPct: totalTarget > 0 ? (c.current_target / totalTarget) * 100 : 0,
-      actualPct: totalActual > 0 ? (actualValue(c, mode) / totalActual) * 100 : 0,
+      actualPct: hasActual ? (actualValue(c, mode) / totalActual) * 100 : 0,
     }))
     .sort((a, b) => b.actualPct - a.actualPct);
 
@@ -83,8 +89,8 @@ export function ReviewGoalBalance({ weekly, state, reload }: UseWeeklySnapshotRe
         {rows.map(({ c, actualPct }, i) => (
           <div className="a02-goal-balance-row" key={c.category_id}>
             <span>{c.label}</span>
-            <i style={{ width: loading ? "20%" : `${Math.max(2, actualPct)}%`, background: `var(${SUBJECT_COLORS[i % SUBJECT_COLORS.length]})` }} />
-            <b>{loading ? "" : `${Math.round(actualPct)}%`}</b>
+            <i style={{ width: loading ? "20%" : hasActual ? `${Math.max(2, actualPct)}%` : "0%", background: `var(${SUBJECT_COLORS[i % SUBJECT_COLORS.length]})` }} />
+            <b>{loading ? "" : hasActual ? `${Math.round(actualPct)}%` : "—"}</b>
           </div>
         ))}
       </div>
@@ -100,9 +106,9 @@ export function ReviewGoalBalance({ weekly, state, reload }: UseWeeklySnapshotRe
               <tr key={c.category_id}>
                 <td>{c.label}</td>
                 <td>{Math.round(plannedPct)}%</td>
-                <td>{Math.round(actualPct)}%</td>
-                <td className={delta > 0 ? "is-positive" : delta < 0 ? "is-negative" : undefined}>
-                  {delta > 0 ? `+${delta}%` : `${delta}%`}
+                <td>{hasActual ? `${Math.round(actualPct)}%` : "—"}</td>
+                <td className={!hasActual ? undefined : delta > 0 ? "is-positive" : delta < 0 ? "is-negative" : undefined}>
+                  {!hasActual ? "—" : delta > 0 ? `+${delta}%` : `${delta}%`}
                 </td>
               </tr>
             );
