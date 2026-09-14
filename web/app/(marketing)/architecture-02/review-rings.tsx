@@ -17,10 +17,10 @@ import type { UseMomentumResult } from "./use-momentum";
 
 type RingKind = "focus" | "execute" | "progress";
 
-const RING_META: Record<RingKind, { label: string; subtitle: string; empty: string }> = {
-  focus: { label: "FOCUS", subtitle: "Deep work time", empty: "No target set yet" },
-  execute: { label: "EXECUTE", subtitle: "Tasks completed", empty: "Nothing planned today" },
-  progress: { label: "PROGRESS", subtitle: "Goal advancement", empty: "No category picked this week" },
+const RING_META: Record<RingKind, { label: string; subtitle: string; empty: string; emptySubtitle: string }> = {
+  focus: { label: "FOCUS", subtitle: "Deep work time", empty: "0 / 120 min", emptySubtitle: "Start your first session" },
+  execute: { label: "EXECUTE", subtitle: "Tasks completed", empty: "No tasks yet", emptySubtitle: "Add a task to begin" },
+  progress: { label: "PROGRESS", subtitle: "Goal advancement", empty: "0 / 100 xp", emptySubtitle: "Progress appears here" },
 };
 
 const RING_COLOR: Record<RingKind, string> = {
@@ -57,6 +57,11 @@ export function ReviewRings({
   }
 
   const ok = state === "ready" && summary?.status === "ok" ? summary : null;
+  // A fresh route with zero tasks picked today is a real, honest "no tasks"
+  // -- distinct from percentage:0 (tasks picked but none done yet), which
+  // still renders as a real 0% ring per the no-fabrication rule elsewhere
+  // in this file.
+  const noTasksToday = ok != null && ok.execute.tasks_picked === 0;
 
   return (
     <section className="a02-review-rings" aria-label="Today&apos;s rings">
@@ -65,6 +70,7 @@ export function ReviewRings({
         loading={state === "loading"}
         percentage={ok?.focus.percentage ?? null}
         value={ok ? `${ok.focus.focus_minutes} / ${ok.focus.target_minutes ?? "—"} min` : undefined}
+        subtitleOverride={ok && ok.focus.session_count === 0 ? RING_META.focus.emptySubtitle : undefined}
         detail={
           ok
             ? [
@@ -78,16 +84,18 @@ export function ReviewRings({
       <Ring
         kind="execute"
         loading={state === "loading"}
-        percentage={ok?.execute.percentage ?? null}
-        value={ok ? `${ok.execute.tasks_done} / ${ok.execute.tasks_picked} tasks` : undefined}
-        detail={ok ? [`score ${ok.execute.score} / ${ok.execute.score_max}`] : []}
+        percentage={noTasksToday ? null : (ok?.execute.percentage ?? null)}
+        value={ok ? (noTasksToday ? "No tasks yet" : `${ok.execute.tasks_done} / ${ok.execute.tasks_picked} tasks`) : undefined}
+        subtitleOverride={noTasksToday ? RING_META.execute.emptySubtitle : undefined}
+        detail={ok && !noTasksToday ? [`score ${ok.execute.score} / ${ok.execute.score_max}`] : []}
       />
       <Ring
         kind="progress"
         loading={state === "loading"}
         percentage={ok?.progress.percentage ?? null}
         value={ok ? `${ok.progress.week_score} / ${ok.progress.week_score_max} pts` : undefined}
-        detail={ok ? [`this week's goal so far`] : []}
+        subtitleOverride={ok && ok.progress.week_score_max === 0 ? RING_META.progress.emptySubtitle : undefined}
+        detail={ok && ok.progress.week_score_max > 0 ? [`this week's goal so far`] : []}
       />
       <DailyScore momentum={momentum} />
     </section>
@@ -98,7 +106,11 @@ function DailyScore({ momentum }: { momentum: UseMomentumResult }) {
   const { momentum: m, state } = momentum;
   const loading = state === "loading";
   const ok = state === "ready" && m?.status === "ok" ? m : null;
-  const score = ok?.momentum_score ?? null;
+  // A real 0 momentum score with zero active days ever recorded reads as
+  // "no score yet" rather than a poor score -- distinct from a real 0 on
+  // an account with some history but a currently-cold streak.
+  const isFreshAccount = ok != null && ok.momentum_score === 0 && ok.active_days_rate === 0;
+  const score = ok != null && !isFreshAccount ? ok.momentum_score : null;
   const circumference = 2 * Math.PI * 50;
   const offset = loading || score == null ? circumference : circumference * (1 - Math.min(100, score) / 100);
 
@@ -130,8 +142,11 @@ function DailyScore({ momentum }: { momentum: UseMomentumResult }) {
         <span>/ 100</span>
       </div>
       <div className="a02-daily-score-copy">
-        <b>{loading ? "" : label ?? "Not enough data yet"}</b>
-        {ok && (
+        <b>{loading ? "" : label ?? "No score yet"}</b>
+        {!loading && (isFreshAccount || !ok) && (
+          <p>Your daily score appears after your first study session.</p>
+        )}
+        {ok && !isFreshAccount && (
           <p>
             {ok.current_streak} day{ok.current_streak === 1 ? "" : "s"} current streak ·{" "}
             {Math.round(ok.active_days_rate * 100)}% active over the last {ok.window_days} days.
@@ -148,12 +163,14 @@ function Ring({
   value,
   detail,
   loading,
+  subtitleOverride,
 }: {
   kind: RingKind;
   percentage: number | null;
   value?: string;
   detail: string[];
   loading: boolean;
+  subtitleOverride?: string;
 }) {
   const meta = RING_META[kind];
   const radius = 50;
@@ -182,7 +199,7 @@ function Ring({
         <span className="a02-ring-value">{loading ? "" : value ?? meta.empty}</span>
       </div>
       <span className="a02-ring-label">{meta.label}</span>
-      <span className="a02-ring-subtitle">{meta.subtitle}</span>
+      <span className="a02-ring-subtitle">{subtitleOverride ?? meta.subtitle}</span>
       {!loading && detail.length > 0 && (
         <div className="a02-ring-tooltip" role="tooltip">
           {detail.map((line) => (

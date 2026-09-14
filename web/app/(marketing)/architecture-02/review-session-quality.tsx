@@ -53,7 +53,7 @@ export function ReviewSessionQuality({ patterns, state, reload }: UseTimePattern
           ? "Reading your sessions."
           : patterns?.best_duration_bucket
             ? `Your strongest sessions are around ${DURATION_LABELS[patterns.best_duration_bucket.bucket] ?? patterns.best_duration_bucket.bucket}.`
-            : "Not enough sessions yet to identify a sweet spot."}
+            : "Complete a few sessions to understand your ideal session length."}
       </p>
     </section>
   );

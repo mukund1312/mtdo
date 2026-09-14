@@ -3,8 +3,11 @@
 import { useMemo, useRef, useState } from "react";
 import { Canvas, useThree } from "@react-three/fiber";
 import { OrthographicCamera } from "@react-three/drei";
+import * as THREE from "three";
 
 import type { ConsistencyDay } from "@/lib/review/types";
+
+const MONTH_NAMES = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
 // Real 3D "Effort Terrain" for the Review page -- a GitHub-contribution-
 // style 52-week x 7-weekday grid extruded by review_consistency()'s
@@ -62,10 +65,11 @@ function tierForScore(score: number): { color: string; emissive: number } {
 interface BlockProps {
   cell: GridCell;
   selected: boolean;
+  isToday: boolean;
   onHover: (day: ConsistencyDay | null, screen: { x: number; y: number } | null) => void;
 }
 
-function Block({ cell, selected, onHover }: BlockProps) {
+function Block({ cell, selected, isToday, onHover }: BlockProps) {
   const [hovered, setHovered] = useState(false);
   const x = cell.week * SPACING;
   const z = cell.weekday * SPACING;
@@ -74,15 +78,46 @@ function Block({ cell, selected, onHover }: BlockProps) {
   const score = hasScore ? day!.effort_score! : 0;
   const height = effortToHeight(score);
   const { color, emissive } = tierForScore(score);
+  const hasTower = hasScore && score > 0;
 
   return (
     <group position={[x, 0, z]}>
-      <mesh position={[0, 0.02, 0]}>
+      <mesh
+        position={[0, 0.02, 0]}
+        onPointerOver={(e) => {
+          if (hasTower || !day) return;
+          e.stopPropagation();
+          setHovered(true);
+          onHover(day, { x: (e.nativeEvent as PointerEvent).clientX, y: (e.nativeEvent as PointerEvent).clientY });
+        }}
+        onPointerOut={(e) => {
+          if (hasTower || !day) return;
+          e.stopPropagation();
+          setHovered(false);
+          onHover(null, null);
+        }}
+      >
         <boxGeometry args={[CELL_SIZE, 0.04, CELL_SIZE]} />
-        <meshStandardMaterial color="#0c1426" roughness={0.9} metalness={0} />
+        <meshStandardMaterial
+          color="#0c1426"
+          emissive={isToday ? "#d7ff52" : "#000000"}
+          emissiveIntensity={isToday ? (hovered ? 0.5 : 0.28) : 0}
+          roughness={0.9}
+          metalness={0}
+        />
       </mesh>
 
-      {hasScore && score > 0 && (
+      {/* Today's tile always gets a lime outline -- a base grid cell with
+          no tower yet still needs to be findable as "this is where you
+          are", per the empty-terrain spec (never a fabricated tower). */}
+      {isToday && (
+        <lineSegments position={[0, 0.045, 0]}>
+          <edgesGeometry args={[new THREE.BoxGeometry(CELL_SIZE, 0.001, CELL_SIZE)]} />
+          <lineBasicMaterial color="#d7ff52" />
+        </lineSegments>
+      )}
+
+      {hasTower && (
         <mesh
           position={[0, height / 2 + 0.04, 0]}
           scale={[1, hovered ? 1.04 : 1, 1]}
@@ -114,16 +149,26 @@ function Block({ cell, selected, onHover }: BlockProps) {
           <meshStandardMaterial color="#9c7cff" emissive="#9c7cff" emissiveIntensity={1.1} />
         </mesh>
       )}
+
+      {/* Today gets its own small purple marker even with no tower yet --
+          "you are here", not "you have effort here" (that's the sphere
+          above, reserved for the real peak day). */}
+      {isToday && !selected && (
+        <mesh position={[0, height + 0.18, 0]}>
+          <sphereGeometry args={[0.06, 12, 12]} />
+          <meshStandardMaterial color="#9c7cff" emissive="#9c7cff" emissiveIntensity={0.9} />
+        </mesh>
+      )}
     </group>
   );
 }
 
-function Scene({ weeks, onHover }: { weeks: GridCell[][]; onHover: BlockProps["onHover"] }) {
+function Scene({ weeks, todayDate, onHover }: { weeks: GridCell[][]; todayDate: string | null; onHover: BlockProps["onHover"] }) {
   const peakDate = useMemo(() => {
     let best: ConsistencyDay | null = null;
     for (const week of weeks) {
       for (const cell of week) {
-        if (cell.day && cell.day.effort_score !== null && (!best || cell.day.effort_score > (best.effort_score ?? -1))) {
+        if (cell.day && cell.day.effort_score !== null && cell.day.effort_score > 0 && (!best || cell.day.effort_score > (best.effort_score ?? -1))) {
           best = cell.day;
         }
       }
@@ -142,7 +187,13 @@ function Scene({ weeks, onHover }: { weeks: GridCell[][]; onHover: BlockProps["o
       <group position={[-gridWidth / 2, 0, -gridDepth / 2]}>
         {weeks.map((week) =>
           week.map((cell) => (
-            <Block key={`${cell.week}-${cell.weekday}`} cell={cell} selected={cell.day?.date === peakDate} onHover={onHover} />
+            <Block
+              key={`${cell.week}-${cell.weekday}`}
+              cell={cell}
+              selected={cell.day?.date === peakDate}
+              isToday={cell.day?.date === todayDate}
+              onHover={onHover}
+            />
           )),
         )}
       </group>
@@ -169,6 +220,22 @@ export function ReviewEffortTerrain3D({ days }: { days: ConsistencyDay[] }) {
   const wrapRef = useRef<HTMLDivElement>(null);
   const weeks = useMemo(() => buildGrid(days), [days]);
   const gridWidth = weeks.length * SPACING;
+  const todayDate = days.at(-1)?.date ?? null;
+
+  const monthLabels = useMemo(() => {
+    const labels: Array<{ name: string; weekIndex: number }> = [];
+    let prevMonth: number | null = null;
+    weeks.forEach((week, wi) => {
+      const firstReal = week.find((c) => c.day !== null)?.day;
+      if (!firstReal) return;
+      const month = new Date(`${firstReal.date}T00:00:00Z`).getUTCMonth();
+      if (month !== prevMonth) {
+        labels.push({ name: MONTH_NAMES[month]!, weekIndex: wi });
+        prevMonth = month;
+      }
+    });
+    return labels;
+  }, [weeks]);
 
   const handleHover = (day: ConsistencyDay | null, screen: { x: number; y: number } | null) => {
     if (day && screen && wrapRef.current) {
@@ -183,24 +250,49 @@ export function ReviewEffortTerrain3D({ days }: { days: ConsistencyDay[] }) {
     }
   };
 
+  const isToday = hover?.day.date === todayDate;
+  const hasEffort = hover != null && hover.day.effort_score !== null && hover.day.effort_score > 0;
+
   return (
-    <div className="a02-terrain-3d-wrap" ref={wrapRef}>
-      <Canvas dpr={[1, 1.5]} gl={{ antialias: true }}>
-        <IsometricCamera gridWidth={gridWidth} />
-        <Scene weeks={weeks} onHover={handleHover} />
-      </Canvas>
-      {hover && (
-        <div className="a02-terrain-tooltip" style={{ left: hover.left, top: hover.top, position: "absolute" }}>
-          <b>{hover.day.date}</b>
-          <div className="a02-terrain-tooltip-row"><span>Effort</span><b>{hover.day.effort_score}</b></div>
-          {hover.day.focus_percentage != null && (
-            <div className="a02-terrain-tooltip-row"><span>Focus</span><b>{hover.day.focus_percentage}%</b></div>
-          )}
-          {hover.day.execute_percentage != null && (
-            <div className="a02-terrain-tooltip-row"><span>Execute</span><b>{hover.day.execute_percentage}%</b></div>
-          )}
-        </div>
-      )}
+    <div>
+      <div className="a02-terrain-3d-wrap" ref={wrapRef}>
+        <Canvas dpr={[1, 1.5]} gl={{ antialias: true }}>
+          <IsometricCamera gridWidth={gridWidth} />
+          <Scene weeks={weeks} todayDate={todayDate} onHover={handleHover} />
+        </Canvas>
+        {hover && (
+          <div className="a02-terrain-tooltip" style={{ left: hover.left, top: hover.top, position: "absolute" }}>
+            {isToday && !hasEffort ? (
+              <>
+                <b>Today</b>
+                <p>No effort recorded yet. Start your first session to grow your terrain.</p>
+              </>
+            ) : hasEffort ? (
+              <>
+                <b>{hover.day.date}</b>
+                <div className="a02-terrain-tooltip-row"><span>Effort</span><b>{hover.day.effort_score}</b></div>
+                {hover.day.focus_percentage != null && (
+                  <div className="a02-terrain-tooltip-row"><span>Focus</span><b>{hover.day.focus_percentage}%</b></div>
+                )}
+                {hover.day.execute_percentage != null && (
+                  <div className="a02-terrain-tooltip-row"><span>Execute</span><b>{hover.day.execute_percentage}%</b></div>
+                )}
+              </>
+            ) : (
+              <>
+                <b>{hover.day.date}</b>
+                <p>No activity</p>
+              </>
+            )}
+          </div>
+        )}
+      </div>
+      <div className="a02-terrain-3d-months">
+        {monthLabels.map(({ name, weekIndex }) => (
+          <span key={`${name}-${weekIndex}`} style={{ left: `${(weekIndex / weeks.length) * 100}%` }}>{name}</span>
+        ))}
+      </div>
+      <p className="a02-terrain-3d-annotation">Every focused day adds to your terrain.</p>
     </div>
   );
 }

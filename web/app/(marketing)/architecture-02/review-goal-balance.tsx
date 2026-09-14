@@ -32,7 +32,7 @@ export function ReviewGoalBalance({ weekly, state, reload }: UseWeeklySnapshotRe
     );
   }
 
-  if (state === "no_active_plan" || (state === "ready" && !weekly)) {
+  if (state === "no_active_plan") {
     return (
       <section className="a02-goal-balance-empty" aria-live="polite">
         <header><b>GOAL / SUBJECT BALANCE</b></header>
@@ -43,6 +43,21 @@ export function ReviewGoalBalance({ weekly, state, reload }: UseWeeklySnapshotRe
 
   const loading = state === "loading";
   const categories = weekly?.categories ?? [];
+
+  // A route exists but this week has no tracked categories yet -- distinct
+  // from "no route at all" above. No categories to show planned/actual
+  // splits for, so this points at the real place to add them rather than
+  // fabricating a category list.
+  if (!loading && categories.length === 0) {
+    return (
+      <section className="a02-goal-balance-empty" aria-live="polite">
+        <header><b>GOAL / SUBJECT BALANCE</b></header>
+        <p>No subjects yet.</p>
+        <p>Add goals to track where your study time goes.</p>
+        <a className="a02-goal-balance-cta" href="/architecture-02?deck=goals">Set up goals →</a>
+      </section>
+    );
+  }
   const totalTarget = categories.reduce((n, c) => n + c.current_target, 0);
   const totalActual = categories.reduce((n, c) => n + actualValue(c, mode), 0);
 
