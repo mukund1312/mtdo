@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 
 import { createClient } from "@/lib/supabase/client";
 import { asReviewDailySummary, type ReviewDailySummary } from "@/lib/review/types";
+import { buildReviewFixture, getDevReviewStateOverride } from "@/lib/review/dev-fixtures";
 
 // Shared by ReviewRings and ReviewTodaySignal -- both read the same
 // review_daily_summary() result, so the fetch lives here once, in their
@@ -22,6 +23,12 @@ export function useDailySummary(): UseDailySummaryResult {
 
   const load = useCallback(async () => {
     setState("loading");
+    const devState = getDevReviewStateOverride();
+    if (devState) {
+      setSummary(buildReviewFixture(devState).dailySummary);
+      setState("ready");
+      return;
+    }
     const supabase = createClient();
     const { data, error } = await supabase.rpc("review_daily_summary", {});
     if (error) {
