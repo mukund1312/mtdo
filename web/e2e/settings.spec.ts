@@ -107,7 +107,8 @@ test("Appearance keeps the theme and Dock style as independent persisted prefere
 // (previously dead, no onClick) now actually navigates there.
 test("Settings launcher opens Settings, which shows real AI provider status", async () => {
   await page.goto("/architecture-02");
-  await page.getByRole("button", { name: /close walkthrough/i }).click();
+  const walkthroughClose = page.getByRole("button", { name: /close walkthrough/i });
+  if (await walkthroughClose.isVisible().catch(() => false)) await walkthroughClose.click();
 
   await openSignalDeckDestination(page, "Settings");
   await expect(page).toHaveURL(/\/architecture-02\/settings$/);

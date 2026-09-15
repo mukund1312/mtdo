@@ -40,6 +40,10 @@ export interface Insight {
     | "consistency_dip";
   severity: InsightSeverity;
   text: string;
+  /** True when the underlying field cleared study_profile()'s "low" tier
+   *  but not "medium"/"high" -- an early, real signal worth naming as
+   *  tentative rather than staying silent until it's fully confident. */
+  earlySignal?: boolean;
   /** The exact fields the insight was built from -- an audit trail, not for display. */
   evidence: Record<string, unknown>;
 }
@@ -62,10 +66,18 @@ export function buildReviewInsights(profile: StudyProfile): Insight[] {
     p.planning.avg_completion_rate !== null &&
     p.planning.avg_completion_rate < PLANNING_OVERCOMMIT_MAX
   ) {
+    const early = p.planning.confidence === "low";
     insights.push({
       type: "planning_overcommitment",
       severity: "notice",
-      text: `You completed ${Math.round(p.planning.avg_completion_rate * 100)}% of what you planned over the last ${p.planning.weeks_sampled} weeks.`,
+      earlySignal: early,
+      // "low" confidence (5-9 weeks, study_profile_confidence()'s tier)
+      // gets named as a tentative early read, not the same flat-confidence
+      // phrasing a 20+-week sample earns -- audit finding: a 6-week sample
+      // was previously worded identically to a mature one.
+      text: early
+        ? `Early signal -- you completed ${Math.round(p.planning.avg_completion_rate * 100)}% of what you planned over your first ${p.planning.weeks_sampled} weeks. More weeks are needed before this is a reliable pattern.`
+        : `You completed ${Math.round(p.planning.avg_completion_rate * 100)}% of what you planned over the last ${p.planning.weeks_sampled} weeks.`,
       evidence: {
         avg_completion_rate: p.planning.avg_completion_rate,
         weeks_sampled: p.planning.weeks_sampled,
@@ -80,10 +92,14 @@ export function buildReviewInsights(profile: StudyProfile): Insight[] {
     p.most_avoided_subject.postponement_rate >= AVOIDANCE_NOTICE_MIN
   ) {
     const subject = p.most_avoided_subject;
+    const early = subject.confidence === "low";
     insights.push({
       type: "subject_avoidance",
       severity: "notice",
-      text: `${subject.label} gets postponed more than the rest -- ${Math.round(subject.postponement_rate * 100)}% of the time.`,
+      earlySignal: early,
+      text: early
+        ? `You've postponed ${subject.label} ${Math.round(subject.postponement_rate * 100)}% of the time so far -- too little data yet to call it a pattern.`
+        : `${subject.label} gets postponed more than the rest -- ${Math.round(subject.postponement_rate * 100)}% of the time.`,
       evidence: {
         category_id: subject.category_id,
         postponement_rate: subject.postponement_rate,
@@ -98,10 +114,14 @@ export function buildReviewInsights(profile: StudyProfile): Insight[] {
     p.strongest_subject.completion_rate >= STRONG_SUBJECT_MIN
   ) {
     const subject = p.strongest_subject;
+    const early = subject.confidence === "low";
     insights.push({
       type: "strong_subject",
       severity: "positive",
-      text: `${subject.label} is where you're strongest -- ${Math.round(subject.completion_rate * 100)}% completion.`,
+      earlySignal: early,
+      text: early
+        ? `Early pattern -- ${subject.label} has your best completion rate so far (${Math.round(subject.completion_rate * 100)}%), based on ${subject.sample_size} sessions.`
+        : `${subject.label} is where you're strongest -- ${Math.round(subject.completion_rate * 100)}% completion.`,
       evidence: {
         category_id: subject.category_id,
         completion_rate: subject.completion_rate,

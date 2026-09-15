@@ -7,6 +7,9 @@ import { createClient } from "@/lib/supabase/client";
 import { PlanningModeSelector } from "../planning-mode-selector";
 import { DockStyleChooser } from "../dock-style-chooser";
 import { ThemeChooser } from "../theme-chooser";
+import { RadialMenu } from "../radial-menu";
+import { RadialNavigationWheel } from "../radial-navigation-wheel";
+import { useDockStyle } from "../dock-preference";
 import { isPlanningMode, type PlanningMode } from "../planning-mode";
 import { fetchSpotifyPlaylists, type SpotifyPlaylistSummary } from "../spotify-playlists";
 import { listActiveTopicTypes } from "@/lib/preferences/active-plan-topic-types";
@@ -101,9 +104,14 @@ const CALENDAR_OUTCOMES: Record<string, string> = {
 // report remains read-only: it is a server capability, not a per-user
 // preference.
 export default function SignalDeckSettingsPage() {
+  const router = useRouter();
   const [activeSection, setActiveSection] = useState<SettingsSection>("appearance");
+  const [dockStyle] = useDockStyle();
   const [status, setStatus] = useState<AIStatus | null>(null);
   const [state, setState] = useState<LoadState>("loading");
+  const openDeck = useCallback((deck: "home" | "work" | "goals" | "calendar" | "review" | "listen") => {
+    router.push(`/architecture-02?deck=${deck}`);
+  }, [router]);
 
   const load = useCallback(async () => {
     setState("loading");
@@ -765,6 +773,30 @@ export default function SignalDeckSettingsPage() {
           )}
         </div>
       </div>
+      {dockStyle === "wheel" ? (
+        <RadialNavigationWheel
+          active="settings"
+          onDeck={() => openDeck("home")}
+          onKanban={() => openDeck("work")}
+          onGoals={() => openDeck("goals")}
+          onTime={() => openDeck("calendar")}
+          onReview={() => openDeck("review")}
+          onListen={() => openDeck("listen")}
+          onSettings={() => undefined}
+        />
+      ) : (
+        <RadialMenu
+          active="settings"
+          variant={dockStyle}
+          onDeck={() => openDeck("home")}
+          onKanban={() => openDeck("work")}
+          onGoals={() => openDeck("goals")}
+          onTime={() => openDeck("calendar")}
+          onReview={() => openDeck("review")}
+          onListen={() => openDeck("listen")}
+          onSettings={() => undefined}
+        />
+      )}
     </main>
   );
 }

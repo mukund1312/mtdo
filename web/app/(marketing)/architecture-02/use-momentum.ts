@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 
 import { createClient } from "@/lib/supabase/client";
 import { asReviewMomentum, type ReviewMomentum } from "@/lib/review/types";
+import { buildReviewFixture, getDevReviewStateOverride } from "@/lib/review/dev-fixtures";
 
 // Backs the "DAILY SCORE" card (ReviewRings) -- review_momentum()'s smoothed
 // score (migrations/0029), not a new "daily" formula. Default 42-day window,
@@ -21,6 +22,12 @@ export function useMomentum(): UseMomentumResult {
 
   const load = useCallback(async () => {
     setState("loading");
+    const devState = getDevReviewStateOverride();
+    if (devState) {
+      setMomentum(buildReviewFixture(devState).momentum);
+      setState("ready");
+      return;
+    }
     const supabase = createClient();
     const { data, error } = await supabase.rpc("review_momentum", { p_window_days: 42 });
     if (error) {

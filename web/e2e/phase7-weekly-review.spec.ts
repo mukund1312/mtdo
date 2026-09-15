@@ -119,10 +119,13 @@ async function closeWalkthroughIfPresent(page: Page) {
 
 async function openReviewDeck(page: Page) {
   await openSignalDeckDestination(page, "Review");
-  // The 6-week pulse's own outer section, always rendered regardless of
-  // whether the weekly-engine panel below it has a route to show yet --
-  // the panel's own testid only exists in its "ready, has a route" branch.
-  await expect(page.locator("section.a02-review")).toBeVisible();
+  // Weekly review moved from being unconditionally mounted under Today to
+  // living under the "Week" range tab (2026-09-14 Review-page restructure:
+  // Study Profile -> Deep Dive, Six-Week Pulse -> 6 Weeks, Weekly Review ->
+  // Week -- see review-deck.tsx). WeeklyReviewPanel's own root class is
+  // stable across all its states (loading/no_active_plan/ready).
+  await page.getByRole("button", { name: "Week", exact: true }).click();
+  await expect(page.locator("section.a02-weekly-review")).toBeVisible();
 }
 
 test.describe.serial("Review deck -- weekly engine review, honest states and seeded thresholds", () => {
@@ -162,12 +165,12 @@ test.describe.serial("Review deck -- weekly engine review, honest states and see
     // 0%/empty chart (api.md §3f's existed_before_week rule).
     await expect(page.getByText(/your route is brand new/i)).toBeVisible();
 
-    // Generating a review for a route with no real history must still be a
-    // normal, non-error result: zero changes, categories marked "not enough
-    // data yet" -- never an error and never a fabricated proposal.
-    await page.getByTestId("weekly-review-generate").click();
-    await expect(page.getByTestId("weekly-review-no-changes")).toBeVisible();
-    await expect(page.getByText(/not enough history yet to review/i)).toBeVisible();
+    // A brand-new route is deliberately insufficient for a proposal: the
+    // backend must collect one complete week before it can form a judgment.
+    // Do not expose the old Generate action just to manufacture an empty
+    // proposal -- that would make a missing data basis look like a result.
+    await expect(page.getByTestId("weekly-review-generate")).toHaveCount(0);
+    await expect(page.getByText(/your route needs one full week of activity/i)).toBeVisible();
     await expect(page.locator(".a02-weekly-change-card")).toHaveCount(0);
     await expect(page.locator(".a02-weekly-question-card")).toHaveCount(0);
   });

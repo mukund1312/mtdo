@@ -5,6 +5,7 @@ import { useMemo, useState } from "react";
 import type { ConsistencyDay } from "@/lib/review/types";
 
 import type { UseConsistencyResult } from "./use-consistency";
+import { ReviewEffortTerrain3D } from "./review-effort-terrain-3d";
 
 // "CONSISTENCY — LAST 365 DAYS" from the reference mock: a real GitHub-style
 // calendar grid (columns = weeks, rows = Mon..Sun), colored by
@@ -12,10 +13,10 @@ import type { UseConsistencyResult } from "./use-consistency";
 // -- never raw minutes. level:null (no active plan that day) renders as the
 // existing hatched pattern, distinct from a real level:0.
 //
-// "Terrain" is a secondary, simplified view of the SAME per-day data (a
-// stylized CSS skyline, not a real 3D/WebGL render -- adding a 3D library is
-// a dependency decision this file doesn't make unilaterally). Heatmap stays
-// the default view.
+// "Terrain" is a secondary view of the SAME per-day data as a real 3D grid
+// (react-three-fiber -- see review-effort-terrain-3d.tsx), ported from the
+// /architecture-02/review-demo reference route once the R3F/drei dependency
+// was already in package.json. Heatmap stays the default view.
 
 const WEEKDAY_LABELS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 const MONTH_LABELS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
@@ -63,6 +64,21 @@ export function ReviewConsistencyHeatmap({ consistency, state, reload }: UseCons
     return { longestStreak: longest, currentStreak: current };
   }, [days]);
 
+  // review_consistency()'s window always ends today -- see use-consistency.ts.
+  const todayDate = days.at(-1)?.date ?? null;
+
+  // Client-side only, from the SAME days[] the heatmap already renders --
+  // not a new RPC field. "—" (not a fabricated 0%) when there's no prior
+  // week to compare against yet.
+  const vsLastWeek = useMemo(() => {
+    if (days.length < 14) return null;
+    const countActive = (slice: ConsistencyDay[]) => slice.filter((d) => d.level !== null && d.level > 0).length;
+    const last7 = countActive(days.slice(-7));
+    const prior7 = countActive(days.slice(-14, -7));
+    if (prior7 === 0) return last7 === 0 ? null : 100;
+    return Math.round(((last7 - prior7) / prior7) * 100);
+  }, [days]);
+
   if (state === "error") {
     return (
       <section className="a02-product-state" role="alert">
@@ -98,19 +114,28 @@ export function ReviewConsistencyHeatmap({ consistency, state, reload }: UseCons
             <div className="a02-year-grid-weeks">
               {weeks.map((week, wi) => (
                 <div className="a02-year-grid-week" key={wi}>
-                  {week.map((day, di) =>
-                    day ? (
+                  {week.map((day, di) => {
+                    if (!day) return <i key={di} className="is-empty" aria-hidden="true" />;
+                    const isToday = day.date === todayDate;
+                    const isActive = day.level !== null && day.level > 0;
+                    const levelClass = day.level === null ? "level-none" : `level-${day.level}`;
+                    const title = isToday
+                      ? isActive
+                        ? `${day.date} · effort ${day.effort_score}`
+                        : "Today · Your journey starts here"
+                      : isActive
+                        ? `${day.date} · effort ${day.effort_score}${
+                            day.focus_percentage != null ? ` · focus ${day.focus_percentage}%` : ""
+                          }${day.execute_percentage != null ? ` · execute ${day.execute_percentage}%` : ""}`
+                        : `${day.date} · No activity`;
+                    return (
                       <i
                         key={di}
-                        className={day.level === null ? "level-none" : `level-${day.level}`}
-                        title={`${day.date} · effort ${day.level === null ? "—" : day.effort_score}${
-                          day.focus_percentage != null ? ` · focus ${day.focus_percentage}%` : ""
-                        }${day.execute_percentage != null ? ` · execute ${day.execute_percentage}%` : ""}`}
+                        className={`${levelClass}${isToday ? " is-today" : ""}`}
+                        title={title}
                       />
-                    ) : (
-                      <i key={di} className="is-empty" aria-hidden="true" />
-                    ),
-                  )}
+                    );
+                  })}
                 </div>
               ))}
             </div>
@@ -122,13 +147,14 @@ export function ReviewConsistencyHeatmap({ consistency, state, reload }: UseCons
           </div>
         </div>
       ) : (
-        <ReviewEffortTerrain days={days} />
+        <ReviewEffortTerrain3D days={days} />
       )}
 
       <div className="a02-consistency-stats">
         <div><b>{Math.round(activeDaysRate * 100)}%</b><span>Active days</span></div>
         <div><b>{longestStreak} days</b><span>Longest streak</span></div>
         <div><b>{currentStreak} days</b><span>Current streak</span></div>
+        <div><b>{vsLastWeek === null ? "—" : `${vsLastWeek >= 0 ? "+" : ""}${vsLastWeek}%`}</b><span>vs last week</span></div>
       </div>
     </section>
   );
@@ -137,35 +163,4 @@ export function ReviewConsistencyHeatmap({ consistency, state, reload }: UseCons
 function monthOfWeek(week: (ConsistencyDay | null)[]): number | null {
   const firstReal = week.find((d) => d !== null);
   return firstReal ? new Date(`${firstReal.date}T00:00:00Z`).getUTCMonth() : null;
-}
-
-/**
- * A stylized CSS "skyline" over the same per-day effort scores -- not a real
- * 3D/WebGL render. Bar height = effort_score, color ramps with level, a
- * subtle skew approximates depth without a new rendering dependency.
- */
-function ReviewEffortTerrain({ days }: { days: ConsistencyDay[] }) {
-  const [hovered, setHovered] = useState<ConsistencyDay | null>(null);
-  return (
-    <div className="a02-terrain" onMouseLeave={() => setHovered(null)}>
-      <div className="a02-terrain-bars">
-        {days.map((d) => (
-          <i
-            key={d.date}
-            className={d.level === null ? "level-none" : `level-${d.level}`}
-            style={{ height: `${Math.max(3, d.effort_score ?? 0)}%` }}
-            onMouseEnter={() => setHovered(d)}
-          />
-        ))}
-      </div>
-      {hovered && (
-        <div className="a02-terrain-tooltip">
-          <b>{hovered.date}</b>
-          <span>Effort {hovered.level === null ? "—" : hovered.effort_score}</span>
-          {hovered.focus_percentage != null && <span>Focus {hovered.focus_percentage}%</span>}
-          {hovered.execute_percentage != null && <span>Execute {hovered.execute_percentage}%</span>}
-        </div>
-      )}
-    </div>
-  );
 }

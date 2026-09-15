@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 
 import { createClient } from "@/lib/supabase/client";
 import { asReviewTimePatterns, type ReviewTimePatterns } from "@/lib/review/types";
+import { buildReviewFixture, getDevReviewStateOverride } from "@/lib/review/dev-fixtures";
 
 import { fetchProfileTimezone } from "./profile-timezone";
 import { utcDateRange, utcToday } from "./product-data";
@@ -26,6 +27,12 @@ export function useTimePatterns(): UseTimePatternsResult {
 
   const load = useCallback(async () => {
     setState("loading");
+    const devState = getDevReviewStateOverride();
+    if (devState) {
+      setPatterns(buildReviewFixture(devState).timePatterns);
+      setState("ready");
+      return;
+    }
     const supabase = createClient();
     const {
       data: { user },

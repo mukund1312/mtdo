@@ -47,6 +47,9 @@ export function ReviewFocusDistribution({ patterns, state, reload }: UseTimePatt
         </div>
       </header>
       <div className="a02-hour-bars a02-hour-bars--distribution" aria-hidden="true">
+        {!loading && totalMinutes === 0 && (
+          <span className="a02-hour-bars-empty">Your focus pattern will appear here</span>
+        )}
         {hourly.map((h) => (
           <i
             key={h.hour}
@@ -63,9 +66,11 @@ export function ReviewFocusDistribution({ patterns, state, reload }: UseTimePatt
       <p className="a02-time-window-stat">
         {loading
           ? "Reading your sessions."
-          : upliftPct !== null && upliftPct > 0
-            ? `You are ${upliftPct}% more likely to complete tasks when you start before 10 AM.`
-            : "Not enough sessions yet to compare morning starts."}
+          : totalMinutes === 0
+            ? "Start a focus session to discover your most productive hours."
+            : upliftPct !== null && upliftPct > 0
+              ? `You are ${upliftPct}% more likely to complete tasks when you start before 10 AM.`
+              : "Not enough sessions yet to compare morning starts."}
       </p>
     </section>
   );

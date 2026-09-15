@@ -27,9 +27,7 @@ async function closeWalkthroughIfPresent(page: Page) {
 // README.md for history.
 test("onboarding wizard: intent -> rhythm -> build a route end-to-end", async ({ page }) => {
   await page.goto("/architecture-02");
-  // First visit shows the Signal Deck walkthrough tour as a modal overlay --
-  // dismiss it before interacting with the page underneath.
-  await page.getByRole("button", { name: /close walkthrough/i }).click();
+  await closeWalkthroughIfPresent(page);
   await page.getByRole("link", { name: /set up your route/i }).click();
   await expect(page).toHaveURL(/\/architecture-02\/onboarding$/);
 
@@ -83,13 +81,13 @@ test("onboarding wizard: intent -> rhythm -> build a route end-to-end", async ({
   await expect(page).toHaveURL(/\/architecture-02\?deck=work$/);
   await expect(page.getByRole("heading", { name: /move the right pieces/i })).toBeVisible();
   await expect(page.getByLabel("Kanban filters")).toBeVisible();
-  await expect(page.getByRole("group", { name: /filter by priority/i }).getByRole("button", { name: "High" })).toBeVisible();
+  await expect(page.getByLabel("Filter by priority")).toBeVisible();
 
   // The active plan's curriculum is retrieved through ensure_curriculum_menu.
   // Pulling an item onto Today uses the lock-safe, idempotent picker RPC -- it
   // must become a real block, not a client-only card.
   await page.getByRole("button", { name: /add from route/i }).click();
-  const routeMenu = page.getByRole("dialog", { name: /choose the next piece/i });
+  const routeMenu = page.getByRole("dialog", { name: /build your next set/i });
   await expect(routeMenu).toBeVisible();
   const routeItem = routeMenu.locator(".a02-curriculum-item").first();
   await expect(routeItem).toBeVisible();
@@ -122,6 +120,10 @@ test("Review shows an honest empty heatmap and view-only Record Card", async () 
   await openSignalDeckDestination(page, "Review");
 
   await expect(page.getByRole("heading", { name: /make effort legible/i })).toBeVisible();
+  // ProgressDeck (six-week heatmap + Record Card) moved from being
+  // unconditionally mounted under Today to living under the "6 Weeks" range
+  // tab (2026-09-14 Review-page restructure -- see review-deck.tsx).
+  await page.getByRole("button", { name: "6 Weeks", exact: true }).click();
   // Renamed with the Consistency heatmap's move to review_consistency()'s
   // Effort Score (Phase B/F3) -- this session has no active plan yet, so
   // every cell reads level=null (hatched), not a real level=0.

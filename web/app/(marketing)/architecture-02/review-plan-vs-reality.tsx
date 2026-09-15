@@ -25,7 +25,7 @@ export function ReviewPlanVsReality({ weekly, state, reload }: UseWeeklySnapshot
     );
   }
 
-  if (state === "no_active_plan" || (state === "ready" && !weekly)) {
+  if (state === "no_active_plan") {
     return (
       <section className="a02-plan-vs-reality-empty" aria-live="polite">
         <header><b>PLAN VS REALITY</b></header>
@@ -35,6 +35,9 @@ export function ReviewPlanVsReality({ weekly, state, reload }: UseWeeklySnapshot
   }
 
   const loading = state === "loading";
+  // A route exists but this ISO week has no weekly_performance() row yet
+  // (e.g. a brand-new route, before its first tracked week) -- planned/
+  // actual both fall back to a real 0, not a blanket empty-state message.
   const plan = weekly?.plan;
   const planned = plan?.estimated_minutes ?? 0;
   const actual = plan?.actual_minutes ?? 0;
@@ -43,7 +46,13 @@ export function ReviewPlanVsReality({ weekly, state, reload }: UseWeeklySnapshot
   // plan-level mirror of that, expressed as "how close actual landed to
   // planned", capped at 100 (running longer than planned is not "more
   // accurate" than running exactly on time).
-  const accuracy = planned > 0 ? Math.min(100, Math.round((1 - Math.abs(actual - planned) / planned) * 100)) : null;
+  //
+  // Audit finding: this used to compute a real (often 0%) accuracy the
+  // instant planned > 0, even with actual still 0 because the in-progress
+  // week simply hasn't happened yet -- indistinguishable from a real
+  // execution failure. Accuracy stays unknown until there's at least some
+  // real execution to compare against.
+  const accuracy = planned > 0 && actual > 0 ? Math.min(100, Math.round((1 - Math.abs(actual - planned) / planned) * 100)) : null;
 
   return (
     <section className="a02-plan-vs-reality" aria-label="Plan vs reality">
@@ -64,6 +73,9 @@ export function ReviewPlanVsReality({ weekly, state, reload }: UseWeeklySnapshot
         <span>Plan accuracy</span>
         <b>{loading || accuracy === null ? "—" : `${accuracy}%`}</b>
       </div>
+      {!loading && planned === 0 && actual === 0 && (
+        <p className="a02-time-window-stat">Plan study time to compare intention with execution.</p>
+      )}
     </section>
   );
 }

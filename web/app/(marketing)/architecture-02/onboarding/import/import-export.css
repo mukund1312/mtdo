@@ -67,33 +67,18 @@
   letter-spacing: 0.08em;
 }
 
-.a02-import-preview > p {
-  margin: 8px 0 12px;
-  font-size: 13px;
-}
-
-.a02-import-preview ol {
-  display: grid;
-  gap: 6px;
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-
-.a02-import-preview ol li {
-  display: flex;
-  justify-content: space-between;
-  border: 1px solid var(--line);
-  border-radius: 5px;
-  background: rgba(255, 255, 255, 0.03);
-  padding: 8px 10px;
-  font-size: 12px;
-}
-
-.a02-import-preview ol li span {
-  color: var(--dim);
-  font: 10px "DM Mono", monospace;
-}
+.a02-import-edit-field { display:block; margin-top:13px!important; color:var(--dim); font:9px "DM Mono",monospace; letter-spacing:.08em; }
+.a02-import-edit-field > span { float:none!important; display:block; color:var(--dim)!important; font:inherit!important; }
+.a02-import-edit-field textarea,.a02-import-edit-field input { box-sizing:border-box; margin-top:7px!important; background:rgba(11,14,40,.52); }
+.a02-import-edit-field textarea { min-height:64px!important; }
+.a02-import-preview-note { margin:15px 0 12px!important; color:var(--dim); font-size:11px!important; line-height:1.45; }
+.a02-import-categories { display:grid; gap:8px; margin:0; padding:0; list-style:none; }
+.a02-import-categories > li { overflow:hidden; border:1px solid var(--line); border-radius:6px; background:rgba(255,255,255,.03); }
+.a02-import-category-toggle { display:grid; grid-template-columns:1fr auto 15px; align-items:center; gap:11px; width:100%; min-height:41px; border:0; background:transparent; padding:10px 11px; color:var(--ink); text-align:left; cursor:pointer; }
+.a02-import-category-toggle:hover,.a02-import-category-toggle:focus-visible { background:rgba(87,231,255,.06); outline:none; }
+.a02-import-category-toggle b { font-size:12px; }.a02-import-category-toggle span { color:var(--dim); font:10px "DM Mono",monospace; }.a02-import-category-toggle i { color:var(--aqua); font:16px/1 "DM Mono",monospace; font-style:normal; text-align:center; }
+.a02-import-categories > li.is-open { border-color:rgba(87,231,255,.48); }.a02-import-category-editor { border-top:1px solid var(--line); padding:0 11px 11px; background:rgba(8,10,31,.16); }
+.a02-import-task-list { display:grid; gap:6px; margin-top:12px; }.a02-import-task-list label { display:grid; grid-template-columns:24px minmax(0,1fr); align-items:center; gap:8px; margin:0!important; }.a02-import-task-list label > span { float:none!important; color:var(--aqua)!important; font:9px "DM Mono",monospace!important; }.a02-import-task-list input { min-height:35px; margin:0!important; padding:7px 9px!important; font-size:12px!important; }
 
 .a02-export-result textarea {
   width: 100%;
@@ -150,3 +135,23 @@
 .a02-import-template-link:hover {
   color: var(--acid);
 }
+
+/* Import gets a dedicated two-pane workspace on desktop: the map stays
+   useful while the right-hand editor carries the long task list. */
+@media (min-width: 821px) {
+  .a02-import-export-shell { height:100dvh; overflow:hidden; }
+  .a02-import-export-shell .a02-onboarding-layout { min-height:0; height:calc(100dvh - 83px); }
+  .a02-import-export-shell .a02-onboarding-aside { overflow-y:auto; }
+  .a02-import-export-shell .a02-onboarding-panel { display:block; overflow-y:auto; padding-top:clamp(52px,8vh,88px); padding-bottom:90px; }
+  .a02-import-export-shell .a02-import-step { margin:0 auto; }
+}
+
+.a02-import-aside-guide,.a02-import-aside-preview { max-width:295px; margin-top:48px; padding:17px; border:1px solid var(--line); border-radius:9px; background:rgba(255,255,255,.025); }
+.a02-import-aside-guide > span,.a02-import-aside-preview > span { display:block; color:var(--aqua); font:9px "DM Mono",monospace; letter-spacing:.1em; }
+.a02-import-aside-guide ol,.a02-import-aside-preview ol { display:grid; gap:5px; margin:14px 0 0; padding:0; list-style:none; }
+.a02-import-aside-guide li { display:grid; grid-template-columns:25px 1fr; gap:7px; color:var(--dim); font-size:11px; line-height:1.45; }.a02-import-aside-guide li i { color:var(--aqua); font:9px "DM Mono",monospace; font-style:normal; }
+.a02-import-aside-preview strong { display:block; margin-top:12px; color:var(--ink); font-size:15px; line-height:1.2; }.a02-import-aside-preview > p { margin:8px 0 0; color:var(--dim); font-size:11px; line-height:1.5; }
+.a02-import-aside-preview button { display:flex; align-items:center; justify-content:space-between; width:100%; min-height:34px; border:1px solid transparent; border-radius:5px; background:transparent; padding:0 8px; color:var(--dim); text-align:left; cursor:pointer; font-size:11px; }.a02-import-aside-preview button:hover,.a02-import-aside-preview button:focus-visible,.a02-import-aside-preview button.is-active { border-color:rgba(87,231,255,.28); background:rgba(87,231,255,.08); color:var(--ink); outline:none; }.a02-import-aside-preview button i { color:var(--aqua); font:9px "DM Mono",monospace; font-style:normal; }
+
+@media (max-width: 820px) { .a02-import-aside-guide,.a02-import-aside-preview { margin-top:28px; }.a02-import-aside-preview { max-width:none; } }
+
