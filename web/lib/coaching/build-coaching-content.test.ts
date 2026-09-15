@@ -83,7 +83,7 @@ describe("buildCoachingContent", () => {
   it("picks a random expert tip when no tip is set anywhere", () => {
     const randomSpy = vi.spyOn(Math, "random").mockReturnValue(0);
     const content = buildCoachingContent(null, null);
-    expect(content.pro_tip).toBe("Don't memorize solutions. Memorize reasoning.");
+    expect(content.pro_tip).toBe("Don't memorize answers. Memorize the reasoning behind them.");
     randomSpy.mockRestore();
   });
 
