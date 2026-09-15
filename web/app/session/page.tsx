@@ -324,10 +324,18 @@ export default function SessionPage() {
     if (linkedBlock) {
       // This convenience state is client-writable by design. It must not
       // block a valid session if a transient update failure occurs.
-      const { error: blockError } = await supabase
-        .from("blocks")
-        .update({ claimed: true, status: "in_progress" })
-        .eq("id", linkedBlock.id);
+      // migrations/0033 -- transition_block_status() replaces the raw
+      // .update({ claimed, status }) this used to do, so this todo ->
+      // in_progress transition finally mints task_status_changed evidence
+      // (source: 'focus_session'), alongside start_session()'s own
+      // started_at stamp/task_started mint above. The log-and-continue
+      // posture is unchanged: a failed transition must not fail an
+      // otherwise-valid session.
+      const { error: blockError } = await supabase.rpc("transition_block_status", {
+        p_block_id: linkedBlock.id,
+        p_to_status: "in_progress",
+        p_source: "focus_session",
+      });
       if (blockError) console.error("[session] could not mark linked block in progress:", blockError);
     }
   }, [breakCount, breakMinutes, durationMinutes, isLinkedBlockLoading, linkedBlock, phase, resume]);
@@ -424,10 +432,19 @@ export default function SessionPage() {
         return;
       }
       if (linkedBlock) {
-        const { error: blockError } = await createClient()
-          .from("blocks")
-          .update({ claimed: true, status: "in_progress" })
-          .eq("id", linkedBlock.id);
+        // migrations/0033 -- transition_block_status() replaces the raw
+        // .update({ claimed, status }) this used to do (same rewrite as
+        // startSession() above). The block is very likely already
+        // in_progress here (this is "focus longer" on the same task), in
+        // which case this is a guarded no-op that mints no duplicate
+        // evidence -- see that RPC's own comment. Log-and-continue is
+        // unchanged: a failed transition must not fail an otherwise-valid
+        // session extension.
+        const { error: blockError } = await createClient().rpc("transition_block_status", {
+          p_block_id: linkedBlock.id,
+          p_to_status: "in_progress",
+          p_source: "focus_session",
+        });
         if (blockError) console.error("[session] could not keep linked block in progress:", blockError);
       }
       setExtensionOpen(false);

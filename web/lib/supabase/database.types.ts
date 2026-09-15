@@ -137,16 +137,21 @@ export type Database = {
       }
       blocks: {
         Row: {
+          cancelled_at: string | null
           category_id: string
           claimed: boolean
           coaching: Json | null
           completed_at: string | null
+          created_at: string
           curriculum_item_id: string | null
           date: string
+          deleted_at: string | null
+          disposition: string | null
           elapsed_seconds: number
           estimated_minutes: number | null
           id: string
           notes: string | null
+          original_estimated_minutes: number | null
           plan_id: string
           position: number
           priority: string
@@ -158,16 +163,21 @@ export type Database = {
           user_id: string
         }
         Insert: {
+          cancelled_at?: string | null
           category_id: string
           claimed?: boolean
           coaching?: Json | null
           completed_at?: string | null
+          created_at?: string
           curriculum_item_id?: string | null
           date: string
+          deleted_at?: string | null
+          disposition?: string | null
           elapsed_seconds?: number
           estimated_minutes?: number | null
           id?: string
           notes?: string | null
+          original_estimated_minutes?: number | null
           plan_id: string
           position: number
           priority?: string
@@ -179,16 +189,21 @@ export type Database = {
           user_id: string
         }
         Update: {
+          cancelled_at?: string | null
           category_id?: string
           claimed?: boolean
           coaching?: Json | null
           completed_at?: string | null
+          created_at?: string
           curriculum_item_id?: string | null
           date?: string
+          deleted_at?: string | null
+          disposition?: string | null
           elapsed_seconds?: number
           estimated_minutes?: number | null
           id?: string
           notes?: string | null
+          original_estimated_minutes?: number | null
           plan_id?: string
           position?: number
           priority?: string
@@ -1136,16 +1151,21 @@ export type Database = {
       pick_curriculum_item: {
         Args: { p_item_id: string; p_target_date?: string }
         Returns: {
+          cancelled_at: string | null
           category_id: string
           claimed: boolean
           coaching: Json | null
           completed_at: string | null
+          created_at: string
           curriculum_item_id: string | null
           date: string
+          deleted_at: string | null
+          disposition: string | null
           elapsed_seconds: number
           estimated_minutes: number | null
           id: string
           notes: string | null
+          original_estimated_minutes: number | null
           plan_id: string
           position: number
           priority: string
@@ -1241,16 +1261,21 @@ export type Database = {
           p_start_at?: string
         }
         Returns: {
+          cancelled_at: string | null
           category_id: string
           claimed: boolean
           coaching: Json | null
           completed_at: string | null
+          created_at: string
           curriculum_item_id: string | null
           date: string
+          deleted_at: string | null
+          disposition: string | null
           elapsed_seconds: number
           estimated_minutes: number | null
           id: string
           notes: string | null
+          original_estimated_minutes: number | null
           plan_id: string
           position: number
           priority: string
@@ -1292,16 +1317,21 @@ export type Database = {
           p_session_id: string
         }
         Returns: {
+          cancelled_at: string | null
           category_id: string
           claimed: boolean
           coaching: Json | null
           completed_at: string | null
+          created_at: string
           curriculum_item_id: string | null
           date: string
+          deleted_at: string | null
+          disposition: string | null
           elapsed_seconds: number
           estimated_minutes: number | null
           id: string
           notes: string | null
+          original_estimated_minutes: number | null
           plan_id: string
           position: number
           priority: string
@@ -1380,6 +1410,46 @@ export type Database = {
       study_profile_confidence: {
         Args: { p_sample_size: number }
         Returns: string
+      }
+      transition_block_status: {
+        Args: {
+          p_block_id: string
+          p_disposition?: string
+          p_source?: string
+          p_to_status: string
+        }
+        Returns: {
+          cancelled_at: string | null
+          category_id: string
+          claimed: boolean
+          coaching: Json | null
+          completed_at: string | null
+          created_at: string
+          curriculum_item_id: string | null
+          date: string
+          deleted_at: string | null
+          disposition: string | null
+          elapsed_seconds: number
+          estimated_minutes: number | null
+          id: string
+          notes: string | null
+          original_estimated_minutes: number | null
+          plan_id: string
+          position: number
+          priority: string
+          scheduled_end_at: string | null
+          scheduled_start_at: string | null
+          started_at: string | null
+          status: string
+          text: string
+          user_id: string
+        }
+        SetofOptions: {
+          from: "*"
+          to: "blocks"
+          isOneToOne: true
+          isSetofReturn: false
+        }
       }
       tutor_context: {
         Args: { p_conversation_id: string; p_recent_limit?: number }
