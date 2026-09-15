@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { useRef, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { recordEvent } from "@/lib/analytics/record-event";
+import { buildBlankPlanTemplate } from "@/lib/plan-generation/blank-template";
 import { parseGeneratedPlan } from "@/lib/plan-generation/parse";
 import { persistGeneratedPlan } from "@/lib/plan-generation/persist";
 import { PLAN_SCHEMA_VERSION, PlanGenerationError, type GeneratedPlan } from "@/lib/plan-generation/types";
@@ -16,6 +17,20 @@ import "../../fixed-layer-safety.css";
 type Tab = "import" | "export";
 type ImportState = "idle" | "previewing" | "importing" | "error";
 type ExportState = "idle" | "loading" | "ready" | "error";
+
+/** Real file download, not just a clipboard copy -- used both for the blank
+ * template and for exporting an existing route, so "take it with you" means
+ * an actual .json file either way. Revokes the object URL right after the
+ * synthetic click; the download itself has already started by then. */
+function downloadJsonFile(filename: string, json: string) {
+  const blob = new Blob([json], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  link.click();
+  URL.revokeObjectURL(url);
+}
 
 function readFileAsText(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -232,6 +247,20 @@ export default function SignalDeckImportExportPage() {
                   <br />
                   <em>existing route.</em>
                 </h2>
+                <p className="a02-import-template-hint">
+                  New here? This file format isn&apos;t tied to any one subject -- school
+                  homework, a certification, a hobby, interview prep, anything. Grab a
+                  starter file with two filled-in examples and notes on every field, edit
+                  it (by hand, or hand it to an AI along with your actual goal), then load
+                  it below.{" "}
+                  <button
+                    type="button"
+                    className="a02-import-template-link"
+                    onClick={() => downloadJsonFile("mtdo-goal-template.json", JSON.stringify(buildBlankPlanTemplate(), null, 2))}
+                  >
+                    Download a blank template ↓
+                  </button>
+                </p>
                 <div
                   className={`a02-import-dropzone ${dragOver ? "is-drag-over" : ""}`}
                   onDragOver={(event) => {
@@ -326,6 +355,9 @@ export default function SignalDeckImportExportPage() {
                     <div className="a02-export-actions">
                       <button type="button" onClick={() => void copyExport()}>
                         Copy to clipboard
+                      </button>
+                      <button type="button" onClick={() => downloadJsonFile("mtdo-route-export.json", exportJson)}>
+                        Download .json file
                       </button>
                       {copyStatus && <small>{copyStatus}</small>}
                     </div>

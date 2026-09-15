@@ -42,6 +42,32 @@ test.describe.serial("Phase 3: plan-free checks", () => {
     await expect(page.getByText(/categories.*must be a non-empty array/i)).toBeVisible();
     await expect(page.getByRole("button", { name: /import this route/i })).toBeDisabled();
   });
+
+  // The blank starter template exists specifically so this file format
+  // reads as usable for any subject, not just DSA/SQL -- verifies the
+  // downloaded file is real (not a dead link) and that pasting it straight
+  // back in previews cleanly, proving buildBlankPlanTemplate()'s own
+  // categories (one school-subject example, one CS example) round-trip
+  // through the same parser a real user's edited copy would hit.
+  test("Import: the blank template downloads as a real file and re-imports cleanly, unedited", async () => {
+    await page.goto("/architecture-02/onboarding/import");
+    const downloadPromise = page.waitForEvent("download");
+    await page.getByRole("button", { name: /download a blank template/i }).click();
+    const download = await downloadPromise;
+    expect(download.suggestedFilename()).toBe("mtdo-goal-template.json");
+
+    const stream = await download.createReadStream();
+    const chunks: Buffer[] = [];
+    for await (const chunk of stream) chunks.push(chunk as Buffer);
+    const template = JSON.parse(Buffer.concat(chunks).toString("utf-8"));
+    expect(template.categories.map((c: { name: string }) => c.name)).toEqual(["science", "sql"]);
+
+    await page.getByPlaceholder(/schema_version/i).fill(JSON.stringify(template));
+    const importPreview = page.locator(".a02-import-preview");
+    await expect(importPreview.getByText("Science")).toBeVisible();
+    await expect(importPreview.getByText("SQL")).toBeVisible();
+    await expect(page.getByRole("button", { name: /import this route/i })).toBeEnabled();
+  });
 });
 
 test("Manual Setup builds a real route end-to-end", async ({ page }) => {
@@ -104,4 +130,11 @@ test("Import validates and persists a real mtdo.plan.v1 file, Export reads it ba
   expect(exported.goal_line).toBe("Master backend interviews");
   expect(exported.categories[0].label).toBe("System Design");
   expect(exported.categories[0].curriculum.flat()).toHaveLength(2);
+
+  // The same exported JSON is also downloadable as a real file, not just
+  // copyable text.
+  const downloadPromise = page.waitForEvent("download");
+  await page.getByRole("button", { name: /download \.json file/i }).click();
+  const download = await downloadPromise;
+  expect(download.suggestedFilename()).toBe("mtdo-route-export.json");
 });

@@ -1,9 +1,15 @@
-// Port of src/mtdo/coaching.py's build_coaching_content() and its static
-// content library (Phase 1 of the operating-engine plan: "Session coach
-// rail"). Ported verbatim, not reinterpreted -- the merge order and the
-// generic/topic-framework fallback text are the terminal app's own Learning
-// Coach spec, and the web session screen owes the same coaching a terminal
-// user already gets for the same task.
+// Port of src/mtdo/coaching.py's build_coaching_content() (Phase 1 of the
+// operating-engine plan: "Session coach rail") -- the merge order and the
+// four built-in topic_type buckets (dsa/backend/database/system_design)
+// are ported verbatim, since those are genuinely CS-specific and the web
+// app serves that audience too. The GENERIC_* fallback content and
+// EXPERT_TIPS below are NOT a verbatim port, though -- coaching.py's
+// originals assumed every user is interview prepping ("Interviewers hire
+// reasoning, not memorization."), which reads as broken for the web app's
+// wider audience (a school student's homework, a hobby, a professional
+// cert -- anything with no topic_type match). Rewritten here to be
+// genuinely subject-neutral; the terminal app's copy is untouched, still
+// scoped to its own engineer/interview-prep contract (CLAUDE.md).
 
 // Task-level shape (blocks.coaching, copied from curriculum_items.meta --
 // goals_template.json rule_9). Note the key names differ from
@@ -69,17 +75,21 @@ const GENERIC_ASK_YOURSELF = [
 ];
 
 const GENERIC_INTERVIEW_CHECK = [
-  "Explain it verbally.",
-  "Draw it.",
-  "Implement it.",
-  "Compare alternatives.",
-  "Explain tradeoffs.",
-  "Give real-world examples.",
+  "Explain it out loud, in your own words.",
+  "Sketch or diagram it.",
+  "Try it again without looking anything up.",
+  "Compare it to a related idea.",
+  "Explain the reasoning, not just the answer.",
+  "Give a real-world example.",
 ];
 
 const GENERIC_MISTAKES = ["Skipping edge cases.", "Memorizing the answer instead of the reasoning."];
 
-const GENERIC_MENTAL_MODELS = ["Can you draw this before you code it?"];
+const GENERIC_MENTAL_MODELS = [
+  "Can you explain this in your own words, without the textbook language?",
+  "Can you connect this to something you already know?",
+  "Could you teach this to someone else right now?",
+];
 
 // ---- Topic-specific frameworks -------------------------------------------------------
 // Keyed by a category's optional "topic_type" (see goals_template.json rule_9).
@@ -142,16 +152,23 @@ const TOPIC_FRAMEWORKS: Record<string, { ask_yourself: string[]; interview_check
   },
 };
 
+// Subject-neutral by design -- shown for ANY task with no topic-specific
+// tip of its own, from a Class 7 science chapter to an SQL interview drill.
+// The original list ("Interviewers hire reasoning, not memorization.",
+// "Draw diagrams before coding.") assumed every mtdo user was interview
+// prepping; this is the web app's own copy, deliberately diverged from
+// coaching.py's terminal-app version, which stays interview-prep-scoped
+// per that app's own contract.
 const EXPERT_TIPS = [
-  "Don't memorize solutions. Memorize reasoning.",
-  "Understanding > Memorization.",
-  "Implementation > Reading.",
-  "Always ask WHY.",
-  "Tradeoffs matter.",
-  "Interviewers hire reasoning, not memorization.",
-  "Draw diagrams before coding.",
-  "Teach the concept aloud.",
-  "If you cannot teach it, you do not understand it.",
+  "Don't memorize answers. Memorize the reasoning behind them.",
+  "Understanding beats memorization, every time.",
+  "Doing it yourself beats just reading about it.",
+  "Always ask WHY, not just WHAT.",
+  "Notice the tradeoffs, not just the \"right\" answer.",
+  "If you can't explain it simply, you don't understand it yet.",
+  "Say it out loud to check if you really know it.",
+  "A mistake is data -- look at what it's telling you.",
+  "A little every day beats a lot all at once.",
 ];
 
 function firstNonEmpty(...lists: Array<string[] | undefined>): string[] | undefined {
