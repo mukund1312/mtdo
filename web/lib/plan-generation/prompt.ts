@@ -30,7 +30,10 @@ export function buildPlanPrompt(answers: OnboardingAnswers): string {
 
   return (
     "You are building a personalized study/practice plan for a new user of MTDO, " +
-    "a task board for deliberate practice (DSA, backend, interview prep, etc.). " +
+    "a task board for deliberate, structured practice at ANY subject or skill -- " +
+    "school homework, a professional certification, a hobby, fitness, interview prep, " +
+    "anything the user names. Do not assume a technical or interview-prep goal unless " +
+    "the user's own goal/subjects actually say so. " +
     `Call the app "${appName}" in "app_name". ` +
     `Their goal: "${answers.goalLine.trim()}". Experience level: ${answers.experienceLevel}. ` +
     `They can study on: ${days}. ` +
@@ -81,14 +84,25 @@ export function buildPlanPrompt(answers: OnboardingAnswers): string {
     "interview_questions, 1-2 mistakes, 1 tip, 1 mental_model. This is the single " +
     "highest-value part of the plan: it is the difference between generic advice and " +
     "something that actually teaches. Tune it to what THIS user is actually studying, " +
-    "not generic subject-wide boilerplate.\n" +
+    "not generic subject-wide boilerplate. NOTE: the field is named " +
+    '"interview_questions"/"interview_check" for historical schema-compatibility reasons ' +
+    "only -- treat it as \"questions that check real understanding, the way a strict " +
+    "teacher or examiner would probe it\", not literally a job interview, unless the " +
+    "user's own goal actually is interview prep. For a school subject, write exam-style " +
+    "or teacher-style check questions there instead.\n" +
     "4. `coaching_framework` (optional per category) OVERRIDES the generic topic_type " +
     "bucket -- write ask_yourself/interview_check questions specific to what this " +
     "user's curriculum in that category actually covers, not a generic subject-wide " +
     "list.\n" +
-    "5. `topic_type` should be one of the four listed values when the category genuinely " +
-    "fits one, or null otherwise -- never invent a new value.\n" +
-    "6. Output must be valid JSON with no trailing commas, no comments, and no text " +
+    "5. `topic_type` should be one of the four listed values ONLY when the category is " +
+    "genuinely DSA, backend engineering, databases/SQL, or system design -- leave it null " +
+    "for every other subject (school subjects, professional certs, hobbies, fitness, " +
+    "anything else). Never invent a new value, and never pick the closest-sounding one " +
+    "just to fill the field -- null is the correct, common answer.\n" +
+    "6. Match the user's actual level and context: age-appropriate, plain language for a " +
+    "school subject; technical depth only where the subject calls for it. Don't add " +
+    "interview or career framing to a goal that has none.\n" +
+    "7. Output must be valid JSON with no trailing commas, no comments, and no text " +
     "outside the single JSON object."
   );
 }

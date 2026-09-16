@@ -114,6 +114,28 @@
   font-size: 11px;
 }
 
+.a02-import-template-hint {
+  max-width: 460px;
+  margin: 0 0 22px;
+  color: var(--dim);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.a02-import-template-link {
+  border: 0;
+  background: none;
+  padding: 0;
+  color: var(--aqua);
+  font: inherit;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.a02-import-template-link:hover {
+  color: var(--acid);
+}
+
 /* Import gets a dedicated two-pane workspace on desktop: the map stays
    useful while the right-hand editor carries the long task list. */
 @media (min-width: 821px) {
@@ -132,3 +154,4 @@
 .a02-import-aside-preview button { display:flex; align-items:center; justify-content:space-between; width:100%; min-height:34px; border:1px solid transparent; border-radius:5px; background:transparent; padding:0 8px; color:var(--dim); text-align:left; cursor:pointer; font-size:11px; }.a02-import-aside-preview button:hover,.a02-import-aside-preview button:focus-visible,.a02-import-aside-preview button.is-active { border-color:rgba(87,231,255,.28); background:rgba(87,231,255,.08); color:var(--ink); outline:none; }.a02-import-aside-preview button i { color:var(--aqua); font:9px "DM Mono",monospace; font-style:normal; }
 
 @media (max-width: 820px) { .a02-import-aside-guide,.a02-import-aside-preview { margin-top:28px; }.a02-import-aside-preview { max-width:none; } }
+
