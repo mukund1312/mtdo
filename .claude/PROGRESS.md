@@ -6499,3 +6499,25 @@ and the full Playwright production regression suite (23 tests) pass. Provider
 credentials remain an external setup step: enable Google and GitHub in Supabase
 Authentication → Providers and register `/auth/callback` with the provider and
 Supabase redirect allow-list.
+
+## 2026-09-16 [frontend] Review evidence disclosure
+
+- Study Profile now exposes the backend's real sample count and observation
+  window with every rendered trait and subject value. Focus, Execution, and
+  Planning retain only their server-returned confidence; Planning truthfully
+  identifies its `weeks_sampled` evidence. Best-time traits show their real
+  session counts and no longer fabricate a confidence tier.
+- `insufficient_data` and null values render an explicit no-evidence state,
+  never a value, count, zero, or inferred confidence. The disclosure leaves
+  room for future server-provided evidence and coverage fields without
+  calculating either in the client.
+- Month and Year now call `review_consistency()` directly for 30 and 365 days.
+  The heatmap renders only server-computed daily levels and removed its
+  client-derived active-day, streak, and week-over-week summary metrics.
+- Removed the unmounted `ReviewTimeBehavior` and retained its shared labels
+  and time formatter in a small utility module.
+
+Verification: TypeScript, ESLint, Vitest (37 files / 394 tests), and production
+build pass. One serial full-Playwright run was attempted; it failed across
+unrelated current-main onboarding/navigation expectations and the shared
+anonymous-auth environment, with no Review evidence/range artifact.
