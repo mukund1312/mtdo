@@ -179,12 +179,48 @@ export async function persistGeneratedPlan(
       categoryIdByName.set(row.name as string, row.id as string);
     }
 
+    // Resolve each curriculum item's optional `topic` (mtdo.plan.v1, migrations/0034)
+    // into a real `topics` row so curriculumRows below can carry a real topic_id --
+    // NOT plan_categories.topic_type, an unrelated field already handled in
+    // categoryRows above. Distinct topic names within one category are created once
+    // each, via create_topic() (0034) -- the depth/cycle-guarded write path -- even
+    // though every topic created here is parent-less (the wire format carries no
+    // hierarchy yet, only a flat leaf name): going through the RPC keeps ONE
+    // sanctioned creation path for topics rather than two, and the extra round trips
+    // cost nothing at onboarding's scale (a handful of distinct names at most, not a
+    // hot path). create_topic() always inserts (no get-or-create-by-name) -- safe
+    // here because categoryId is always freshly created a few lines above, so no
+    // topic with this name can already exist under it.
+    const topicIdByCategoryAndName = new Map<string, string>();
+    for (const category of plan.categories) {
+      const categoryId = categoryIdByName.get(category.name);
+      if (!categoryId) continue; // already thrown above if this can't resolve
+      const topicNames = new Set<string>();
+      for (const dayList of category.curriculum) {
+        for (const item of dayList) {
+          if (typeof item === "object" && item.topic) topicNames.add(item.topic);
+        }
+      }
+      for (const topicName of topicNames) {
+        const { data: topicRow, error: topicError } = await supabase.rpc("create_topic", {
+          p_category_id: categoryId,
+          p_name: topicName,
+          p_label: topicName,
+        });
+        if (topicError || !topicRow) {
+          throw new Error(`Failed to create topic "${topicName}": ${topicError?.message ?? "no row returned"}`);
+        }
+        topicIdByCategoryAndName.set(`${categoryId}:${topicName}`, (topicRow as { id: string }).id);
+      }
+    }
+
     const curriculumRows: Array<{
       category_id: string;
       week_index: number;
       position: number;
       task: string;
       meta: Record<string, unknown>;
+      topic_id: string | null;
     }> = [];
 
     for (const category of plan.categories) {
@@ -214,6 +250,8 @@ export async function persistGeneratedPlan(
                   related_topics: item.related_topics ?? [],
                 }
               : {},
+            topic_id:
+              isRich && item.topic ? (topicIdByCategoryAndName.get(`${categoryId}:${item.topic}`) ?? null) : null,
           });
         }
       });

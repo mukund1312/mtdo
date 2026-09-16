@@ -79,6 +79,7 @@ profiles(id uuid pk → auth.users, display_name, is_anonymous, timezone, create
 plans(id, user_id, app_name, goal_line, is_active, created_at,
       onboarding_answers jsonb null,
       planning_mode check in ('dynamic_weekly', 'overall') default 'dynamic_weekly',
+      target_date date null,                    -- 0034, Phase H
       unique(id, user_id))                      -- composite-FK target
   -- unique index plans_one_active (user_id) where is_active  → free tier's "one goal"
   -- onboarding_answers (0016): the OnboardingAnswers that produced this plan
@@ -90,6 +91,12 @@ plans(id, user_id, app_name, goal_line, is_active, created_at,
   -- deliberately unlike onboarding_answers/profiles.timezone -- every plan
   -- needs a real mode to behave under, there is no meaningful "unset"
   -- state here for ensure_curriculum_menu() to fall back from. api.md §3b.
+  -- target_date (0034): optional user-set goal deadline. NULLABLE, no
+  -- default -- an existing plan genuinely has none. Written only through
+  -- set_plan_target_date(), which mints plan_target_changed {plan_id,
+  -- from_date, to_date} on a real change -- plans stays otherwise
+  -- client-writable, same "correctness/evidence RPC, not access control"
+  -- posture as schedule_block() (0033). api.md §3q.
 plan_categories(id, plan_id, name, label, days int[], min_blocks, score_weight,
                 topic_type, coaching_framework jsonb, sort_order,
                 menu_unlocked_week_index (check >= 0), menu_unlocked_iso_week,
@@ -103,7 +110,14 @@ plan_categories(id, plan_id, name, label, days int[], min_blocks, score_weight,
   --   coalesce(weekly_target_blocks, array_length(days, 1))
   -- since one unlocked week_index holds exactly array_length(days,1) items.
   -- THIS IS THE ONLY FIELD THE WEEKLY RULES ENGINE MAY ADJUST, and only
-  -- through apply_weekly_plan_change() (0022) after a human accepts.
+  -- through apply_weekly_plan_change() (0022) after a human accepts -- that
+  -- path keeps its own weekly_plan_changes audit trail, untouched by 0034.
+  -- A DIRECT user-driven change to this field, or to score_weight, instead
+  -- goes through set_category_target() (0034), which mints
+  -- category_target_changed {category_id, field, from, to} on a real
+  -- change. No settings UI calls it yet -- vocabulary + RPC ready, same
+  -- "ready, no producer yet" posture 0033 established for
+  -- task_estimate_changed. api.md §3q.
   -- Deliberately NOT min_blocks: that is a per-DAY floor written by plan
   -- generation (prompt.ts still writes it with that meaning) whose real
   -- values are 0 or 1, so +/-25% of it rounds to no change at all.
@@ -126,8 +140,18 @@ plan_categories(id, plan_id, name, label, days int[], min_blocks, score_weight,
 curriculum_items(id, category_id, week_index, position, task, meta jsonb,
                  priority check in ('high','medium','low') default 'medium',
                  estimated_minutes null (check > 0),
+                 topic_id null,                          -- 0034, Phase H
                  unique(id, category_id),
                  unique(category_id, week_index, position))
+  -- topic_id (0034): optional LEAF-topic reference into `topics` below --
+  -- NOT plan_categories.topic_type, a completely different, unrelated field
+  -- (see 0034's own migration header for the full distinction). fk
+  -- (topic_id, category_id) → topics (id, category_id) on delete set null
+  -- (topic_id) -- mirrors blocks_curriculum_item_fk's composite-FK shape
+  -- (0012) exactly: a topic can't belong to one category while the item
+  -- claiming it belongs to another. Copied to blocks.topic_id by
+  -- pick_curriculum_item() at pick time. NULL for every pre-0034 item and
+  -- for any item with no subtopic -- never inferred. api.md §3q.
   -- priority/estimated_minutes (0018, Phase 5): no authoring surface sets
   -- either explicitly yet (prompt.ts, Manual Setup, extend-prompt.ts all
   -- still omit them) -- priority's NOT NULL DEFAULT is what makes every
@@ -151,6 +175,30 @@ curriculum_items(id, category_id, week_index, position, task, meta jsonb,
   -- week_index is a SEQUENCE POSITION IN THE CURRICULUM, not a calendar week.
   -- Which calendar week it surfaces in depends on the user's unlock cursor
   -- (plan_categories.menu_unlocked_*), never on today's date. api.md §3b.
+
+-- recursive topic taxonomy, WITHIN one category (0034, Phase H) -- NOT the
+-- same concept as plan_categories.topic_type, see that migration's own
+-- header for the full distinction
+topics(id, category_id, parent_topic_id null → topics(id), name, label,
+       sort_order, created_at,
+       unique(id, category_id))                 -- composite-FK target
+  -- category_id → plan_categories(id) on delete cascade (topics belong to
+  -- exactly one category, same as curriculum_items).
+  -- parent_topic_id → topics(id) on delete cascade, NULLABLE (null = a root
+  -- topic). Included now, deliberately, even with no UI populating it
+  -- deeply yet -- free today, avoids a real taxonomy migration battle later.
+  -- Owner-only RLS (topics_owner_all, ownership-chain `exists` join like
+  -- curriculum_items_owner_all, 0001) for SELECT/INSERT/DELETE and for
+  -- UPDATE of label/sort_order only. parent_topic_id/category_id/name are
+  -- reachable ONLY through create_topic() (0034, max depth 5, counted from
+  -- 1) -- table-level UPDATE is revoked and re-granted for just
+  -- (label, sort_order), so a client UPDATE touching any of the three
+  -- structural columns fails on PRIVILEGES (42501), before RLS is even
+  -- evaluated -- not merely discouraged by a "sanctioned path" convention.
+  -- create_topic()'s bounded ancestor-chain walk (the depth limit AND cycle
+  -- guard, one mechanism, since a CHECK constraint can express neither) is
+  -- kept as defense-in-depth even though no client write can build a cycle
+  -- any more -- see decisions.md 2026-09-16. api.md §3q.
 
 -- daily work (ports state.json per-date entries)
 blocks(id, user_id, plan_id, category_id, date, position, text,
@@ -218,12 +266,20 @@ blocks(id, user_id, plan_id, category_id, date, position, text,
        -- -- there is no delete-block UI beyond a raw client DELETE via
        -- blocks_owner_all. Added alongside the task_deleted ledger kind so a
        -- future delete flow needs no further migration.
-       cancelled_at timestamptz null)
+       cancelled_at timestamptz null,
        -- Set once, on the first disposition = 'cancelled' write. Lets a
        -- future consumer apply the cancellation-timing rule in 0033's
        -- header: cancel BEFORE an opportunity is eligible removes that
        -- future opportunity from the denominator; cancel AFTER leaves the
        -- historical opportunity exactly as it stood. See decisions.md.
+       topic_id null)                            -- 0034, Phase H
+       -- fk (topic_id, category_id) → topics (id, category_id) on delete
+       -- set null (topic_id) -- same composite-FK shape as
+       -- curriculum_item_id above, one level down the taxonomy. Copied from
+       -- curriculum_items.topic_id by pick_curriculum_item() at pick time,
+       -- not re-copied on an idempotent re-pick, same treatment
+       -- original_estimated_minutes (0033) already gets. NOT the same field
+       -- as plan_categories.topic_type -- see 0034's migration header.
   -- blocks.elapsed_seconds is a client-maintained convenience mirror. It is NOT a
   -- trustworthy focus-time source — the rollup job must use focus_sessions/the ledger.
   -- blocks.started_at (0001) was a dead column -- nothing wrote it -- until
@@ -249,9 +305,20 @@ focus_sessions(id, user_id, room_id null, block_id null,
                check ((state = 'running') = (completed_at is null)),
                check (paused_at is null or state = 'running'),
                unique(id, user_id),
-               fk (block_id, user_id) → blocks (id, user_id) on delete set null (block_id))
+               fk (block_id, user_id) → blocks (id, user_id) on delete set null (block_id),
+               plan_id null, category_id null, topic_id null,          -- 0034, Phase H
+               fk (plan_id, user_id)      → plans (id, user_id)           on delete restrict,
+               fk (category_id, plan_id)  → plan_categories (id, plan_id) on delete restrict,
+               fk (topic_id, category_id) → topics (id, category_id)     on delete set null (topic_id))
   -- unique index focus_sessions_one_running (user_id) where state = 'running'
   -- Clients get SELECT only; all writes go through the RPCs in §5.
+  -- plan_id/category_id/topic_id (0034) are ATTRIBUTION SNAPSHOTS, captured
+  -- ONCE by start_session() from the linked block's own values at
+  -- session-start time -- never re-derived from a later join. A category
+  -- RENAME never touches them (an id-based FK is unaffected by a rename);
+  -- they exist so even a future RE-POINT of a block onto a different
+  -- category could never silently rewrite a past session's attribution.
+  -- NULL for a blockless session and for every pre-0034 session. api.md §3q.
   -- PAUSE IS NOT A STATE. A paused session is state='running' with paused_at set —
   -- see §5's "Pause is a sub-state" note for why a fourth state was rejected.
 
@@ -599,6 +666,8 @@ The rules that produced it:
 | `task_priority_changed` | **server**, no producer yet (0033) | vocabulary + payload shape ready; no editor UI exists |
 | `task_disposition_set` | **server** — `transition_block_status()` (0033) | only on a REAL disposition change |
 | `task_deleted` | **server**, no producer yet (0033) | vocabulary ready; no delete-block UI exists yet |
+| `plan_target_changed` | **server** — `set_plan_target_date()` (0034) | payload carries `from_date`/`to_date`; only on a REAL change |
+| `category_target_changed` | **server** — `set_category_target()` (0034) | payload carries `field` (`weekly_target_blocks`/`score_weight`), `from`, `to`; only on a REAL change |
 
 **Deliberately not events:** `first_session_started`, `returned_day_2`, `returned_day_7`,
 `streak_broken` — all derivable from the rows above, so storing them would create a second,
@@ -615,6 +684,15 @@ migration's own header and api.md §3p. Three of the nine (`task_estimate_change
 block's priority/estimate after it is picked, and no delete-block UI beyond a raw client `DELETE`
 via `blocks_owner_all`. Their vocabulary and payload shape are ready for whichever future feature
 builds that surface.
+
+**0034 (Phase H) is evidence too, same posture.** `plan_target_changed`/`category_target_changed`
+preserve goal/target-intention data (a moved deadline, a raised category weight) that was already
+mutable and already overwritten in place with no record. Both have real producers
+(`set_plan_target_date()`/`set_category_target()`) — unlike 0033's three unwired kinds, these ship
+with a working RPC even though no settings UI calls either one yet. `topics`/`*.topic_id` (also
+0034) are NOT ledger events at all — taxonomy is content, like `curriculum_items`, not a fact
+stream — see `topics`' own entry in §2 and this migration's header for why, and for the full
+distinction from the unrelated `plan_categories.topic_type`.
 
 Adding a kind means editing two places that must stay in sync: the `activity_events_kind_check`
 constraint, and — only if clients should be able to emit it — the whitelist inside
@@ -694,8 +772,9 @@ erroring; where the grant itself is revoked, it errors with `42501`.
 | Table | A client can | Written by |
 |---|---|---|
 | `profiles` | select, insert, update | client (own row); trigger on `auth.users` insert |
-| `plans`, `plan_categories` | select, insert, update (**no delete**) | client |
-| `curriculum_items`, `blocks`, `proofs`, `notes`, `companies`, `tutor_conversations` | select, insert, update, delete | client; `blocks` also by `pick_curriculum_item()` (0012), `schedule_block()` (0019) and `settle_block_outcome()` (0023) |
+| `plans`, `plan_categories` | select, insert, update (**no delete**) | client; also `set_plan_target_date()`/`set_category_target()` (0034) when evidence must be minted |
+| `curriculum_items`, `blocks`, `proofs`, `notes`, `companies`, `tutor_conversations` | select, insert, update, delete | client; `blocks` also by `pick_curriculum_item()` (0012/0034) and `schedule_block()` (0019) and `settle_block_outcome()` (0023) |
+| `topics` | select, insert, delete; update **only of `label`/`sort_order`** (`parent_topic_id`/`category_id`/`name` have no client UPDATE grant at all — `42501`, not merely discouraged) | client; `parent_topic_id`/`category_id`/`name` only by `create_topic()` (0034) — see §2 and decisions.md 2026-09-16 |
 | `feedback` | select, insert (**no update/delete**) | client |
 | `ai_provider_settings` | select, insert, update (**no delete**) | client (own row) |
 | `activity_events` | **select only** | `record_event()` / `append_event()` |

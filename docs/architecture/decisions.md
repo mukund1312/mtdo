@@ -32,6 +32,11 @@ plan docs (`docs/designs/*.md`). Each entry: the call, and the reason.
 | 2026-09-12 | **One shared `session_focus_seconds()`, replacing the formula spelled out separately in `recompute_daily_rollups()` and `weekly_performance()`** (`0023`) | Pause makes "elapsed" and "focus time" different quantities for the first time. The two existing copies of the old formula had *already* drifted before anything forced them to (different return types, different negative-clamping), which is the argument for consolidating rather than editing both — the next change to this rule cannot now reach one consumer and miss the other |
 | 2026-09-07 | **Curriculum reaches the board as an unlocking, carry-forward weekly menu the user picks from — it is never scheduled onto a calendar date** (`0012`, api.md §3b) | `prompt.ts` rule 2, `core.py`'s `categories_for_day()` and `types.ts` all already say curriculum is "not locked to a specific calendar day"; `plan_categories.days` is a COUNT for curriculum categories (`days.length` = day-lists per week), not a weekday filter. A `floor((today - plan_start)/7)` bridge would have looked right and quietly rebuilt the day-by-day schedule the product abandoned. Carry-forward rather than the terminal app's use-it-or-lose-it because a generated plan holds exactly two weeks of content, so one missed week would cost half the plan |
 | 2026-09-15 | **`blocks.disposition` is current/terminal state only — `'rescheduled'` is deliberately absent from its CHECK — and cancellation timing gates the denominator, not the deletion** (`0033`, api.md §3p) | Full writeup below |
+| 2026-09-16 | **`topics` (recursive taxonomy) is a completely separate concept from `plan_categories.topic_type` (a fixed, category-wide CS tag) — same name-adjacency, unrelated fields, never joined** (`0034`, api.md §3q) | Full writeup below |
+| 2026-09-16 | **`topics.parent_topic_id`/`category_id`/`name` are reachable ONLY through `create_topic()` — a table-level `UPDATE` revoke plus a column-level grant of just `(label, sort_order)`, not RLS** (`0034`, api.md §3q) | A cycle in a self-referencing chain can never be caught by a CHECK constraint, and unlike ordinary "corrupt your own data" (which a CHECK still backstops), an uncaught cycle is a standing hazard for every FUTURE consumer that ever walks the tree, not a one-time risk to the user who caused it — closed at the grant level rather than left as a documented, accepted client-side bypass. Column-level privileges are ADDITIVE with table-level ones in Postgres, so the table grant has to be revoked first, then re-granted per column, or the revoke is a no-op |
+| 2026-09-16 | **`create_topic()`'s depth limit and cycle guard remain ONE mechanism (a bounded ancestor-chain walk), kept as defense-in-depth after the grant fix above** (`0034`, api.md §3q) | A CHECK constraint can express neither (both require walking a self-referencing tree); the bound also covers a cycle introduced by a non-client write path (a migration, a service-role job — both bypass grants) even though no client-reachable write can build one any more |
+| 2026-09-16 | **`focus_sessions.plan_id/category_id/topic_id` are captured once, at `start_session()` time, never read live off the linked block** (`0034`, api.md §3q) | A category/topic rename never rewrites history either way (an id-based FK is unaffected by a rename), but a live join WOULD silently rewrite attribution if a block were ever re-pointed onto a different category/topic later — snapshotting closes that even though nothing does a re-point today |
+| 2026-09-16 | **Evidence-minting for goal/category-target changes goes through `security definer` RPCs (`set_plan_target_date()`/`set_category_target()`), not a trigger** (`0034`, api.md §3q) | Same reasoning as the `daily_rollups` trigger rejection (2026-09-06 below), applied to evidence rather than aggregation: a trigger puts the ledger write on the user's own edit transaction (a ledger failure would fail an otherwise-valid update), and cannot express "only mint on a REAL change" any more cleanly than the RPC's own `IS DISTINCT FROM` guard while adding a second, harder-to-audit write path |
 
 ---
 
@@ -1016,6 +1021,129 @@ it was: a failed transition must not fail an otherwise-valid session. Grepping e
 `.from("blocks")` call site in `web/` for `.update(` after this migration turns up exactly one
 remaining raw write — `calendar-deck.tsx`'s `saveBlockNotes`, `notes` only, a non-lifecycle field
 correctly outside this migration's scope.
+
+## 2026-09-16 — Goal/taxonomy evidence (Phase H, migrations/0034)
+
+Same charter as Phase G (0033, above): evidence, not a metric. Two real gaps closed:
+
+1. `plans` had no target/deadline column at all — a user moving a goal from "pass by December" to
+   "pass by March" was real planning evidence with nowhere to even be written, let alone recorded.
+2. `plan_categories.weekly_target_blocks` (0021) and `.score_weight` (0001) were both already
+   client-mutable with no record of what they used to be — the same "current-state column, no
+   history" gap 0033 closed for `blocks.status`/`disposition`, but for intention data instead of
+   task lifecycle.
+
+Plus two structural additions with no ledger involvement at all: a recursive `topics` taxonomy
+(`curriculum_items`/`blocks` point at the **leaf** topic only), and `focus_sessions` attribution
+snapshots (`plan_id`/`category_id`/`topic_id`, captured once at `start_session()` time).
+
+### The naming hazard was real, and worth the up-front weight
+
+`plan_categories.topic_type` already existed and reads, at a skim, like it should be the same
+concept as the new `topics` table — it is not, at all: one is a fixed four-value CS tag selecting
+a coaching/soundtrack bucket, the other is an open-ended recursive taxonomy. Both api.md §3q and
+this migration's own header lead with the distinction, in block-letter form, before any schema
+detail — the brief was explicit that this needed to be prominent, not just correct, and the two
+names really are adjacent enough (`topic_type` vs. `topics`/`topic_id`) that a future skim-reader
+is the actual audience for that emphasis, not a hypothetical reviewer.
+
+### The `parent_topic_id` cycle hole is closed at its source, not documented as an accepted risk
+
+**Revised 2026-09-16, after review.** The first pass of this migration gave `topics` the exact
+`curriculum_items_owner_all` RLS pattern the brief asked for (full CRUD via the ownership-chain
+`exists` join) and accepted, as a documented risk, that a client could therefore still directly
+`UPDATE topics.parent_topic_id` and hand-corrupt their own chain into a cycle — reasoning that the
+depth/cycle guard was a data-integrity concern, not a security boundary, and drawing the same
+"table stays client-writable, RPC is the sanctioned path" line already accepted for
+`blocks.disposition` in 0033 (a raw client `UPDATE` there produces a value the CHECK constraint
+catches; the risk is bounded by that backstop).
+
+That comparison doesn't actually hold for a cycle. A bad `blocks.disposition` value is caught the
+moment anything reads it — there's a CHECK constraint standing behind the bypass. A cycle in
+`parent_topic_id` has **no equivalent backstop**: nothing in the schema can reject it, and the
+danger isn't borne by the user who created it — it's inherited by **every future consumer** that
+ever walks the parent chain (a mastery rollup, a breadcrumb UI, an export that nests topics), each
+of which would have to independently remember to bound its own walk or risk hanging. That's a
+standing tax on code that doesn't exist yet, not a one-time, self-contained risk — a materially
+different class of problem from "a user can corrupt their own data," and worth closing rather than
+documenting.
+
+**The fix**: `topics.parent_topic_id`, `.category_id`, and `.name` are no longer reachable by any
+client `UPDATE` at all. Postgres column-level privileges are *additive* with table-level ones, so
+a bare `revoke update (parent_topic_id) on topics from authenticated` would have done nothing
+while the table-level `UPDATE` grant (Supabase's own default privileges) was still in force — the
+fix is `revoke update on public.topics from anon, authenticated` FIRST, then
+`grant update (label, sort_order) on public.topics to authenticated`, re-opening only the two
+columns that are genuinely safe for a client to touch directly (cosmetic, structurally inert).
+`create_topic()` is now the *only* way to set or move a topic's parent, for any user, full stop —
+not merely the *sanctioned* way with a documented bypass sitting beside it. RLS (`topics_owner_all`)
+is unaffected either way: grants and policies are checked independently, and for
+`parent_topic_id`/`category_id`/`name` specifically, the grant now makes `topics_owner_all`'s own
+predicate moot — there is no row for which that `UPDATE` can succeed regardless of ownership.
+
+`create_topic()`'s bounded ancestor-chain walk (depth limit *and* cycle guard, one mechanism —
+walk from the proposed parent up through its own ancestors, counting hops, require reaching a root
+within `v_max_depth` hops) is **kept as defense-in-depth, not removed**, even though no
+client-reachable write path can build a cycle any more: `create_topic()` is itself insert-only (a
+freshly-inserted row can never already be its own ancestor), so the only way a cycle could ever
+reappear is a non-client write path — a future migration, or a service-role job, both of which
+bypass grants the way only `postgres`/`service_role` can. The bound means that if one ever did,
+`create_topic()` would still fail loudly (`22023`) rather than hang, instead of assuming the
+now-closed invariant holds forever just because today's write paths preserve it.
+
+Test 9 in `23_goal_taxonomy_evidence.sql` was inverted to match: it now proves the direct-`UPDATE`
+bypass is **blocked** (`42501`, on all three structural columns), proves `label`/`sort_order` stay
+directly client-writable (so the restriction reads as a deliberate narrow allowlist rather than
+topics having quietly gone fully read-only), and keeps one defense-in-depth assertion — simulating
+a non-client write via a `postgres`-role `UPDATE` (the one path that still bypasses grants) — to
+prove the bounded walk still catches a cycle if one is ever introduced that way, rather than
+letting that code path go untested now that the client-side route to it is gone.
+
+### `create_topic()` is insert-only — no reparent/rename RPC
+
+Flagged as a judgment call: the brief's column list and depth/cycle requirement describe the shape
+of the write path but don't ask for a topic-editor UI, and none exists in the product today (same
+"no producer yet" posture 0033 established for `task_estimate_changed`). Renaming, reordering, or
+deleting an existing topic stays an ordinary client write under `topics_owner_all` — only
+*attaching a topic with a parent* is guarded, because that's the one operation whose invariant a
+CHECK constraint cannot express. A future reparent feature would need its own depth/cycle-checked
+RPC (the same ancestor-walk logic, run from the topic being moved rather than from a fresh insert)
+— not built here, since nothing calls it yet.
+
+### `category_target_changed` does not replace `apply_weekly_plan_change()`'s own audit trail
+
+`weekly_target_blocks` already has a second, independent evidence path: `apply_weekly_plan_change()`
+(0022) writes its own before/after values into `weekly_plan_changes` when a proposed rules-engine
+change is accepted. This migration's `set_category_target()` was kept deliberately separate rather
+than folded into or replacing that path — `weekly_plan_changes` is scoped to the rules-engine
+proposal/accept lifecycle (with its own `signal`/`reason`/`status` columns that a direct user edit
+has no equivalent for), while `set_category_target()` exists for a *direct* user-driven change (no
+UI calls it yet, but a future settings editor would). The two ledger trails are not unified into
+one query today — flagged as a real judgment call, and a plausible follow-up if a future feature
+ever needs "every reason this category's target has ever moved" in one place.
+
+### Import/export's `topic` resolution goes through `create_topic()`, not a raw insert
+
+`persist.ts` could have inserted `topics` rows directly (the table is client-writable). It calls
+`create_topic()` instead, even though every topic an import creates today is parent-less and so
+never exercises the depth/cycle guard in practice — the reasoning was keeping exactly one
+sanctioned creation path for topics rather than two, so a future change to `create_topic()`'s
+validation (e.g. a name-format rule) can't be silently bypassed by the one call site that predates
+it. The extra round trip (one RPC call per distinct topic name per category) is negligible at
+onboarding's scale.
+
+### Judgment calls flagged, condensed
+
+- `topics.name` has no snake_case/slug format requirement (unlike `plan_categories.name`) — the
+  brief's column list gives no format, and the import path passes the same free-text string for
+  both `name` and `label`. Revisit if a future feature needs `name` to be a stable machine key.
+- No uniqueness constraint on `(category_id, parent_topic_id, name)` — sibling topics with the same
+  name are possible (e.g. a future editor's double-submit). Not requested, and `persist.ts`'s
+  own per-import dedup makes it a non-issue for the one real caller today.
+- `set_category_target()`'s `p_value numeric` covers both `weekly_target_blocks` (integer) and
+  `score_weight` (numeric) with one signature rather than two typed RPCs, validating
+  whole-number-ness for the former inside the function body instead of at the type level — kept
+  the RPC surface to one function per the brief's "these need a write path" framing.
 
 ## Open, not yet decided
 

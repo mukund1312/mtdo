@@ -66,6 +66,16 @@ export function buildBlankPlanTemplate(): Record<string, unknown> {
         "else -- school subjects, certifications, hobbies, fitness -- just omit it " +
         "entirely; you still get a real, useful, subject-neutral coaching framework, " +
         "just not one pre-tuned to a specific CS topic.",
+      rule_5b_topic_is_not_topic_type:
+        "\"topic\" (set on an individual RICH curriculum item, e.g. " +
+        "{\"task\": \"SQL Joins\", \"topic\": \"Joins\", ...}) is a completely different, " +
+        "unrelated field from \"topic_type\" above (rule_4) despite the similar name -- " +
+        "topic_type is one of four fixed CS tags for a whole category; \"topic\" is a " +
+        "free-text label for the fine-grained subtopic THIS ONE item belongs to (e.g. " +
+        "'Joins', 'Graphs', 'BFS'), and can be as specific as you like. A category can " +
+        "have both a topic_type AND items with their own topic at the same time -- " +
+        "neither is derived from the other. Entirely optional; omit it and nothing " +
+        "about the plan changes.",
       rule_5_coaching_framework_is_where_real_personalization_happens:
         "A category can carry its own \"coaching_framework\": {\"ask_yourself\": [...], " +
         "\"interview_check\": [...], \"focus_on\": [...], \"mistakes\": [...], " +
@@ -126,6 +136,7 @@ export function buildBlankPlanTemplate(): Record<string, unknown> {
           [
             {
               task: "SQL Joins",
+              topic: "Joins",
               focus_points: ["INNER JOIN", "LEFT JOIN", "RIGHT JOIN"],
               questions: ["When does LEFT JOIN return NULL?", "Why use JOIN instead of a subquery?"],
               interview_questions: ["Explain all joins with examples.", "Compare JOIN vs UNION."],

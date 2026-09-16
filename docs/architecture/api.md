@@ -1818,6 +1818,147 @@ error posture exactly — a failed transition must not fail an otherwise-valid s
 remaining raw `blocks` `UPDATE` anywhere in `web/` is `calendar-deck.tsx`'s `saveBlockNotes`, which
 writes only `notes` — a non-lifecycle field, correctly out of this migration's scope.
 
+## 3q. Goal/taxonomy evidence — target dates, category targets, recursive topics, session attribution (Phase H, migrations/0034)
+
+**This section adds evidence, not a metric** — same governing principle as §3p: Observation ≠
+derived feature ≠ inference ≠ recommendation. Nothing here computes a rate, a score, or a rule.
+
+### !! NAMING HAZARD !! `topic_type` vs `topics`/`topic_id` — read this before touching either
+
+`plan_categories.topic_type` **already existed** (0001) and means something completely different
+from everything below:
+
+- **`topic_type`** (existing, untouched) — a coarse, **category-wide** CS tag: `dsa` / `backend` /
+  `database` / `system_design` / null. Selects a built-in coaching-framework bucket
+  (`web/lib/coaching/build-coaching-content.ts`) and a soundtrack mapping
+  (`soundtrack_preferences`, 0026). Shipped in the `mtdo.plan.v1` schema, `prompt.ts`,
+  `blank-template.ts`, and the terminal app's `goals_template.json`/`config.py`.
+- **`topics` / `*.topic_id`** (new, 0034) — a fine-grained, **recursive** taxonomy tier a category
+  can have arbitrarily many of, nested arbitrarily deep (bounded — see below): `DSA` (a category,
+  via `topic_type: "dsa"`) → `Graphs` (a `topics` row, `parent_topic_id` null) → `BFS` (a `topics`
+  row, `parent_topic_id` = Graphs' id). `curriculum_items.topic_id`/`blocks.topic_id` point at the
+  **leaf topic only**.
+
+These are never joined, conflated, or derived from one another anywhere in this migration. A
+category can have a `topic_type` and a `topics` tree at the same time, entirely independently.
+
+### `set_plan_target_date(p_plan_id uuid, p_target_date date) → plans`
+
+Sets or clears (`p_target_date` null) `plans.target_date` — a nullable, no-default column; an
+existing plan genuinely has no target, and this column reads that honestly rather than guessing
+one. Mints `plan_target_changed { plan_id, from_date, to_date }` **only on a real change**
+(`IS DISTINCT FROM` the prior value) — an unchanged re-call, including re-passing an existing
+null, mints nothing. `plans` stays otherwise client-writable; this is a correctness/evidence RPC,
+not an access-control one, same posture `schedule_block()` (§3d) already has.
+
+### `set_category_target(p_category_id uuid, p_field text, p_value numeric) → plan_categories`
+
+Sets `plan_categories.weekly_target_blocks` or `.score_weight` — `p_field` is one of those two
+names (`22023` otherwise). `score_weight` must be non-negative and non-null (the column is `not
+null default 1`); `weekly_target_blocks` may be null (clearing it back to "never explicitly set")
+or a non-negative whole number. Mints `category_target_changed { category_id, field, from, to }`
+only on a real change.
+
+**Does not replace `apply_weekly_plan_change()` (§3g)**, which keeps its own `weekly_plan_changes`
+audit trail for the deterministic rules-engine path, untouched by this migration. This RPC is the
+evidence-producing path for a **direct** user-driven change to either field — no settings UI calls
+it yet (vocabulary + RPC ready, same "ready, no producer yet" posture §3p established for
+`task_estimate_changed`/`task_priority_changed`).
+
+### Why an RPC, not a trigger, for either of the above
+
+Same reasoning `decisions.md`'s 2026-09-06 `daily_rollups` entry already gives for rejecting a
+trigger there, applied to evidence-minting instead of aggregation: a trigger would put the ledger
+write on the same transaction as the user's own edit, where a ledger failure fails an otherwise
+valid target/category update for the sake of a derived record; and a trigger reading `OLD`/`NEW`
+cannot express "only mint on a real, semantic change" any more cleanly than the RPC's own `IS
+DISTINCT FROM` guard already does, while adding a second, harder-to-audit place the write path
+could diverge from what these RPCs document.
+
+### Recursive `topics` — `create_topic(p_category_id uuid, p_name text, p_label text, p_parent_topic_id uuid default null, p_sort_order integer default 0) → topics`
+
+`topics(id, category_id, parent_topic_id null → topics(id), name, label, sort_order, created_at)`.
+Owner-only RLS (`topics_owner_all`) via the same ownership-chain `exists` join
+`curriculum_items_owner_all` (0001) already uses, for SELECT/INSERT/DELETE and for UPDATE of
+`label`/`sort_order` only — see the grant note below for `parent_topic_id`/`category_id`/`name`.
+`parent_topic_id` is included now, deliberately, even though no UI populates it deeply yet: it's
+free today and avoids a real taxonomy migration battle later.
+
+**A CHECK constraint cannot express a depth limit or a cycle guard** — both require walking the
+tree. `create_topic()` walks the proposed parent's own ancestor chain, counting hops, and rejects
+(`22023`) if a root (`parent_topic_id is null`) isn't reached within the bound. **Max depth is 5,
+counted from 1** (a root topic) — comfortably past the brief's own worked example
+(`DSA[category] → Graphs[1] → BFS[2]`, only 2 topic levels) with three more tiers of headroom,
+while still bounding the walk to a handful of row reads. One mechanism covers both failure modes:
+a genuinely-too-deep clean chain, and a chain that's been corrupted into a cycle, both fail to
+terminate within the bound and both come back `22023`. `create_topic()` is **insert-only** — there
+is no reparent/rename RPC (no topic-editor UI exists yet); renaming, reordering, or deleting an
+existing topic stays an ordinary client write.
+
+**`create_topic()` is the ONLY way to set or move a topic's parent — closed at the grant level, not
+merely the sanctioned convention.** `parent_topic_id`, `category_id`, and `name` have **no client
+UPDATE grant at all**: `revoke update on public.topics from anon, authenticated` followed by
+`grant update (label, sort_order) on public.topics to authenticated`. Postgres column-level
+privileges are *additive* with table-level ones — a bare column-level `REVOKE` alone would have
+done nothing while the table-level `UPDATE` grant (Supabase's own default privileges) was still in
+force, so the table grant has to be revoked first. A client `UPDATE` touching any of the three
+structural columns now fails on **privileges** (`42501`), before RLS is even evaluated — RLS
+(`topics_owner_all`) is otherwise unaffected, since grants and policies are checked independently.
+This closes the cycle hole at its source rather than leaving it as a documented, accepted
+client-side bypass (see decisions.md 2026-09-16 for the full reasoning: a cycle has no CHECK-level
+backstop the way an invalid `blocks.disposition` does, and the risk compounds onto every future
+consumer that ever walks the tree, not just the user who created it). `create_topic()`'s bounded
+ancestor walk is kept as **defense-in-depth**, not removed — it still protects against a cycle
+introduced by a non-client write path (a future migration, a service-role job), even though no
+client-reachable write can build one any more.
+
+### `curriculum_items.topic_id` / `blocks.topic_id` — leaf-only, mirrors 0012's composite FK exactly
+
+Both are `(topic_id, category_id) → topics (id, category_id) on delete set null (topic_id)` —
+identical shape to `blocks_curriculum_item_fk` (0012): a topic can't belong to one category while
+the item/block claiming it belongs to another. `pick_curriculum_item()` copies
+`curriculum_items.topic_id` onto the new block at pick time, exactly as `curriculum_item_id`/
+`original_estimated_minutes` already are — not re-copied on an idempotent re-pick. NULL for every
+pre-0034 row and for any item/block with no subtopic — never inferred.
+
+### `focus_sessions` attribution snapshots — `plan_id`, `category_id`, `topic_id`
+
+Captured **once**, by `start_session()`, from the linked block's own values **at session-start
+time** — never re-derived from a later join. A category rename never touches these columns (an
+id-based FK is unaffected by a rename); they exist as their own columns specifically so even a
+future re-point of a block onto a different category could never silently rewrite what a past
+session actually attributed to. All three are nullable (a blockless session has nothing to
+attribute) and NULL for every pre-0034 session. `plan_id`/`category_id` use `on delete restrict`
+(same shape as `blocks_plan_fk`/`blocks_category_fk`, 0001 — this never fires in practice, since
+`plans`/`plan_categories` have no DELETE policy); `topic_id` uses `on delete set null (topic_id)`
+since a topic genuinely can be deleted (`topics` stays owner-writable) — `category_id` is
+untouched by a topic's own deletion.
+
+`start_session()`'s existing block-ownership check (§3p) is subsumed by the same `select
+b.plan_id, b.category_id, b.topic_id into ... from blocks where id = ... and user_id = ...` that
+resolves the snapshot — `if not found` after that select **is** the ownership check, replacing
+0033's separate `not exists(...)` probe.
+
+### Import/export gains an optional per-item `topic`
+
+`GeneratedTask.topic` (`web/lib/plan-generation/types.ts`) is an optional, free-text leaf-topic
+label on one **rich** curriculum item — e.g. `{"task": "SQL Joins", "topic": "Joins", ...}`. It is
+**not** `plan_categories.topic_type` (see the naming hazard above) — a category can carry both at
+once. `parseGeneratedPlan()`/`parseTask()` (`parse.ts`) validate it as a non-blank string when
+present and otherwise leave it `undefined`; omitting it changes nothing (verified against the
+existing `parse.test.ts` schema_version-backward-compatibility coverage — `parseGeneratedPlan()`
+rejects only an unsupported `schema_version` and silently ignores unknown/absent keys, so every
+pre-0034 `mtdo.plan.v1` file still loads unchanged).
+
+`persistGeneratedPlan()` (`persist.ts`) resolves each category's distinct `topic` names into real
+`topics` rows via `create_topic()` — the depth/cycle-guarded write path — before inserting
+`curriculum_items`, and stamps the resulting `topic_id` onto each item that named one. Every topic
+created this way is parent-less (the wire format carries no hierarchy yet, only a flat leaf name)
+and insert-only (no get-or-create-by-name): safe here because `persistGeneratedPlan()` always
+creates a brand-new `plan_categories` row first, so no same-named topic can already exist under it
+to collide with. `blank-template.ts` shows the field in its SQL example and documents the
+`topic`/`topic_type` distinction in a new `_read_this_first` rule.
+
 ## 4. The EmberMorph component contract
 
 `DESIGN.md` §Motion specifies the morph itself (`Graphite home → ember bloom → terminal focus

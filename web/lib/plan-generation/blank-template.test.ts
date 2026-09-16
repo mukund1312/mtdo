@@ -27,6 +27,17 @@ describe("buildBlankPlanTemplate", () => {
     expect(sql?.topic_type).toBe("database");
   });
 
+  it("shows the optional per-item topic field, distinct from the category's topic_type", () => {
+    const plan = parseGeneratedPlan(JSON.stringify(buildBlankPlanTemplate()), { weekCount: "any" });
+    const sql = plan.categories.find((c) => c.name === "sql");
+    const joinsItem = sql?.curriculum[0]?.[0];
+
+    expect(joinsItem).toMatchObject({ task: "SQL Joins", topic: "Joins" });
+    // topic_type stays a category-level field -- the rich item above carries
+    // its own "topic" alongside it, never instead of it.
+    expect(sql?.topic_type).toBe("database");
+  });
+
   it("ignores every underscore-prefixed instructional key, same as goals_template.json's own convention", () => {
     const template = buildBlankPlanTemplate();
     expect(Object.keys(template)).toContain("_instructions");

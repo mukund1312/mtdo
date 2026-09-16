@@ -101,3 +101,11 @@ oversight — the next wave with a genuinely new surface gets a canvas as normal
   `node_modules` presents as unrelated module-not-found errors.
 - **Check the migration number immediately before writing one** (`supabase migration list`), not at
   the start of a session. Two collisions have already happened this way.
+- **e2e runs against the live shared Supabase project, so any PR adding an RPC the frontend calls
+  cannot pass CI until its migration is applied live.** The order is always: push migration → CI
+  can go green → merge. Phase G's `web-e2e` failed with a silent no-op drag purely because
+  `transition_block_status()` did not yet exist remotely, while `supabase-tests` passed (it runs
+  migrations against a fresh local postgres, not the shared project) — that gap is exactly why this
+  note exists. This affects Phase H and Phase I too, since both add RPCs the frontend calls
+  (`set_plan_target_date()`/`set_category_target()`/`create_topic()` for H) — do not merge a PR for
+  either phase before its migration has actually been pushed to the live project.

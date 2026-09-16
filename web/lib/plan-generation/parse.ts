@@ -67,6 +67,16 @@ export function parseTask(raw: unknown, context: string): string | GeneratedTask
   if (!isNonBlankString(obj.task)) {
     throw new PlanGenerationError(`${context}: a rich curriculum item is missing "task".`);
   }
+  // NOT plan_categories.topic_type (a category-wide CS tag, validated in
+  // parseCategory below) -- this is the unrelated, per-item fine-grained
+  // subtopic field. See GeneratedTask.topic's own comment in types.ts.
+  let topic: string | undefined;
+  if (obj.topic !== undefined && obj.topic !== null) {
+    if (!isNonBlankString(obj.topic)) {
+      throw new PlanGenerationError(`${context}: "topic" must be a non-blank string when present.`);
+    }
+    topic = obj.topic;
+  }
   return {
     task: obj.task,
     focus_points: stringArray(obj.focus_points, "focus_points"),
@@ -76,6 +86,7 @@ export function parseTask(raw: unknown, context: string): string | GeneratedTask
     tips: stringArray(obj.tips, "tips"),
     mental_models: stringArray(obj.mental_models, "mental_models"),
     related_topics: stringArray(obj.related_topics, "related_topics"),
+    topic,
   };
 }
 
