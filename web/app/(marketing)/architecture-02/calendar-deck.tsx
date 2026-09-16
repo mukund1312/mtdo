@@ -13,7 +13,10 @@ import { laneStyle, layoutDayOverlaps, type LanePlacement } from "./calendar-ove
 // The Time deck (Phase 6 frontend, operating-engine plan). Renders and
 // reschedules real `blocks` rows against schedule_block() (docs/architecture/
 // api.md §3d) -- this replaces the honest "not built yet" placeholder that
-// lived inline in page.tsx since Phase 1.
+// lived inline in page.tsx since Phase 1. The detail popover's status
+// dropdown (updateBlockStatus, below) goes through transition_block_status()
+// (api.md §3p, migrations/0033) with source: 'calendar' instead of a raw
+// blocks update, for the same reason today-deck.tsx's Kanban drag does.
 //
 // Read schedule_block()'s contract carefully before touching this file: the
 // RPC REPLACES a schedule, it does not patch it, and all three optional args
@@ -440,12 +443,25 @@ export function CalendarDeck() {
     [load, syncedIds],
   );
 
+  // migrations/0033 -- transition_block_status() replaces the raw
+  // .update({ status }) this used to do, same rewrite today-deck.tsx's
+  // moveBlock() already got. source: 'calendar' is exactly why 'calendar'
+  // is in that RPC's provenance vocabulary -- this popover is a genuinely
+  // different surface than a Kanban drag, and the ledger should be able to
+  // tell them apart. p_disposition is deliberately omitted: this popover
+  // has no disposition concept of its own (unlike today-deck.tsx's Kanban
+  // drop, which infers 'completed' from a move to the done lane), so it is
+  // left for the RPC's own default (null) rather than guessed here.
   const updateBlockStatus = useCallback(async (block: CalendarBlock, status: BlockStatus): Promise<boolean> => {
     setWriteError(null);
     setMovingId(block.id);
     const supabase = createClient();
-    const { error } = await supabase.from("blocks").update({ status }).eq("id", block.id);
-    if (error) {
+    const { data, error } = await supabase.rpc("transition_block_status", {
+      p_block_id: block.id,
+      p_to_status: status,
+      p_source: "calendar",
+    });
+    if (error || !data) {
       console.error("[calendar] failed to update block status:", error);
       setWriteError(databaseErrorMessage(error, "We could not update that task's status."));
       setMovingId(null);

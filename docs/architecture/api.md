@@ -1643,6 +1643,181 @@ Unit-tested at every threshold boundary (`web/lib/review/insights.test.ts`), sam
 `classify.test.ts` — a rules engine's off-by-one comparison silently reclassifies real users and
 nothing else would notice.
 
+## 3p. Task/opportunity evidence — `transition_block_status()`, scheduling events, and the dead columns that now write (Phase G, migrations/0033)
+
+**This section adds evidence, not a metric.** Nothing here computes a rate, a score, or a rule —
+`review_*`/`weekly_performance()`/`daily_rollups`/`study_profile()` are untouched. The governing
+principle, restated because every choice below turns on it: **Observation ≠ derived feature ≠
+pattern ≠ inference ≠ recommendation.**
+
+### The problem this closes
+
+Three real gaps, all present since earlier phases:
+
+1. `schedule_block()` (§3d) **replaced** a block's calendar window and minted no event — a
+   cross-date move "leaves no trace at all" (0032's own header already said so).
+2. Kanban lane changes (`today-deck.tsx`'s `moveBlock`) minted an event only to/from `'done'`.
+   Every other transition (`todo → in_progress`, a backlog pull) was silent.
+3. `blocks.started_at` has existed since 0001 and was **never written by anything** — a dead
+   column since the table's first migration.
+
+### `transition_block_status(p_block_id uuid, p_to_status text, p_source text default 'manual', p_disposition text default null) → blocks`
+
+The one server-authoritative write path for a block's lifecycle. **Why this is an RPC even though
+`blocks` stays client-writable** — the exact same reasoning `settle_block_outcome()` (§3h)
+already established, not an RLS workaround: status, disposition, `claimed`, `started_at`, and
+`cancelled_at` are five things that must move together as one fact, and a client that wrote
+`status = 'in_progress'` directly (which `today-deck.tsx` did, until this migration) left
+`started_at` dead and the ledger silent.
+
+`p_to_status` is one of `backlog`/`todo`/`in_progress`/`done` (`22023` otherwise). `p_source` is
+**required provenance, not a decoration** — one of `focus_session`/`kanban_transition`/
+`calendar`/`manual`/`system`; defaults to `'manual'` only because a bare call with no more
+specific surface (psql, a test) has to resolve to *something*. `p_disposition`, when given, is one
+of `completed`/`skipped`/`abandoned`/`cancelled`/`not_due_yet` — **`'rescheduled'` is deliberately
+rejected** (`22023`), because disposition is current state, not history (see below).
+
+Atomically:
+
+- **`started_at` is set once, ever, and never overwritten.** Guarded on `started_at is null and
+  p_to_status = 'in_progress'` — a second transition into `in_progress` (e.g. a regression back
+  from `done`) leaves it exactly where it was. `start_session()` (below) shares this identical
+  guard on the same column; whichever path gets there first wins, permanently.
+- **`claimed` mirrors `status = 'in_progress'`**, folded in for parity with the raw
+  `.update({ claimed, status })` this replaces in `today-deck.tsx` — `claimed` is a purely
+  cosmetic "is a live timer on this" marker (the Kanban card's `is-claimed` CSS class), not
+  lifecycle evidence, but it has to move atomically with `status` or a reload shows a stale card.
+  `settle_block_outcome()` already owns this same column for the same reason.
+- **`cancelled_at` is set once**, on the first `disposition = 'cancelled'` write, never moved on a
+  repeat cancellation.
+- Mints `task_started { block_id, source }` — **only** on the first transition into `in_progress`.
+- Mints `task_status_changed { block_id, from, to, source, disposition }` — **only** on a real
+  change to `status` (`IS DISTINCT FROM` the prior value).
+- Mints `task_disposition_set { block_id, from, to, source }` — **only** on a real change to
+  `disposition`, as its own event kind separate from `task_status_changed`'s embedded field, so a
+  reader interested purely in "when was this task's fate decided" does not have to filter Kanban
+  lane noise out of `task_status_changed`.
+
+An unchanged re-call (same status, same disposition) mints **neither** guarded event — same
+"no event for a no-op" rule §3d's `schedule_block()` already applies.
+
+`start_session()` (§3h) gains the same one-time `started_at` stamp for its own entry point: if
+`p_block_id` is given and that block's `started_at` is still null, it is set and `task_started
+{source: 'focus_session'}` is minted. Both paths race to set the same honest fact; neither ever
+overwrites the other.
+
+### `schedule_block()` gains scheduling evidence — same signature, no client change
+
+`schedule_block()` (§3d) now mints `task_scheduled` (the first time a block ever carries a
+calendar window), `task_unscheduled` (a real window cleared), or `task_rescheduled` (an existing
+window changed) — **`calendar-deck.tsx` needs no change at all**, which is the entire point of
+minting this server-side. An unchanged re-save (identical start *and* end) mints nothing.
+
+```jsonc
+// task_rescheduled
+{ "block_id": "…",
+  "from_start_at": "…", "from_end_at": "…", "from_date": "2026-09-01",
+  "to_start_at": "…",   "to_end_at": "…",   "to_date": "2026-09-02",
+  "is_reschedule": true }
+```
+
+**Reschedule vs. harmless edit — deterministic, evaluated in this exact order, first match wins**
+(local date = the caller's own `profiles.timezone`, UTC fallback, same pattern as
+`recompute_daily_rollups()`/`pick_curriculum_item()`):
+
+1. The update happens **before** the block's old `scheduled_start_at` **and** the destination
+   stays on the same local date → `is_reschedule: false`. Nudging a task that has not started yet,
+   same day, changes nothing about whether the opportunity will be kept.
+2. Else the destination local date **differs** → `is_reschedule: true`, regardless of whether the
+   block had started. Moving to a different calendar day is always a real reschedule.
+3. Else the block had already started or passed (`now() >= old scheduled_start_at`) **and** the
+   new start is **later** than the old one → `is_reschedule: true`. This is the "avoid a failure by
+   pushing it back" case the whole classification exists to catch.
+4. Otherwise (a documented judgment call, not one of the brief's three worked examples — reachable
+   only when the block had already started and the new start is earlier or unchanged, same day) →
+   `is_reschedule: false`. There is no future eligibility window left to protect, so treating an
+   honest correction as gaming the record would misclassify it.
+
+Worked examples (also the exact fixtures in `supabase/tests/22_task_evidence.sql`):
+
+| Scenario | Result |
+|---|---|
+| At 08:00, moving 09:00–10:00 → 11:00–12:00 (same day, not yet started) | `false` (edit) |
+| At 09:20, moving 09:00 → 14:00 (already started) | `true` (reschedule) |
+| At 22:00, moving today → tomorrow (date changed) | `true` (reschedule) |
+
+### `pick_curriculum_item()` gains `original_estimated_minutes`
+
+Copied **once**, at pick time, from the curriculum item's `estimated_minutes` — never written
+again, including by the idempotent re-pick branch. `estimated_minutes` itself stays freely
+client-editable; this is what lets a future metric measure drift against the *original*
+commitment even as the current estimate moves.
+
+### Schema additions to `blocks` — all additive
+
+| Column | Meaning |
+|---|---|
+| `created_at timestamptz null default now()` | **Nullable, deliberately.** `ADD COLUMN` and `ALTER COLUMN ... SET DEFAULT` are two separate statements so the default governs future `INSERT`s only — every pre-0033 row reads real `NULL` (true creation date never captured), never a fabricated migration-run timestamp. Same null-over-guess law as `weekly_performance()`'s null-vs-0 discipline. |
+| `original_estimated_minutes integer null` | See above. |
+| `disposition text null` | **Current/terminal state only, never history** — see below. Written only by `transition_block_status()`. |
+| `deleted_at timestamptz null` | Soft-delete marker. **No producer today** — there is no delete-block UI beyond a raw client `DELETE` via `blocks_owner_all`. |
+| `cancelled_at timestamptz null` | Set once, on first cancellation — see below. |
+
+### Disposition is current state, not history
+
+One block can carry many **opportunities** over its life — scheduled Monday, rescheduled Tuesday,
+rescheduled Wednesday, completed Wednesday — but `blocks.disposition` is one column holding one
+value. It **cannot** represent "rescheduled off Monday, rescheduled off Tuesday, completed
+Wednesday"; the third fact overwrites the first two. So `disposition` is the block's CURRENT
+state only. Opportunity-level disposition is derived from the immutable event stream
+(`task_scheduled`/`task_rescheduled`/`task_status_changed`/`task_disposition_set`), never from
+this column — which is why `'rescheduled'` is deliberately absent from the CHECK. A block
+rescheduled twice then completed leaves **three** opportunities derivable from the ledger
+(`task_scheduled` + two `task_rescheduled` with `is_reschedule: true`) while `blocks.disposition`
+reads a single `'completed'`.
+
+### Cancellation must not erase past failure
+
+Without a rule, a user could improve a future "did you follow through" score by cancelling a task
+**after** already failing it — laundering a miss out of whatever denominator a future metric
+computes. The rule, for a future consumer to apply (nothing in 0033 computes it):
+
+- **Cancel BEFORE** an opportunity became eligible (e.g. before its `scheduled_start_at`) → that
+  future opportunity simply leaves the denominator.
+- **Cancel AFTER** an opportunity became eligible → the historical opportunity **stays** in the
+  denominator exactly as it stood. Cancelling only prevents *future* opportunities.
+- **DELETE** removes the object from active product state — it does **not** retroactively erase
+  historical evidence.
+- **Privacy erasure** (account deletion) is a separate, permitted process that may physically
+  remove rows. "Append-only" means immutable under normal product operation — it does not, and
+  must not, override a real privacy erasure (`auth.users`' `ON DELETE CASCADE` onto
+  `activity_events`, §2, already implements this).
+
+`cancelled_at` is what makes the before/after rule evaluable later: compare it against the
+relevant opportunity's `scheduled_start_at`/date.
+
+### Ledger additions
+
+Nine new kinds, all server-minted only, none added to `record_event()`'s client-appendable
+whitelist (§4): `task_scheduled`, `task_rescheduled`, `task_unscheduled`, `task_started`,
+`task_status_changed`, `task_disposition_set` (all with real producers above), plus
+`task_estimate_changed`, `task_priority_changed`, `task_deleted` (vocabulary and payload shape
+ready; **no producer exists yet** — there is no priority/estimate editor or delete-block UI
+anywhere in the product today, confirmed by inspection, not assumed). See schema.md §4 for the
+full table.
+
+### Every client status-write call site now goes through the RPC
+
+Four call sites wrote `blocks.status`/`claimed` directly before this migration, found by grepping
+every `.from('blocks')...update(...)` in `web/`, not assumed: `today-deck.tsx`'s `moveBlock`
+(`source: 'kanban_transition'`), `calendar-deck.tsx`'s `updateBlockStatus()` — the detail popover's
+status dropdown (`source: 'calendar'`) — and `session/page.tsx`'s two `claimed`/`status` writes on
+session start and on "focus longer" (`source: 'focus_session'`). All four now call
+`transition_block_status()`; the `session/page.tsx` sites keep their existing log-and-continue
+error posture exactly — a failed transition must not fail an otherwise-valid session. The only
+remaining raw `blocks` `UPDATE` anywhere in `web/` is `calendar-deck.tsx`'s `saveBlockNotes`, which
+writes only `notes` — a non-lifecycle field, correctly out of this migration's scope.
+
 ## 4. The EmberMorph component contract
 
 `DESIGN.md` §Motion specifies the morph itself (`Graphite home → ember bloom → terminal focus

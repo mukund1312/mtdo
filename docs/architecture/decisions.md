@@ -31,6 +31,7 @@ plan docs (`docs/designs/*.md`). Each entry: the call, and the reason.
 | 2026-09-12 | **Block-status transitions after a session go through `settle_block_outcome()`, even though `blocks` is freely client-writable** | Full writeup below |
 | 2026-09-12 | **One shared `session_focus_seconds()`, replacing the formula spelled out separately in `recompute_daily_rollups()` and `weekly_performance()`** (`0023`) | Pause makes "elapsed" and "focus time" different quantities for the first time. The two existing copies of the old formula had *already* drifted before anything forced them to (different return types, different negative-clamping), which is the argument for consolidating rather than editing both — the next change to this rule cannot now reach one consumer and miss the other |
 | 2026-09-07 | **Curriculum reaches the board as an unlocking, carry-forward weekly menu the user picks from — it is never scheduled onto a calendar date** (`0012`, api.md §3b) | `prompt.ts` rule 2, `core.py`'s `categories_for_day()` and `types.ts` all already say curriculum is "not locked to a specific calendar day"; `plan_categories.days` is a COUNT for curriculum categories (`days.length` = day-lists per week), not a weekday filter. A `floor((today - plan_start)/7)` bridge would have looked right and quietly rebuilt the day-by-day schedule the product abandoned. Carry-forward rather than the terminal app's use-it-or-lose-it because a generated plan holds exactly two weeks of content, so one missed week would cost half the plan |
+| 2026-09-15 | **`blocks.disposition` is current/terminal state only — `'rescheduled'` is deliberately absent from its CHECK — and cancellation timing gates the denominator, not the deletion** (`0033`, api.md §3p) | Full writeup below |
 
 ---
 
@@ -926,6 +927,95 @@ invalid-parameter, feature-not-supported). A constraint assertion did not *fail*
 Extended to also catch `23505`/`23514`/`23503`. Deliberately still a list rather than `when
 others`, which would swallow the "expected an error, got none" failure raised just above it and
 turn a clear message into a confusing errcode mismatch on `P0001`.
+
+## 2026-09-15 — Task/opportunity evidence: nine new ledger kinds, `transition_block_status()`, and the disposition/cancellation semantics (migrations/0033)
+
+Phase G of the operating-engine plan. This wave adds **evidence, not a new score** — no
+`review_*`/`weekly_performance()`/`daily_rollups`/`study_profile()` function was touched. The
+governing principle, already project law and worth restating because every call below turns on
+it: **Observation ≠ derived feature ≠ pattern ≠ inference ≠ recommendation.**
+
+### The three things that were silently destroyed before this migration
+
+1. `schedule_block()` (0019) **replaces** a block's calendar window and minted no event. 0032's own
+   header already named the gap: a cross-date move "leaves no trace at all" — "this schema has NO
+   'task rescheduled' event at all."
+2. Kanban lane changes (`today-deck.tsx`'s `moveBlock`) minted an event only to/from `'done'`.
+   Every other transition was silent.
+3. `blocks.started_at` has existed since the table's very first migration (0001) and was **never
+   written by anything** — a dead column for nine migrations.
+
+Full API contract for the new RPC and events is in api.md §3p; this entry is about the two
+judgment calls behind it that are worth a durable record.
+
+### `blocks.disposition` is current state, not history — `'rescheduled'` is deliberately absent
+
+A single column cannot hold "rescheduled off Monday, rescheduled off Tuesday, completed
+Wednesday" — the third write overwrites the first two. The temptation, when adding a `disposition`
+column, is to add `'rescheduled'` as a value so a reader can see "this got moved." That would be
+wrong: it would make the column lie the moment a block is rescheduled *twice*, silently collapsing
+real history into whichever reschedule happened to write last. The column is scoped instead to
+hold only what a block's *current, terminal* state can honestly be —
+`completed`/`skipped`/`abandoned`/`cancelled`/`not_due_yet` — and opportunity-level history (how
+many times something was actually rescheduled, and when) is answerable only from the immutable
+event stream. This is why `task_rescheduled`/`task_scheduled` are events and not disposition
+values, and it is the reason a block rescheduled twice then completed can show **three**
+opportunities in the ledger while `blocks.disposition` reads a single `'completed'` — that is the
+test this migration's suite locks in (`22_task_evidence.sql`, section 9), not an accident of the
+schema.
+
+### Cancellation timing gates the denominator; deletion never erases history
+
+The concrete abuse case that forced this: without a rule, a user could raise a future "did you
+follow through" score by cancelling a task **after** already failing it, laundering the miss out
+of whatever denominator a later metric computes over disposition. The fix is a timing rule, not an
+access restriction — cancelling is always allowed, but *when* it happens changes what it means:
+
+- Cancel **before** an opportunity became eligible (e.g. before its `scheduled_start_at`) → that
+  future opportunity simply never existed as far as any future score is concerned.
+- Cancel **after** it became eligible → the historical opportunity is untouched; cancelling only
+  prevents *future* ones on that block.
+
+Neither half of that rule is computed anywhere in 0033 — deliberately. Computing it belongs to
+whichever future metric reads `blocks.cancelled_at` against an opportunity's own timestamp; this
+migration's job was only to make the comparison possible by recording `cancelled_at` at all
+(previously nowhere to look).
+
+**Deletion is a separate axis from cancellation**, and gets its own, simpler rule: `DELETE`
+removes an object from *active product state* (it stops appearing on any board or calendar) — it
+does not retroactively erase *historical evidence*. The ledger's `task_deleted` event, and every
+event minted before it, stand exactly as they were; nothing about a delete rewrites the past.
+**Privacy erasure is explicitly carved out as a different thing entirely** — "append-only" means
+immutable under normal product operation, not a promise that overrides a real account-deletion /
+"delete my data" request. `auth.users`' `ON DELETE CASCADE` onto `activity_events` (0001) already
+implements real erasure when that is genuinely what is being asked for; this migration does not
+touch, weaken, or second-guess it.
+
+### What shipped without a producer, and why that is not a gap left open by accident
+
+`task_estimate_changed`, `task_priority_changed`, and `task_deleted` are in the ledger vocabulary
+and their payload shapes are documented in api.md §3p, but nothing in this migration mints any of
+the three. Checked, not assumed: there is no priority/estimate editor anywhere in the product past
+pick time, and no delete-block UI beyond a raw client `DELETE` via `blocks_owner_all`
+(`today-deck.tsx`/`calendar-deck.tsx` inspected directly). Inventing an RPC to mint an event for a
+UI action that does not exist would have meant guessing at that future feature's shape — exactly
+the kind of unrequested scope this migration's own "evidence, not a metric" charter argues against.
+The schema and vocabulary are ready the day that editor/delete flow is built; minting is that
+feature's job.
+
+Three more raw `.from('blocks').update({ status, ... })` call sites were found while auditing
+`web/` for this migration, alongside `today-deck.tsx`'s `moveBlock` (converted first):
+`calendar-deck.tsx`'s `updateBlockStatus()` (the detail popover's status dropdown) and
+`session/page.tsx`'s two `claimed`/`status` writes at session start and on "focus longer". All
+three were converted to `transition_block_status()` in the same migration, once it was confirmed
+(not assumed) that nothing else in the repository was actively editing those files — a
+worktree audit found `feature/mu/UAT-focus-mode-session-controls` had last touched
+`session/page.tsx` three days prior and had already merged to `main`, so there was no in-flight
+work to clobber. `session/page.tsx`'s existing log-and-continue error posture was kept exactly as
+it was: a failed transition must not fail an otherwise-valid session. Grepping every
+`.from("blocks")` call site in `web/` for `.update(` after this migration turns up exactly one
+remaining raw write — `calendar-deck.tsx`'s `saveBlockNotes`, `notes` only, a non-lifecycle field
+correctly outside this migration's scope.
 
 ## Open, not yet decided
 

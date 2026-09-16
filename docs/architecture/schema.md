@@ -188,9 +188,47 @@ blocks(id, user_id, plan_id, category_id, date, position, text,
        unique(user_id, date, category_id, position) DEFERRABLE INITIALLY DEFERRED,
        unique(id, user_id),
        fk (plan_id, user_id)     → plans (id, user_id)              on delete restrict,
-       fk (category_id, plan_id) → plan_categories (id, plan_id)    on delete restrict)
+       fk (category_id, plan_id) → plan_categories (id, plan_id)    on delete restrict,
+       -- 0033, Phase G (evidence, not a new metric) --------------------------
+       created_at timestamptz null default now(),
+       -- NULLABLE, deliberately: ADD COLUMN and ATTACH DEFAULT are two
+       -- separate ALTER statements (the column's own comment has the full
+       -- reasoning), specifically so the default governs INSERTs only and
+       -- never backfills an existing row with a fabricated timestamp.
+       -- Every pre-0033 block honestly reads NULL -- its true creation date
+       -- was never captured, and this column does not invent one -- while
+       -- every block created from 0033 onward carries a real value.
+       original_estimated_minutes null (check > 0),
+       -- Set EXACTLY ONCE by pick_curriculum_item(), from the curriculum
+       -- item's estimate at pick time. Never written again -- including by
+       -- an idempotent re-pick. estimated_minutes above stays freely
+       -- client-editable; this is what lets a future metric measure drift
+       -- against the ORIGINAL commitment.
+       disposition check in ('completed','skipped','abandoned','cancelled','not_due_yet') null,
+       -- CURRENT/terminal task state ONLY, never history -- deliberately
+       -- excludes 'rescheduled'. One block can carry many opportunities
+       -- over its life (rescheduled Mon, rescheduled Tue, completed Wed);
+       -- this column holds only the LAST of those. Opportunity-level
+       -- disposition is derived from the ledger, never from this column.
+       -- Written only by transition_block_status() (api.md §3p); blocks
+       -- otherwise stays client-writable, same posture settle_block_outcome()
+       -- (0023) established for status/notes.
+       deleted_at timestamptz null,
+       -- Soft-delete marker. NOTHING in the product sets or reads this yet
+       -- -- there is no delete-block UI beyond a raw client DELETE via
+       -- blocks_owner_all. Added alongside the task_deleted ledger kind so a
+       -- future delete flow needs no further migration.
+       cancelled_at timestamptz null)
+       -- Set once, on the first disposition = 'cancelled' write. Lets a
+       -- future consumer apply the cancellation-timing rule in 0033's
+       -- header: cancel BEFORE an opportunity is eligible removes that
+       -- future opportunity from the denominator; cancel AFTER leaves the
+       -- historical opportunity exactly as it stood. See decisions.md.
   -- blocks.elapsed_seconds is a client-maintained convenience mirror. It is NOT a
   -- trustworthy focus-time source — the rollup job must use focus_sessions/the ledger.
+  -- blocks.started_at (0001) was a dead column -- nothing wrote it -- until
+  -- 0033's transition_block_status() and start_session() both stamp it once,
+  -- guarded so neither ever overwrites the other's write.
 
 -- THE LEDGER (D14) — append-only, source of truth
 activity_events(id bigint identity pk, user_id, room_id null, session_id null,
@@ -548,7 +586,19 @@ The rules that produced it:
 | `session_started` | **server** — `start_session()` | |
 | `session_completed` | **server** — `complete_session()` | payload carries server-measured `elapsed_s` |
 | `session_abandoned` | **server** — `abandon_session()` | |
+| `session_paused` | **server** — `pause_session()` (0023) | pause is what makes focus time honest -- unfarmable |
+| `session_resumed` | **server** — `resume_session()` (0023) | |
+| `session_extended` | **server** — `extend_session()` (0023) | accepted "need more time?" |
 | `tutor_message_sent` | **server** — the future chat backend (service role) | makes the free-tier cap enforceable |
+| `task_scheduled` | **server** — `schedule_block()` (0033) | first time a block ever carries a calendar window |
+| `task_rescheduled` | **server** — `schedule_block()` (0033) | payload carries `is_reschedule` -- see api.md §3p for the classification |
+| `task_unscheduled` | **server** — `schedule_block()` (0033) | a real window was cleared |
+| `task_started` | **server** — `transition_block_status()` / `start_session()` (0033) | minted once, ever, by whichever gets there first |
+| `task_status_changed` | **server** — `transition_block_status()` (0033) | only on a REAL status change |
+| `task_estimate_changed` | **server**, no producer yet (0033) | vocabulary + payload shape ready; no editor UI exists |
+| `task_priority_changed` | **server**, no producer yet (0033) | vocabulary + payload shape ready; no editor UI exists |
+| `task_disposition_set` | **server** — `transition_block_status()` (0033) | only on a REAL disposition change |
+| `task_deleted` | **server**, no producer yet (0033) | vocabulary ready; no delete-block UI exists yet |
 
 **Deliberately not events:** `first_session_started`, `returned_day_2`, `returned_day_7`,
 `streak_broken` — all derivable from the rows above, so storing them would create a second,
@@ -556,6 +606,15 @@ divergeable source of truth (rule 1). **Deferred to W4a:** `joined_room_session`
 `room_created`, `room_joined`, `milestone_progressed` (rule 3). **Deferred to W6:** `upgraded`
 (no billing exists). **Not applicable:** the terminal app's TUI-only kinds (`app_launched`,
 `practice_lab_*`, `pty_*`).
+
+**0033 (Phase G) is evidence, not a new rule 4 exception.** The nine `task_*` kinds above exist to
+stop destroying observations (a cross-date `schedule_block()` move, a Kanban lane change, a
+task's first real start) that the product already made but the ledger never witnessed — see that
+migration's own header and api.md §3p. Three of the nine (`task_estimate_changed`,
+`task_priority_changed`, `task_deleted`) have no producer today: there is no editor UI for a
+block's priority/estimate after it is picked, and no delete-block UI beyond a raw client `DELETE`
+via `blocks_owner_all`. Their vocabulary and payload shape are ready for whichever future feature
+builds that surface.
 
 Adding a kind means editing two places that must stay in sync: the `activity_events_kind_check`
 constraint, and — only if clients should be able to emit it — the whitelist inside

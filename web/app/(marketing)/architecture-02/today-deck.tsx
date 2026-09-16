@@ -246,9 +246,27 @@ export function TodayDeck({ onOpenBlock }: { onOpenBlock: (block: TodayBlock) =>
     setWriteError(null);
     setUpdatingId(block.id);
     const supabase = createClient();
-    const { error } = await supabase.from("blocks")
-      .update({ claimed: nextStatus === "in_progress", status: nextStatus }).eq("id", block.id);
-    if (error) {
+    // migrations/0033 -- transition_block_status() replaces the raw
+    // .update({ claimed, status }) this used to do. React requests a
+    // transition; the server decides what evidence that transition is worth
+    // (started_at set once, task_started/task_status_changed/
+    // task_disposition_set minted as appropriate) rather than the client
+    // silently overwriting state with no trace, which is the exact gap this
+    // migration exists to close. `claimed` stays folded into this one call
+    // for parity with the raw update it replaces -- see that RPC's own
+    // comment for why the Kanban view still needs it.
+    //
+    // p_disposition is OMITTED, never passed as `null`, to hit the RPC's own
+    // SQL default -- same rule calendar-deck.tsx's schedule_block() calls
+    // already follow (see that file's own header comment): the generated
+    // types deliberately don't union optional RPC args with `null`.
+    const { data, error } = await supabase.rpc("transition_block_status", {
+      p_block_id: block.id,
+      p_to_status: nextStatus,
+      p_source: "kanban_transition",
+      ...(nextStatus === "done" ? { p_disposition: "completed" } : {}),
+    });
+    if (error || !data) {
       console.error("[today] failed to update block:", databaseErrorMessage(error, "Unknown database error."));
       setWriteError(databaseErrorMessage(error, "We could not move that signal. Try again."));
       setUpdatingId(null);
