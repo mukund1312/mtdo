@@ -41,6 +41,7 @@ export type Database = {
     Tables: {
       activity_events: {
         Row: {
+          client_event_id: string | null
           id: number
           kind: string
           occurred_at: string
@@ -50,6 +51,7 @@ export type Database = {
           user_id: string
         }
         Insert: {
+          client_event_id?: string | null
           id?: never
           kind: string
           occurred_at?: string
@@ -59,6 +61,7 @@ export type Database = {
           user_id: string
         }
         Update: {
+          client_event_id?: string | null
           id?: never
           kind?: string
           occurred_at?: string
@@ -462,6 +465,7 @@ export type Database = {
           block_id: string | null
           break_plan: Json | null
           category_id: string | null
+          check_in_state: string
           completed_at: string | null
           extended_s: number
           grace_expires_at: string | null
@@ -470,6 +474,9 @@ export type Database = {
           plan_id: string | null
           planned_duration_s: number
           room_id: string | null
+          self_confidence: number | null
+          self_difficulty: number | null
+          self_help_level: string | null
           started_at: string
           state: string
           topic_id: string | null
@@ -480,6 +487,7 @@ export type Database = {
           block_id?: string | null
           break_plan?: Json | null
           category_id?: string | null
+          check_in_state?: string
           completed_at?: string | null
           extended_s?: number
           grace_expires_at?: string | null
@@ -488,6 +496,9 @@ export type Database = {
           plan_id?: string | null
           planned_duration_s: number
           room_id?: string | null
+          self_confidence?: number | null
+          self_difficulty?: number | null
+          self_help_level?: string | null
           started_at?: string
           state?: string
           topic_id?: string | null
@@ -498,6 +509,7 @@ export type Database = {
           block_id?: string | null
           break_plan?: Json | null
           category_id?: string | null
+          check_in_state?: string
           completed_at?: string | null
           extended_s?: number
           grace_expires_at?: string | null
@@ -506,6 +518,9 @@ export type Database = {
           plan_id?: string | null
           planned_duration_s?: number
           room_id?: string | null
+          self_confidence?: number | null
+          self_difficulty?: number | null
+          self_help_level?: string | null
           started_at?: string
           state?: string
           topic_id?: string | null
@@ -1065,6 +1080,7 @@ export type Database = {
           block_id: string | null
           break_plan: Json | null
           category_id: string | null
+          check_in_state: string
           completed_at: string | null
           extended_s: number
           grace_expires_at: string | null
@@ -1073,6 +1089,9 @@ export type Database = {
           plan_id: string | null
           planned_duration_s: number
           room_id: string | null
+          self_confidence: number | null
+          self_difficulty: number | null
+          self_help_level: string | null
           started_at: string
           state: string
           topic_id: string | null
@@ -1091,8 +1110,45 @@ export type Database = {
         Returns: Json
       }
       activate_plan: { Args: { p_plan_id: string }; Returns: undefined }
+      answer_session_check_in: {
+        Args: {
+          p_id: string
+          p_self_confidence?: number
+          p_self_difficulty?: number
+          p_self_help_level?: string
+        }
+        Returns: {
+          block_id: string | null
+          break_plan: Json | null
+          category_id: string | null
+          check_in_state: string
+          completed_at: string | null
+          extended_s: number
+          grace_expires_at: string | null
+          id: string
+          paused_at: string | null
+          plan_id: string | null
+          planned_duration_s: number
+          room_id: string | null
+          self_confidence: number | null
+          self_difficulty: number | null
+          self_help_level: string | null
+          started_at: string
+          state: string
+          topic_id: string | null
+          total_paused_s: number
+          user_id: string
+        }
+        SetofOptions: {
+          from: "*"
+          to: "focus_sessions"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
       append_event: {
         Args: {
+          p_client_event_id?: string
           p_kind: string
           p_payload: Json
           p_room_id?: string
@@ -1100,6 +1156,7 @@ export type Database = {
           p_user_id: string
         }
         Returns: {
+          client_event_id: string | null
           id: number
           kind: string
           occurred_at: string
@@ -1149,6 +1206,7 @@ export type Database = {
           block_id: string | null
           break_plan: Json | null
           category_id: string | null
+          check_in_state: string
           completed_at: string | null
           extended_s: number
           grace_expires_at: string | null
@@ -1157,6 +1215,9 @@ export type Database = {
           plan_id: string | null
           planned_duration_s: number
           room_id: string | null
+          self_confidence: number | null
+          self_difficulty: number | null
+          self_help_level: string | null
           started_at: string
           state: string
           topic_id: string | null
@@ -1190,6 +1251,37 @@ export type Database = {
         SetofOptions: {
           from: "*"
           to: "topics"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
+      decline_session_check_in: {
+        Args: { p_id: string }
+        Returns: {
+          block_id: string | null
+          break_plan: Json | null
+          category_id: string | null
+          check_in_state: string
+          completed_at: string | null
+          extended_s: number
+          grace_expires_at: string | null
+          id: string
+          paused_at: string | null
+          plan_id: string | null
+          planned_duration_s: number
+          room_id: string | null
+          self_confidence: number | null
+          self_difficulty: number | null
+          self_help_level: string | null
+          started_at: string
+          state: string
+          topic_id: string | null
+          total_paused_s: number
+          user_id: string
+        }
+        SetofOptions: {
+          from: "*"
+          to: "focus_sessions"
           isOneToOne: true
           isSetofReturn: false
         }
@@ -1234,6 +1326,7 @@ export type Database = {
           block_id: string | null
           break_plan: Json | null
           category_id: string | null
+          check_in_state: string
           completed_at: string | null
           extended_s: number
           grace_expires_at: string | null
@@ -1242,6 +1335,9 @@ export type Database = {
           plan_id: string | null
           planned_duration_s: number
           room_id: string | null
+          self_confidence: number | null
+          self_difficulty: number | null
+          self_help_level: string | null
           started_at: string
           state: string
           topic_id: string | null
@@ -1262,6 +1358,7 @@ export type Database = {
           block_id: string | null
           break_plan: Json | null
           category_id: string | null
+          check_in_state: string
           completed_at: string | null
           extended_s: number
           grace_expires_at: string | null
@@ -1270,6 +1367,9 @@ export type Database = {
           plan_id: string | null
           planned_duration_s: number
           room_id: string | null
+          self_confidence: number | null
+          self_difficulty: number | null
+          self_help_level: string | null
           started_at: string
           state: string
           topic_id: string | null
@@ -1324,8 +1424,9 @@ export type Database = {
         Returns: number
       }
       record_event: {
-        Args: { p_kind: string; p_payload?: Json }
+        Args: { p_client_event_id?: string; p_kind: string; p_payload?: Json }
         Returns: {
+          client_event_id: string | null
           id: number
           kind: string
           occurred_at: string
@@ -1341,6 +1442,43 @@ export type Database = {
           isSetofReturn: false
         }
       }
+      record_session_check_in: {
+        Args: {
+          p_id: string
+          p_self_confidence?: number
+          p_self_difficulty?: number
+          p_self_help_level?: string
+          p_state: string
+        }
+        Returns: {
+          block_id: string | null
+          break_plan: Json | null
+          category_id: string | null
+          check_in_state: string
+          completed_at: string | null
+          extended_s: number
+          grace_expires_at: string | null
+          id: string
+          paused_at: string | null
+          plan_id: string | null
+          planned_duration_s: number
+          room_id: string | null
+          self_confidence: number | null
+          self_difficulty: number | null
+          self_help_level: string | null
+          started_at: string
+          state: string
+          topic_id: string | null
+          total_paused_s: number
+          user_id: string
+        }
+        SetofOptions: {
+          from: "*"
+          to: "focus_sessions"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
       refresh_weekly_plan_status: {
         Args: { p_weekly_plan_id: string }
         Returns: undefined
@@ -1351,6 +1489,7 @@ export type Database = {
           block_id: string | null
           break_plan: Json | null
           category_id: string | null
+          check_in_state: string
           completed_at: string | null
           extended_s: number
           grace_expires_at: string | null
@@ -1359,6 +1498,9 @@ export type Database = {
           plan_id: string | null
           planned_duration_s: number
           room_id: string | null
+          self_confidence: number | null
+          self_difficulty: number | null
+          self_help_level: string | null
           started_at: string
           state: string
           topic_id: string | null
@@ -1546,6 +1688,7 @@ export type Database = {
           block_id: string | null
           break_plan: Json | null
           category_id: string | null
+          check_in_state: string
           completed_at: string | null
           extended_s: number
           grace_expires_at: string | null
@@ -1554,6 +1697,9 @@ export type Database = {
           plan_id: string | null
           planned_duration_s: number
           room_id: string | null
+          self_confidence: number | null
+          self_difficulty: number | null
+          self_help_level: string | null
           started_at: string
           state: string
           topic_id: string | null
@@ -1577,6 +1723,7 @@ export type Database = {
           block_id: string | null
           break_plan: Json | null
           category_id: string | null
+          check_in_state: string
           completed_at: string | null
           extended_s: number
           grace_expires_at: string | null
@@ -1585,6 +1732,9 @@ export type Database = {
           plan_id: string | null
           planned_duration_s: number
           room_id: string | null
+          self_confidence: number | null
+          self_difficulty: number | null
+          self_help_level: string | null
           started_at: string
           state: string
           topic_id: string | null

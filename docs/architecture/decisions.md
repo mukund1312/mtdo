@@ -1145,6 +1145,111 @@ onboarding's scale.
   whole-number-ness for the former inside the function body instead of at the type level — kept
   the RPC surface to one function per the brief's "these need a write path" framing.
 
+## 2026-09-16 — Contextual sensors: client-event envelope, post-session check-in, tab-visibility (Phase I, migrations/0035)
+
+Same governing principle as 0033/0034: **observation, not a metric.** Three unrelated pieces of
+raw context, all additive: `activity_events.client_event_id` (real idempotency for a client
+append, not just debounce), `focus_sessions`' post-session check-in
+(`self_difficulty`/`self_confidence`/`self_help_level`, gated by `check_in_state`), and
+`session_visibility_changed` (raw `visibilitychange` observation, the one new client-minted
+kind). Full RPC signatures and the trigger rule: api.md §3r.
+
+### The eligibility rule is the one genuinely product-shaped decision in this migration, and it's contained to two constants
+
+The brief asked for "a concrete rule, documented, easy to change later" rather than specifying the
+floor or the cadence itself. Both ended up as single `constant` locals inside `settle_session()`
+(`v_min_focus_s := 600`, `v_sample_every := 3`), read by nothing else — changing either is a
+one-line edit, no migration required for a future tuning pass. The reasoning for each value (ten
+minutes filters an immediate misclick-abandon without excluding a real Pomodoro session;
+every-3rd is the smallest interval that still reads as conservative rather than "constant
+interruption") is honestly arbitrary past that floor-level justification — flagged in api.md §3r
+as a judgment call, not asserted as tuned.
+
+**Why periodic sampling, not difficulty-triggered, was the one part of this rule not left as an
+open judgment call.** The brief named this bias explicitly by example ("if confidence is only
+requested after hard sessions, a later 'average confidence 2.7' is biased by the sampling policy
+itself and nobody will be able to tell"), so `eligible_session_number % 3 = 0` is keyed on nothing
+but a running count of sessions clearing the real-focus-time floor — never on the session's
+difficulty, outcome, or duration beyond that one floor. This is the one place in the migration
+where "make a defensible, conservative default" and "the brief already named the specific trap to
+avoid" pointed at the same answer, so it wasn't treated as equally open to revisit as the floor/
+cadence constants above.
+
+**Both completed and abandoned sessions are eligible, folded under the same `periodic_sample`
+trigger** — flagged as a judgment call in api.md §3r. The brief's own framing for
+`session_visibility_changed` ("a flawless 50-minute timer proves a recorded session, not 50
+minutes of cognitive attention") reads as making the same point about an *abandoned* session in
+reverse: a session left early after real, measured focus time is not nothing. The vocabulary
+already carries `session_abandoned` as its own unwired `trigger_reason` for a future feature that
+wants to split this out; today both settle paths (`complete_session()`/`abandon_session()`) apply
+the identical rule because both call the same `settle_session()` body.
+
+### The authority guard: `offered_pending` is the only door, and it only opens once
+
+`record_session_check_in()` (the shared body behind `answer_session_check_in()`/
+`decline_session_check_in()`) refuses to move `check_in_state` at all unless it currently reads
+`offered_pending`. This is not incidental strictness — it's the mechanism that keeps "the client
+may only say 'record this answer'" true in the face of a client that could otherwise call either
+wrapper on any session it owns: without the guard, a client could manufacture a self-report on a
+session that was never offered one (indistinguishable, in the aggregate, from a real
+periodic-sample answer), or answer the same offer twice (silently overwriting an honest answer
+with a second, possibly-different one, or padding the answered count). Violating the guard raises
+`55006` (`object_not_in_prerequisite_state`) — the same code `start_session()`'s "already running"
+guard already uses, extended in `supabase/tests/01_harness.sql`'s `t.raises()` catchable-sqlstate
+list to cover it (previously privileges/validation/constraint codes only).
+
+### No new column-level grant, even though 0034 set that exact precedent
+
+The brief named `0034`'s column-level grant technique as one of two patterns to reuse. It doesn't
+appear as new SQL in 0035, deliberately: `topics` needed the split because it is otherwise
+client-writable and only three specific columns needed to become RPC-only. `focus_sessions` (where
+every new column in this migration lives) was **already** `SELECT`-only for `authenticated`
+end-to-end since 0001 — the protective effect 0034 had to build for `topics` already existed here
+for free. A redundant column-level `REVOKE`/`GRANT` on top would have restated what the table-level
+revoke already guarantees. `activity_events.client_event_id` is in the same position (the table
+has been fully locked since 0001; the client's only path to it is through `record_event()`'s own
+parameter). Test 13 in `24_checkin_visibility_evidence.sql` asserts the SELECT-only posture holds
+for the two new `focus_sessions` columns directly, rather than leaving it as an inference from the
+table's pre-existing grant.
+
+### `client_occurred_at`/`client_tz` are payload claims, not columns — considered and rejected as columns
+
+The natural-looking design would have added `client_occurred_at timestamptz`/`client_tz text`
+alongside `client_event_id` as real columns on `activity_events`. Rejected: doing so would invite
+exactly the framing the ledger's server-`occurred_at` rule exists to prevent — a column reads as
+authoritative by default, and a future query written in a hurry could easily `order by
+client_occurred_at` or bucket a day by it, silently reintroducing the back-dating risk D17 closed.
+Payload fields carry no such implicit authority; the only two places they're read (this migration's
+own tests, and any future consumer) have to explicitly reach into `payload->>'client_occurred_at'`,
+which is a small but real friction that keeps the claim/fact distinction visible at every read
+site, not just at the one place it's declared.
+
+### `SessionCheckIn`'s props are locked without building the component
+
+Same posture as api.md §4.1's `EmberMorph` trigger-prop lock: Janhwi (Codex) builds
+`web/components/SessionCheckIn.tsx` in a later wave, and this phase's job was only to fix the
+contract so that build doesn't block on a schema/RPC question later. `onAnswer` is one
+discriminated callback rather than separate `onSubmit`/`onDecline` props — mirrors the
+answer/decline split already made at the RPC layer while keeping the component's public surface to
+one event, matching the "fewer knobs" bias the EmberMorph contract already set.
+
+### Judgment calls flagged, condensed
+
+- `self_difficulty`/`self_confidence` range (1–5) and `self_help_level` vocabulary
+  (`none`/`hint`/`walkthrough`/`full_solution`) — the brief names the columns, not their bounds;
+  both are single `CHECK` constraints, trivial to widen later since nothing downstream reads them
+  yet.
+- The 600-second real-focus-time floor and the every-3rd-session sampling cadence — both single
+  `constant` locals inside `settle_session()`, deliberately not tuned against any real usage data
+  (none exists yet for this feature).
+- Both `completed` and `abandoned` settle paths share the same eligibility rule rather than
+  treating "left early" as a distinct, rarer trigger — `session_abandoned` stays in the
+  `trigger_reason` vocabulary, unwired, for a future feature to split out if this proves wrong.
+- The `visibilitychange` listener's debounce is trailing-edge (settles on the final state after
+  2s of quiet), which means a rapid flap inside that window is never recorded at all, only the
+  settled end state — deliberate for noise reduction under a framing rule that already disclaims
+  completeness ("not subtracted from focus time, not named distraction, no metric consumes it").
+
 ## Open, not yet decided
 
 - Whether the founder-facing analytics need anything beyond PostHog (deferred until W2 has real

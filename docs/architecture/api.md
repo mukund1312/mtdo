@@ -174,6 +174,7 @@ unwired rather than fabricating a UI moment for them.
 |---|---|---|
 | `screen_opened` | `web/app/session/page.tsx`, on mount (`useEffect`, empty deps) | `payload: { screen: "session" }`. Only the session screen — no other real screen exists in M's scope; `(marketing)/page.tsx` is J-owned UI (split-plan §1) and wasn't touched. If J wants marketing-page `screen_opened`, that's J calling `recordEvent()` from `lib/analytics/record-event.ts` directly, not a new RPC or schema change. |
 | `plan_generated` | `web/app/api/onboarding/plan/route.ts`, right after `persistGeneratedPlan()` resolves (both the primary path and the fallback-after-persist-failure path) | Fired once, after persistence succeeds, not before — a persist failure that falls through to fallback doesn't double-count. |
+| `session_visibility_changed` (0035) | `web/app/session/page.tsx`, a `visibilitychange` listener gated on `phase === "active"`, debounced (trailing, 2s) | See §3r for the full framing rule and the client-event envelope (`client_event_id`, `client_occurred_at`/`client_tz` as payload claims). |
 
 **Decided: `goal_created` is not fired alongside `plan_generated`.** Onboarding creates exactly
 one plan at exactly one moment; firing both kinds there would be two names for the identical
@@ -1958,6 +1959,236 @@ and insert-only (no get-or-create-by-name): safe here because `persistGeneratedP
 creates a brand-new `plan_categories` row first, so no same-named topic can already exist under it
 to collide with. `blank-template.ts` shows the field in its SQL example and documents the
 `topic`/`topic_type` distinction in a new `_read_this_first` rule.
+
+## 3r. Contextual sensors — the client-event envelope, the post-session check-in, and raw tab-visibility (Phase I, migrations/0035)
+
+**This section adds evidence, not a metric** — same governing principle as §3p/§3q: Observation ≠
+derived feature ≠ pattern ≠ inference ≠ recommendation. Nothing here computes a rate, a score, or
+a rule — including the eligibility rule below, which decides *whether* to ask a question, never
+what the answer means.
+
+### The client-event envelope — `client_event_id`, and why `client_occurred_at`/`client_tz` are NOT columns
+
+`activity_events.client_event_id uuid`, backed by a partial `UNIQUE` index
+(`WHERE client_event_id IS NOT NULL`). Both `append_event()` (internal) and `record_event()`
+(client-facing) gained a trailing `p_client_event_id uuid default null` parameter — both had to be
+`DROP` + `CREATE`, not `CREATE OR REPLACE`, because Postgres cannot add a parameter via `REPLACE`
+(0023's own note on `settle_session()`). Every existing call site in this codebase calls
+positionally with strictly fewer arguments than either function already had, so appending one more
+default-valued parameter changes nothing about how any of those calls resolve.
+
+Replaying `record_event()`/`append_event()` with the **same** `client_event_id` inserts **exactly
+one row** — the insert uses `ON CONFLICT (client_event_id) WHERE client_event_id IS NOT NULL DO
+NOTHING`, and on a conflict the function fetches and returns the **original** row rather than an
+error or a null. This is real idempotency for an offline/retry queue: the guarantee holds even if
+two requests carrying the same id race each other, because the unique index — not application
+logic — is the arbiter. A `NULL` id (every server-minted call today, and any client call that
+doesn't opt in) is not covered by the partial index at all, so two such calls are simply two
+ordinary rows, exactly as before this migration.
+
+**`client_occurred_at`/`client_tz` are deliberately NOT new columns — they are CLAIMS, carried
+inside a kind's own payload.** `activity_events.occurred_at` stays exactly what D17/`record_event()`
+already establish: the **server** clock, always `now()`, never a parameter — that property is the
+entire reason the ledger is trustworthy (a client that could set its own `occurred_at` could
+back-date focus time into an already-scored day). What this migration prepares for is offline/
+late-arriving events: a client that queues an event while offline and appends it later has a real,
+useful fact — "the device thought this happened at T, in zone Z" — that is not the same fact as
+"the server received this at `now()`". A future consumer may read `client_occurred_at`/`client_tz`
+to understand client-side sequencing or explain a gap between `occurred_at` and when an event
+visibly reflects in the UI, but **must never** treat them as authoritative for anything
+`occurred_at` already answers authoritatively (ordering, day-bucketing, rollup attribution). A
+device with a wrong clock, a stale queue, or a deliberately falsified payload can put anything in
+these two keys — same as any other client-controlled payload field, and unlike `occurred_at` there
+is no unique index or `CHECK` that could ever make them trustworthy.
+
+### Post-session check-in — `focus_sessions.check_in_state`, `self_difficulty`/`self_confidence`/`self_help_level`
+
+`check_in_state` (`not_offered` / `offered_pending` / `answered` / `declined`, default
+`not_offered`) is **the column that makes a `NULL` self-report legible**. Without it,
+`self_difficulty IS NULL` is ambiguous three different ways — never offered, offered and declined,
+or offered and answered with no difficulty rating given — and a future "average self-reported
+difficulty" metric could not tell any of those apart from real missing data. Same null-vs-state
+discipline 0033's `blocks.disposition` and `study_profile()`'s confidence gate already established
+for this codebase.
+
+`self_difficulty`/`self_confidence` are `smallint`, `CHECK`-bounded `1..5` when not null.
+**JUDGMENT CALL, flagged**: the brief specifies the columns but not their range — 1–5 was chosen as
+the smallest scale with a genuine midpoint, easy to widen later since nothing downstream reads
+these columns yet. `self_help_level` is `text`, `CHECK`-bounded to
+`none`/`hint`/`walkthrough`/`full_solution`. **JUDGMENT CALL, flagged**: the brief names the column
+but not its vocabulary — these four mirror the terminal app's own Learning-Coach framing (how much
+help did you actually need) rather than inventing new language.
+
+### `answer_session_check_in(p_id uuid, p_self_difficulty smallint default null, p_self_confidence smallint default null, p_self_help_level text default null) → focus_sessions`
+### `decline_session_check_in(p_id uuid) → focus_sessions`
+
+**The client's entire authority here is "record my answer to the question you already decided to
+ask" — it cannot decide to ask, and cannot re-ask itself.** Both wrappers call a shared, never-
+granted `record_session_check_in(p_id, p_state, ...)` — same shape as
+`settle_session()`/`complete_session()`/`abandon_session()` (0023): one body, two callable entry
+points each pinning `p_state` to a literal so a PostgREST caller cannot pass an arbitrary state.
+
+The guard that makes this server-**authoritative**, not just server-written: the shared function
+refuses to move `check_in_state` at all unless it currently reads `offered_pending` — checked
+under `for update` after the usual ownership re-check (`session % not available for this user`,
+`42501`, same non-disclosure posture as every other ownership-checked RPC in this codebase). A
+client cannot fabricate a self-report on a session that was never offered one (`check_in_state`
+would still be `not_offered`), and cannot answer or decline the same offer twice
+(`check_in_state` would already be `answered`/`declined`). Violating the guard fails `55006`
+(`object_not_in_prerequisite_state`) — the same code `start_session()` already uses for "a session
+is already running"; added to `supabase/tests/01_harness.sql`'s `t.raises()` catchable-sqlstate
+list for this migration's own test coverage.
+
+`answer_session_check_in()` requires **at least one** of the three fields non-null (`22023`
+otherwise) — an "answer" that answers nothing is not a real self-report, and accepting one would
+leave a future reader unable to distinguish it from a genuine three-way-null response the user
+actually gave. `decline_session_check_in()` leaves `self_difficulty`/`self_confidence`/
+`self_help_level` exactly as they were (still null, for every real decline). Mints
+`session_check_in_answered { session_id, self_difficulty, self_confidence, self_help_level }` or
+`session_check_in_declined { session_id }` respectively.
+
+### `settle_session()` gains the eligibility decision — atomic, same call, no second round trip
+
+`settle_session()` (§5, 0023) is otherwise unchanged: same pause-folding, same
+`session_completed`/`session_abandoned` mint, same `settle_block_outcome()` passthrough. Appended
+after all of that, in the **same transaction**:
+
+1. A session must be **settled** (`completed` or `abandoned`) — never offered mid-session.
+2. It must clear `v_min_focus_s = 600` (ten minutes) of **real** focus time, via
+   `session_focus_seconds()` (0023's one shared formula — wall clock minus paused time, capped at
+   planned). **JUDGMENT CALL, flagged**: the brief says "only after a session with real focus
+   time" but names no floor. Ten minutes was chosen as long enough to filter out an immediate
+   misclick-abandon, short enough to not exclude most real Pomodoro-length sessions — a single
+   `constant`, read by nothing else, trivial to change.
+3. **Both** `completed` and `abandoned` sessions are eligible, as long as (2) holds.
+   **JUDGMENT CALL, flagged**: an honestly-abandoned session that still involved real focus time is
+   real signal too — the brief's own framing ("a flawless 50-minute timer proves a recorded
+   session, not 50 minutes of cognitive attention") cuts the same way for an honest abandon. The
+   more conservative alternative (completed-only) is one `state in (...)` edit away if this proves
+   wrong in practice — see `session_abandoned` as its own unwired `trigger_reason`, below.
+4. Among sessions clearing (1)–(3), a check-in is offered on **every third one**
+   (`eligible_session_number % v_sample_every = 0`, `v_sample_every = 3`) **for that user** — never
+   every session. **JUDGMENT CALL, flagged**: the brief says "never after every timer" but names no
+   cadence; every-3rd was chosen as the smallest interval that still reads conservative, one
+   `constant` to change. `eligible_session_number` is a running `count(*)` of this user's settled
+   sessions clearing the floor, **including** the session just settled (its `UPDATE` already
+   committed within the same transaction) — a stable, monotonically increasing count regardless of
+   when it's read.
+5. When eligible: `check_in_state := 'offered_pending'` and `session_check_in_offered` is minted —
+   both inside the same transaction that settled the session. The client reads `check_in_state` on
+   `settle_session()`'s own return value to decide whether to prompt.
+
+**Why periodic, not difficulty-triggered — the bias the brief calls out by name.** If confidence
+were only requested after *hard* sessions, "average confidence 2.7" would be a fact about the
+sampling policy, not about the user's typical confidence, and nothing downstream could tell,
+because the ledger would contain only the biased sample. `periodic_sample` is keyed on the running
+count above modulo a fixed constant — deliberately **not** on anything about the session's
+difficulty, outcome, or duration beyond the one floor. Every qualifying session has the same chance
+of landing on the cadence.
+
+### Sampling provenance — `session_check_in_offered`'s payload, and the full `trigger_reason` vocabulary
+
+```jsonc
+// session_check_in_offered
+{ "session_id": "…", "trigger_reason": "periodic_sample",
+  "sampling_policy": "session_checkin_v1", "prompt_version": "v1",
+  "eligible_session_number": 14 }
+```
+
+Six-member `trigger_reason` vocabulary, documented here because it lives inside a payload (there is
+exactly one producer today, so a `CHECK` on a payload sub-field would be redundant with the
+function body):
+
+| `trigger_reason` | Producer |
+|---|---|
+| `periodic_sample` | **The only one with a producer in this migration** — `settle_session()`, the rule above |
+| `new_topic` | none yet — a future feature: offer on the first session attributed to a `topic_id` (0034) the user has never logged focus time against |
+| `low_evidence_topic` | none yet — a future feature: bias sampling toward topics with few settled sessions |
+| `session_abandoned` | none yet — a future feature: treat "left early" as its own deliberate trigger, rather than folding it into `periodic_sample` as this migration does (see judgment call 3 above) |
+| `unusual_session` | none yet — a future feature: a session whose length/pause pattern is an outlier for this user |
+| `manual_user_request` | none yet — a future feature: an explicit "ask me how that went" control, independent of any automatic trigger |
+
+Same "vocabulary + shape ready, producer to follow" posture §3p established for
+`task_estimate_changed`/`task_priority_changed`/`task_deleted`.
+
+### `session_visibility_changed` — raw tab-visibility observation, client-minted
+
+The one **client**-minted kind this migration adds (added to `record_event()`'s whitelist, unlike
+every other kind in this section) — the server has no way to observe a browser tab's visibility
+itself. Producer: a `visibilitychange` listener in `web/app/session/page.tsx`, gated on `phase ===
+"active"` (nothing to observe before a real timer is running) and debounced (trailing, 2s) so a
+burst of rapid alt-tabbing coalesces into one event rather than one row per toggle — the ledger has
+no DELETE path and payloads cap at 4KB. Uses the envelope above: a fresh `crypto.randomUUID()` per
+mint as `client_event_id`, and `client_occurred_at`/`client_tz` inside the payload as claims.
+
+```jsonc
+// session_visibility_changed
+{ "session_id": "…", "visibility_state": "hidden",
+  "client_occurred_at": "2026-09-16T14:03:00.000Z", "client_tz": "America/Los_Angeles" }
+```
+
+**Framing rule — verbatim, also in the migration header: raw observation only.** A hidden tab may
+mean VS Code, LeetCode, documentation, a PDF, or notes. It is **not** subtracted from focus time,
+**not** named "distraction", and **no metric consumes it in this wave** — `review_*`/
+`weekly_performance`/`daily_rollups`/`study_profile` are all untouched by this migration, same as
+every other section here. Equally: a flawless 50-minute timer proves a recorded session, not 50
+minutes of cognitive attention — both halves of that sentence are the same caution from opposite
+directions, and both must survive into any future feature that reads this event.
+
+**`session/page.tsx` was touched only to add this listener** — no other restructuring. `recordEvent()`
+(`web/lib/analytics/record-event.ts`) gained a trailing optional `clientEventId?: string` parameter
+and the `session_visibility_changed` member on `ClientEventKind`; every other call site is
+unaffected (the parameter is optional and unused elsewhere).
+
+### `SessionCheckIn` props contract — **locked, not built**
+
+Same posture §4.1 already established for `EmberMorph`'s trigger prop: this section locks the
+contract for a later wave (Codex, per the split-plan) to build the actual component against.
+**This migration/phase does not create `web/components/SessionCheckIn.tsx`.**
+
+```ts
+interface SessionCheckInProps {
+  /** Plain session id -- NEVER a focus_sessions row and NEVER a Supabase client. The component
+   *  looks nothing up on its own; the caller (Session screen) already has both from its own
+   *  settle_session()/complete_session()/abandon_session() call. */
+  sessionId: string;
+  /** The session's check_in_state at the moment the caller decided to render this component.
+   *  SessionCheckIn only makes sense to mount at all when this is "offered_pending" -- the
+   *  caller is responsible for that decision (reading settle_session()'s own return value, per
+   *  §3r above), not this component. "answered"/"declined"/"not_offered" are accepted so a
+   *  caller can render a brief settled state (e.g. "Thanks -- recorded.") without needing a
+   *  separate component for that, but SessionCheckIn does not decide whether it should be on
+   *  screen; it never polls or re-fetches this value itself. */
+  checkInState: "offered_pending" | "answered" | "declined" | "not_offered";
+  /** Fires once with the client's answer. SessionCheckIn itself never calls
+   *  answer_session_check_in()/decline_session_check_in() -- the caller owns the RPC call (and
+   *  the resulting error/loading UI), exactly the split §4.1 already established between
+   *  EmberMorph and the Session screen for the session RPCs themselves. `null` fields are
+   *  legal individually (answer_session_check_in() only requires at least one non-null), but a
+   *  fully-null onAnswer with kind: "answered" is the caller's bug to catch, not this
+   *  component's -- SessionCheckIn is a values-in/callback-out shell, not a validator. */
+  onAnswer: (
+    answer:
+      | { kind: "answered"; selfDifficulty: number | null; selfConfidence: number | null; selfHelpLevel: string | null }
+      | { kind: "declined" },
+  ) => void;
+  className?: string;
+}
+```
+
+- **Never a Supabase client, never a `focus_sessions` row, never an RPC call inside the
+  component** — identical constraint to `EmberMorph` (§4.1), for the identical reason: keeps the
+  component testable and reusable without dragging auth/RPC plumbing into it, and keeps exactly one
+  place (the Session screen) responsible for what happens when the answer/decline RPC itself
+  errors.
+- **`checkInState` is a value, not a lookup key.** `SessionCheckIn` never re-fetches it and never
+  polls `focus_sessions` — the caller re-renders with a new value after `onAnswer` fires and its own
+  RPC call resolves, the same "caller re-renders on tick" pattern `EmberMorph`'s `elapsedS` already
+  established.
+- **`onAnswer` is one discriminated callback, not two separate `onSubmit`/`onDecline` props** — 
+  mirrors the answer/decline split at the RPC layer (`answer_session_check_in()`/
+  `decline_session_check_in()`, both above) while keeping the component's public surface to one
+  event.
 
 ## 4. The EmberMorph component contract
 
