@@ -9,13 +9,9 @@ import { buildReviewFixture, getDevReviewStateOverride } from "@/lib/review/dev-
 import { fetchProfileTimezone } from "./profile-timezone";
 import { utcDateRange, utcToday } from "./product-data";
 
-// The Consistency heatmap's own fetch, over a 365-day window -- separate
-// from ProgressDeck's existing 42-day one (Wave 1's heatmap stays on its own
-// shorter window; this is the new full-year card the reference mock calls
-// for). review_consistency() caps at 400 days (migrations/0026), so 365 is
-// safe as-is.
-
-const WINDOW_DAYS = 365;
+// The Consistency heatmap reads a direct server-computed date range. Its
+// caller chooses the range (Month = 30 days, Year = 365); the RPC caps at
+// 400 days, so both are safe without a client-side aggregation.
 
 export interface UseConsistencyResult {
   consistency: ReviewConsistency | null;
@@ -23,7 +19,7 @@ export interface UseConsistencyResult {
   reload: () => void;
 }
 
-export function useConsistency(): UseConsistencyResult {
+export function useConsistency(windowDays = 365): UseConsistencyResult {
   const [consistency, setConsistency] = useState<ReviewConsistency | null>(null);
   const [state, setState] = useState<"loading" | "ready" | "error">("loading");
 
@@ -31,7 +27,9 @@ export function useConsistency(): UseConsistencyResult {
     setState("loading");
     const devState = getDevReviewStateOverride();
     if (devState) {
-      setConsistency(buildReviewFixture(devState).consistency);
+      const fixture = buildReviewFixture(devState).consistency;
+      const days = fixture.days.slice(-windowDays);
+      setConsistency({ ...fixture, from: days[0]?.date ?? fixture.from, days });
       setState("ready");
       return;
     }
@@ -45,7 +43,7 @@ export function useConsistency(): UseConsistencyResult {
       return;
     }
     const userTimezone = await fetchProfileTimezone(supabase, user.id);
-    const windowDates = utcDateRange(WINDOW_DAYS, utcToday(userTimezone));
+    const windowDates = utcDateRange(windowDays, utcToday(userTimezone));
     const { data, error } = await supabase.rpc("review_consistency", {
       p_start: windowDates[0]!,
       p_end: windowDates.at(-1)!,
@@ -62,7 +60,7 @@ export function useConsistency(): UseConsistencyResult {
       console.error("[review] malformed consistency response:", parseError);
       setState("error");
     }
-  }, []);
+  }, [windowDays]);
 
   useEffect(() => {
     const timer = window.setTimeout(() => void load(), 0);

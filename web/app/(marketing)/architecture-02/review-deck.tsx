@@ -47,7 +47,8 @@ export function ReviewDeck() {
   const daily = useDailySummary();
   const momentum = useMomentum();
   const timePatterns = useTimePatterns();
-  const consistency = useConsistency();
+  const consistencyWindowDays = range === "month" ? 30 : 365;
+  const consistency = useConsistency(consistencyWindowDays);
   const weekly = useWeeklySnapshot();
   const studyProfile = useStudyProfile();
 
@@ -114,7 +115,7 @@ export function ReviewDeck() {
               <ReviewFocusDistribution {...timePatterns} />
             </div>
 
-            <ReviewConsistencyHeatmap {...consistency} />
+            <ReviewConsistencyHeatmap {...consistency} windowDays={365} />
 
             <div className="a02-bottom-row">
               <ReviewSessionQuality {...timePatterns} />
@@ -132,12 +133,10 @@ export function ReviewDeck() {
           // previously mounted unconditionally under Today; same component,
           // now only rendered when this scope is actually selected.
           <ProgressDeck />
+        ) : range === "month" ? (
+          <ReviewConsistencyHeatmap {...consistency} windowDays={30} />
         ) : (
-          <section className="a02-review a02-review-coming-soon" aria-live="polite">
-            <div className="a02-product-state">
-              <p>Coming soon</p>
-            </div>
-          </section>
+          <ReviewConsistencyHeatmap {...consistency} windowDays={365} />
         )}
       </div>
     </div>
