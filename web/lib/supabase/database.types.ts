@@ -160,6 +160,7 @@ export type Database = {
           started_at: string | null
           status: string
           text: string
+          topic_id: string | null
           user_id: string
         }
         Insert: {
@@ -186,6 +187,7 @@ export type Database = {
           started_at?: string | null
           status?: string
           text: string
+          topic_id?: string | null
           user_id: string
         }
         Update: {
@@ -212,6 +214,7 @@ export type Database = {
           started_at?: string | null
           status?: string
           text?: string
+          topic_id?: string | null
           user_id?: string
         }
         Relationships: [
@@ -235,6 +238,13 @@ export type Database = {
             isOneToOne: false
             referencedRelation: "plans"
             referencedColumns: ["id", "user_id"]
+          },
+          {
+            foreignKeyName: "blocks_topic_fk"
+            columns: ["topic_id", "category_id"]
+            isOneToOne: false
+            referencedRelation: "topics"
+            referencedColumns: ["id", "category_id"]
           },
         ]
       }
@@ -348,6 +358,7 @@ export type Database = {
           position: number
           priority: string
           task: string
+          topic_id: string | null
           week_index: number
         }
         Insert: {
@@ -358,6 +369,7 @@ export type Database = {
           position: number
           priority?: string
           task: string
+          topic_id?: string | null
           week_index: number
         }
         Update: {
@@ -368,6 +380,7 @@ export type Database = {
           position?: number
           priority?: string
           task?: string
+          topic_id?: string | null
           week_index?: number
         }
         Relationships: [
@@ -377,6 +390,13 @@ export type Database = {
             isOneToOne: false
             referencedRelation: "plan_categories"
             referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "curriculum_items_topic_fk"
+            columns: ["topic_id", "category_id"]
+            isOneToOne: false
+            referencedRelation: "topics"
+            referencedColumns: ["id", "category_id"]
           },
         ]
       }
@@ -441,45 +461,54 @@ export type Database = {
         Row: {
           block_id: string | null
           break_plan: Json | null
+          category_id: string | null
           completed_at: string | null
           extended_s: number
           grace_expires_at: string | null
           id: string
           paused_at: string | null
+          plan_id: string | null
           planned_duration_s: number
           room_id: string | null
           started_at: string
           state: string
+          topic_id: string | null
           total_paused_s: number
           user_id: string
         }
         Insert: {
           block_id?: string | null
           break_plan?: Json | null
+          category_id?: string | null
           completed_at?: string | null
           extended_s?: number
           grace_expires_at?: string | null
           id?: string
           paused_at?: string | null
+          plan_id?: string | null
           planned_duration_s: number
           room_id?: string | null
           started_at?: string
           state?: string
+          topic_id?: string | null
           total_paused_s?: number
           user_id: string
         }
         Update: {
           block_id?: string | null
           break_plan?: Json | null
+          category_id?: string | null
           completed_at?: string | null
           extended_s?: number
           grace_expires_at?: string | null
           id?: string
           paused_at?: string | null
+          plan_id?: string | null
           planned_duration_s?: number
           room_id?: string | null
           started_at?: string
           state?: string
+          topic_id?: string | null
           total_paused_s?: number
           user_id?: string
         }
@@ -490,6 +519,27 @@ export type Database = {
             isOneToOne: false
             referencedRelation: "blocks"
             referencedColumns: ["id", "user_id"]
+          },
+          {
+            foreignKeyName: "focus_sessions_category_fk"
+            columns: ["category_id", "plan_id"]
+            isOneToOne: false
+            referencedRelation: "plan_categories"
+            referencedColumns: ["id", "plan_id"]
+          },
+          {
+            foreignKeyName: "focus_sessions_plan_fk"
+            columns: ["plan_id", "user_id"]
+            isOneToOne: false
+            referencedRelation: "plans"
+            referencedColumns: ["id", "user_id"]
+          },
+          {
+            foreignKeyName: "focus_sessions_topic_fk"
+            columns: ["topic_id", "category_id"]
+            isOneToOne: false
+            referencedRelation: "topics"
+            referencedColumns: ["id", "category_id"]
           },
         ]
       }
@@ -639,6 +689,7 @@ export type Database = {
           is_active: boolean
           onboarding_answers: Json | null
           planning_mode: string
+          target_date: string | null
           user_id: string
         }
         Insert: {
@@ -649,6 +700,7 @@ export type Database = {
           is_active?: boolean
           onboarding_answers?: Json | null
           planning_mode?: string
+          target_date?: string | null
           user_id: string
         }
         Update: {
@@ -659,6 +711,7 @@ export type Database = {
           is_active?: boolean
           onboarding_answers?: Json | null
           planning_mode?: string
+          target_date?: string | null
           user_id?: string
         }
         Relationships: []
@@ -767,6 +820,51 @@ export type Database = {
           user_id?: string
         }
         Relationships: []
+      }
+      topics: {
+        Row: {
+          category_id: string
+          created_at: string
+          id: string
+          label: string
+          name: string
+          parent_topic_id: string | null
+          sort_order: number
+        }
+        Insert: {
+          category_id: string
+          created_at?: string
+          id?: string
+          label: string
+          name: string
+          parent_topic_id?: string | null
+          sort_order?: number
+        }
+        Update: {
+          category_id?: string
+          created_at?: string
+          id?: string
+          label?: string
+          name?: string
+          parent_topic_id?: string | null
+          sort_order?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "topics_category_id_fkey"
+            columns: ["category_id"]
+            isOneToOne: false
+            referencedRelation: "plan_categories"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "topics_parent_topic_id_fkey"
+            columns: ["parent_topic_id"]
+            isOneToOne: false
+            referencedRelation: "topics"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       tutor_conversations: {
         Row: {
@@ -966,15 +1064,18 @@ export type Database = {
         Returns: {
           block_id: string | null
           break_plan: Json | null
+          category_id: string | null
           completed_at: string | null
           extended_s: number
           grace_expires_at: string | null
           id: string
           paused_at: string | null
+          plan_id: string | null
           planned_duration_s: number
           room_id: string | null
           started_at: string
           state: string
+          topic_id: string | null
           total_paused_s: number
           user_id: string
         }
@@ -1047,21 +1148,48 @@ export type Database = {
         Returns: {
           block_id: string | null
           break_plan: Json | null
+          category_id: string | null
           completed_at: string | null
           extended_s: number
           grace_expires_at: string | null
           id: string
           paused_at: string | null
+          plan_id: string | null
           planned_duration_s: number
           room_id: string | null
           started_at: string
           state: string
+          topic_id: string | null
           total_paused_s: number
           user_id: string
         }
         SetofOptions: {
           from: "*"
           to: "focus_sessions"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
+      create_topic: {
+        Args: {
+          p_category_id: string
+          p_label: string
+          p_name: string
+          p_parent_topic_id?: string
+          p_sort_order?: number
+        }
+        Returns: {
+          category_id: string
+          created_at: string
+          id: string
+          label: string
+          name: string
+          parent_topic_id: string | null
+          sort_order: number
+        }
+        SetofOptions: {
+          from: "*"
+          to: "topics"
           isOneToOne: true
           isSetofReturn: false
         }
@@ -1090,6 +1218,7 @@ export type Database = {
           position: number
           priority: string
           task: string
+          topic_id: string | null
           week_index: number
         }[]
         SetofOptions: {
@@ -1104,15 +1233,18 @@ export type Database = {
         Returns: {
           block_id: string | null
           break_plan: Json | null
+          category_id: string | null
           completed_at: string | null
           extended_s: number
           grace_expires_at: string | null
           id: string
           paused_at: string | null
+          plan_id: string | null
           planned_duration_s: number
           room_id: string | null
           started_at: string
           state: string
+          topic_id: string | null
           total_paused_s: number
           user_id: string
         }
@@ -1129,15 +1261,18 @@ export type Database = {
         Returns: {
           block_id: string | null
           break_plan: Json | null
+          category_id: string | null
           completed_at: string | null
           extended_s: number
           grace_expires_at: string | null
           id: string
           paused_at: string | null
+          plan_id: string | null
           planned_duration_s: number
           room_id: string | null
           started_at: string
           state: string
+          topic_id: string | null
           total_paused_s: number
           user_id: string
         }
@@ -1174,6 +1309,7 @@ export type Database = {
           started_at: string | null
           status: string
           text: string
+          topic_id: string | null
           user_id: string
         }
         SetofOptions: {
@@ -1214,15 +1350,18 @@ export type Database = {
         Returns: {
           block_id: string | null
           break_plan: Json | null
+          category_id: string | null
           completed_at: string | null
           extended_s: number
           grace_expires_at: string | null
           id: string
           paused_at: string | null
+          plan_id: string | null
           planned_duration_s: number
           room_id: string | null
           started_at: string
           state: string
+          topic_id: string | null
           total_paused_s: number
           user_id: string
         }
@@ -1284,6 +1423,7 @@ export type Database = {
           started_at: string | null
           status: string
           text: string
+          topic_id: string | null
           user_id: string
         }
         SetofOptions: {
@@ -1309,6 +1449,51 @@ export type Database = {
           p_total_paused_s: number
         }
         Returns: number
+      }
+      set_category_target: {
+        Args: { p_category_id: string; p_field: string; p_value: number }
+        Returns: {
+          coaching_framework: Json
+          created_at: string
+          days: number[]
+          id: string
+          label: string
+          menu_unlocked_iso_week: string | null
+          menu_unlocked_week_index: number
+          min_blocks: number
+          name: string
+          plan_id: string
+          score_weight: number
+          sort_order: number
+          topic_type: string | null
+          weekly_target_blocks: number | null
+        }
+        SetofOptions: {
+          from: "*"
+          to: "plan_categories"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
+      set_plan_target_date: {
+        Args: { p_plan_id: string; p_target_date: string }
+        Returns: {
+          app_name: string
+          created_at: string
+          goal_line: string
+          id: string
+          is_active: boolean
+          onboarding_answers: Json | null
+          planning_mode: string
+          target_date: string | null
+          user_id: string
+        }
+        SetofOptions: {
+          from: "*"
+          to: "plans"
+          isOneToOne: true
+          isSetofReturn: false
+        }
       }
       settle_block_outcome: {
         Args: {
@@ -1340,6 +1525,7 @@ export type Database = {
           started_at: string | null
           status: string
           text: string
+          topic_id: string | null
           user_id: string
         }
         SetofOptions: {
@@ -1359,15 +1545,18 @@ export type Database = {
         Returns: {
           block_id: string | null
           break_plan: Json | null
+          category_id: string | null
           completed_at: string | null
           extended_s: number
           grace_expires_at: string | null
           id: string
           paused_at: string | null
+          plan_id: string | null
           planned_duration_s: number
           room_id: string | null
           started_at: string
           state: string
+          topic_id: string | null
           total_paused_s: number
           user_id: string
         }
@@ -1387,15 +1576,18 @@ export type Database = {
         Returns: {
           block_id: string | null
           break_plan: Json | null
+          category_id: string | null
           completed_at: string | null
           extended_s: number
           grace_expires_at: string | null
           id: string
           paused_at: string | null
+          plan_id: string | null
           planned_duration_s: number
           room_id: string | null
           started_at: string
           state: string
+          topic_id: string | null
           total_paused_s: number
           user_id: string
         }
@@ -1442,6 +1634,7 @@ export type Database = {
           started_at: string | null
           status: string
           text: string
+          topic_id: string | null
           user_id: string
         }
         SetofOptions: {
