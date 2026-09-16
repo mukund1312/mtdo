@@ -38,8 +38,14 @@ exception
   -- aborted the whole run with a raw ERROR, which is exactly how this was
   -- found. Adding a class here can only turn an aborted run into a real
   -- PASS/FAIL; no existing assertion changes meaning.
+  --
+  -- 55006 (object_not_in_prerequisite_state) added 2026-09-16 for
+  -- 24_checkin_visibility_evidence.sql (0035): record_session_check_in()'s
+  -- authority guard (a check-in must be offered_pending before it can be
+  -- answered/declined) raises this same code start_session() already uses
+  -- for "a session is already running" -- same reasoning as above.
   when sqlstate '42501' or sqlstate '22023' or sqlstate '0A000'
-    or sqlstate '23505' or sqlstate '23514' or sqlstate '23503' then
+    or sqlstate '23505' or sqlstate '23514' or sqlstate '23503' or sqlstate '55006' then
     if sqlstate = want_code then
       raise notice 'PASS  %  (errcode %)', label, want_code;
     else

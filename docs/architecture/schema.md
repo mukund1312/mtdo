@@ -668,6 +668,10 @@ The rules that produced it:
 | `task_deleted` | **server**, no producer yet (0033) | vocabulary ready; no delete-block UI exists yet |
 | `plan_target_changed` | **server** — `set_plan_target_date()` (0034) | payload carries `from_date`/`to_date`; only on a REAL change |
 | `category_target_changed` | **server** — `set_category_target()` (0034) | payload carries `field` (`weekly_target_blocks`/`score_weight`), `from`, `to`; only on a REAL change |
+| `session_check_in_offered` | **server** — `settle_session()` (0035) | minted atomically at settle time when the eligibility rule fires; payload carries sampling provenance (`trigger_reason`, `sampling_policy`, `prompt_version`, `eligible_session_number`) — see api.md §3r |
+| `session_check_in_answered` | **server** — `record_session_check_in()` via `answer_session_check_in()` (0035) | only when `check_in_state` was `offered_pending`; payload carries `self_difficulty`/`self_confidence`/`self_help_level` |
+| `session_check_in_declined` | **server** — `record_session_check_in()` via `decline_session_check_in()` (0035) | same guard as above |
+| `session_visibility_changed` | client via `record_event()` (0035) | the one client-minted kind this migration adds — raw `visibilitychange` observation from `web/app/session/page.tsx`, debounced. **Framing rule (verbatim, see api.md §3r): NOT subtracted from focus time, NOT named "distraction", NO metric consumes it in this wave.** Payload carries `client_occurred_at`/`client_tz` as CLAIMS, not trusted columns — see the `client_event_id` envelope note in api.md §3r |
 
 **Deliberately not events:** `first_session_started`, `returned_day_2`, `returned_day_7`,
 `streak_broken` — all derivable from the rows above, so storing them would create a second,
@@ -694,6 +698,16 @@ with a working RPC even though no settings UI calls either one yet. `topics`/`*.
 stream — see `topics`' own entry in §2 and this migration's header for why, and for the full
 distinction from the unrelated `plan_categories.topic_type`.
 
+**0035 (Phase I, "contextual sensors") adds four kinds, three server-minted and one
+client-minted.** `session_check_in_offered`/`_answered`/`_declined` are evidence in the same
+posture as 0033/0034 — the check-in itself, not a metric, and `session_check_in_offered`'s
+sampling provenance (`trigger_reason`/`sampling_policy`/`prompt_version`/`eligible_session_number`)
+exists specifically so a future consumer can tell a roughly-random sample from a biased one, per
+api.md §3r. `session_visibility_changed` is the one genuinely new *client*-minted kind since W2 —
+raw tab-visibility, added to `record_event()`'s whitelist because (unlike every server-minted kind
+above) the server has no way to observe a browser tab's visibility itself; see its own entry above
+for the framing rule that governs how it may ever be read.
+
 Adding a kind means editing two places that must stay in sync: the `activity_events_kind_check`
 constraint, and — only if clients should be able to emit it — the whitelist inside
 `record_event()`. Adding it to the constraint alone makes it server-only, which is the safer
@@ -701,6 +715,18 @@ default.
 
 Payloads are capped at 4 KB on the client path. The ledger has no DELETE by design, so an
 unbounded payload would be permanent storage growth from a cheap call.
+
+**`activity_events.client_event_id` (0035)** is an optional client-supplied idempotency key,
+threaded through both `record_event()` and the internal `append_event()`. A partial `UNIQUE` index
+(`WHERE client_event_id IS NOT NULL`) means replaying the same id inserts exactly one row —
+`append_event()` returns the *original* row on a replay, not an error and not a second insert. This
+is real idempotency for an offline/retry queue, not mere client-side debounce: the guarantee holds
+even under a race between two requests carrying the same id, because the unique index is the
+arbiter. Every event that does not opt in (every server-minted kind today, and any client kind a
+caller chooses not to tag) carries `NULL` and is unaffected. See api.md §3r for the full envelope,
+including why `client_occurred_at`/`client_tz` live *inside a payload* as claims rather than as
+columns — `occurred_at` itself stays exactly what it has always been, the server clock, never a
+parameter.
 
 ---
 
@@ -719,13 +745,15 @@ multi-hour `completed` session outright. It is now enforced: clients hold **SELE
 | RPC | Does |
 |---|---|
 | `start_session(p_block_id uuid, p_planned_duration_s int, p_break_plan jsonb) → focus_sessions` | Sets `user_id := auth.uid()` and `started_at := now()` internally — neither is a parameter. Validates duration (1..86400), the break plan's shape, and that the block is the caller's. Refuses if a session is already running. Mints `session_started`. |
-| `complete_session(p_id uuid, p_block_outcome text, p_leftover_note text) → focus_sessions` | Owner-checked, must currently be `running` (**including paused**). Sets `completed_at := now()`, folds any open pause into `total_paused_s`. Mints `session_completed`. With `p_block_outcome`, also applies the block transition atomically. |
-| `abandon_session(p_id uuid, p_block_outcome text, p_leftover_note text) → focus_sessions` | Same, mints `session_abandoned`. |
+| `complete_session(p_id uuid, p_block_outcome text, p_leftover_note text) → focus_sessions` | Owner-checked, must currently be `running` (**including paused**). Sets `completed_at := now()`, folds any open pause into `total_paused_s`. Mints `session_completed`. With `p_block_outcome`, also applies the block transition atomically. 0035: also decides check-in eligibility atomically — see below. |
+| `abandon_session(p_id uuid, p_block_outcome text, p_leftover_note text) → focus_sessions` | Same, mints `session_abandoned`. 0035: same check-in eligibility decision as `complete_session()` — see below. |
 | `pause_session(p_id uuid, p_reason text) → focus_sessions` | Stops the clock. `p_reason` is `'manual'` or `'break'` — a scheduled break and a user-initiated pause are the **same mechanic**, distinguished only on the ledger. Mints `session_paused`. |
 | `resume_session(p_id uuid) → focus_sessions` | Banks the closed interval into `total_paused_s`, clears `paused_at`. Mints `session_resumed`. |
 | `extend_session(p_id uuid, p_additional_s int) → focus_sessions` | "Need more time?" accepted. Raises `planned_duration_s` and accumulates `extended_s`. Mints `session_extended`. |
 | `settle_block_outcome(p_session_id uuid, p_outcome text, p_leftover_note text) → blocks` | The linked block's fate after a **settled** session: `'done'` or `'in_progress'`, with an optional leftover note appended to `blocks.notes`. Returns NULL for an unlinked session. |
 | `session_focus_seconds(started_at, completed_at, total_paused_s, planned_duration_s) → int` | Not an intent — the **one shared formula**. Wall clock minus paused time, capped at planned, floored at 0. |
+| `answer_session_check_in(p_id uuid, p_self_difficulty smallint, p_self_confidence smallint, p_self_help_level text) → focus_sessions` (0035) | The client's **only** way to record a check-in answer — "record this answer", never "ask this question". Requires at least one of the three fields. Fails `55006` unless `check_in_state` currently reads `offered_pending`. Mints `session_check_in_answered`. |
+| `decline_session_check_in(p_id uuid) → focus_sessions` (0035) | Same `offered_pending` guard. Mints `session_check_in_declined`, leaves the self-report columns untouched. |
 
 **Pause is a sub-state, not a fourth `state`.** A paused session is still `state = 'running'`: it
 holds the one-running slot, `settle_session()`'s guard already admits it (so a user can End
@@ -754,6 +782,22 @@ error, not a silent auto-abandon — discarding a session the user may still wan
 a decision the database should make. The UI can `select` the running session (that read is
 allowed) and must offer resume-or-discard, calling `abandon_session()` before starting a new one.
 
+**Post-session check-in eligibility is decided by `settle_session()` itself, atomically (0035).**
+`focus_sessions` gains `self_difficulty`/`self_confidence`/`self_help_level` (all nullable,
+self-report only) and `check_in_state` (`not_offered` / `offered_pending` / `answered` /
+`declined`, default `not_offered`) — the column that makes a `NULL` self-report legible: without
+it, `self_difficulty IS NULL` cannot distinguish "never asked" from "asked and declined" from
+"asked and answered". A session that clears a real-focus-time floor and lands on a fixed sampling
+cadence for that user (both `complete_session()` and `abandon_session()` apply the identical rule,
+since both call `settle_session()`) gets `check_in_state` set to `offered_pending` and mints
+`session_check_in_offered` in the same transaction the session settles in — the client reads
+`check_in_state` on that RPC's own return value to decide whether to prompt, no second round trip.
+`answer_session_check_in()`/`decline_session_check_in()` (table above) are the **only** way to move
+it further, and both refuse unless `check_in_state` currently reads `offered_pending` — the client
+can record an answer to a question the server already decided to ask; it cannot decide to ask, and
+cannot re-answer its own answer. Full trigger rule, the exact floor/cadence constants, and every
+judgment call in them: api.md §3r.
+
 ---
 
 ## 6. RLS, grants, and the write paths
@@ -777,8 +821,8 @@ erroring; where the grant itself is revoked, it errors with `42501`.
 | `topics` | select, insert, delete; update **only of `label`/`sort_order`** (`parent_topic_id`/`category_id`/`name` have no client UPDATE grant at all — `42501`, not merely discouraged) | client; `parent_topic_id`/`category_id`/`name` only by `create_topic()` (0034) — see §2 and decisions.md 2026-09-16 |
 | `feedback` | select, insert (**no update/delete**) | client |
 | `ai_provider_settings` | select, insert, update (**no delete**) | client (own row) |
-| `activity_events` | **select only** | `record_event()` / `append_event()` |
-| `focus_sessions` | **select only** | `start_session()` / `complete_session()` / `abandon_session()` / `pause_session()` / `resume_session()` / `extend_session()` (0023) |
+| `activity_events` | **select only** | `record_event()` / `append_event()`; `client_event_id` (0035) is an optional client-supplied idempotency key, not a new write surface |
+| `focus_sessions` | **select only** | `start_session()` / `complete_session()` / `abandon_session()` / `pause_session()` / `resume_session()` / `extend_session()` (0023); `check_in_state`/`self_difficulty`/`self_confidence`/`self_help_level` (0035) additionally by `settle_session()` (offer) and `answer_session_check_in()`/`decline_session_check_in()` (answer/decline) — the table's pre-existing SELECT-only grant already covers these columns, no new grant was needed |
 | `daily_rollups` | **select only** | `recompute_daily_rollups()` (0009), scheduled by pg_cron (0010) |
 | `ai_generations` | **select only** | `web/lib/ai/service.ts`'s callers, service-role (0015) |
 | `tutor_memory_summaries` | **select only** | future service-role summarization job |

@@ -192,6 +192,57 @@ export default function SessionPage() {
     void recordEvent(createClient(), "screen_opened", { screen: "session" });
   }, []);
 
+  // session_visibility_changed (migrations/0035, schema.md §4 / api.md §3r):
+  // raw tab-visibility observation. FRAMING RULE, restated verbatim from the
+  // migration itself: a hidden tab may mean VS Code, LeetCode, documentation,
+  // a PDF, or notes -- it is NOT subtracted from focus time, NOT named
+  // "distraction", and NO metric consumes it in this wave. Only mints while a
+  // real timer is running (phase === "active") -- there is nothing to observe
+  // before a session exists. Debounced (trailing, 2s) so a burst of rapid
+  // alt-tabbing coalesces into one event carrying the settled state rather
+  // than one row per toggle -- the ledger has no DELETE path and payloads cap
+  // at 4KB. JUDGMENT CALL: a trailing debounce means a visibility flap that
+  // resolves within the window is never recorded at all (only the settled
+  // end state is), which is deliberate for noise reduction and safe under
+  // the framing rule above -- nothing here claims completeness.
+  useEffect(() => {
+    if (!session || phase !== "active") return;
+    const activeSession = session;
+    let debounceTimer: number | null = null;
+
+    function flush() {
+      void recordEvent(
+        createClient(),
+        "session_visibility_changed",
+        {
+          session_id: activeSession.id,
+          visibility_state: document.visibilityState,
+          // CLAIMS, not trusted columns -- the stored row's own occurred_at
+          // is still the SERVER clock (migrations/0035's envelope note,
+          // api.md §3r/§1).
+          client_occurred_at: new Date().toISOString(),
+          client_tz: Intl.DateTimeFormat().resolvedOptions().timeZone,
+        },
+        // A fresh idempotency key per mint, not per retry -- see
+        // recordEvent()'s own comment; this call site never itself retries,
+        // so the key is not load-bearing here, only consistent with the
+        // general envelope.
+        crypto.randomUUID(),
+      );
+    }
+
+    function onVisibilityChange() {
+      if (debounceTimer !== null) window.clearTimeout(debounceTimer);
+      debounceTimer = window.setTimeout(flush, 2000);
+    }
+
+    document.addEventListener("visibilitychange", onVisibilityChange);
+    return () => {
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+      if (debounceTimer !== null) window.clearTimeout(debounceTimer);
+    };
+  }, [phase, session]);
+
   // A tab can close mid-session. Restore that server-authoritative row instead
   // of silently creating a second local timer.
   useEffect(() => {
