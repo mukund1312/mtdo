@@ -142,7 +142,7 @@ export type Database = {
           claimed: boolean
           coaching: Json | null
           completed_at: string | null
-          created_at: string
+          created_at: string | null
           curriculum_item_id: string | null
           date: string
           deleted_at: string | null
@@ -168,7 +168,7 @@ export type Database = {
           claimed?: boolean
           coaching?: Json | null
           completed_at?: string | null
-          created_at?: string
+          created_at?: string | null
           curriculum_item_id?: string | null
           date: string
           deleted_at?: string | null
@@ -194,7 +194,7 @@ export type Database = {
           claimed?: boolean
           coaching?: Json | null
           completed_at?: string | null
-          created_at?: string
+          created_at?: string | null
           curriculum_item_id?: string | null
           date?: string
           deleted_at?: string | null
@@ -1156,7 +1156,7 @@ export type Database = {
           claimed: boolean
           coaching: Json | null
           completed_at: string | null
-          created_at: string
+          created_at: string | null
           curriculum_item_id: string | null
           date: string
           deleted_at: string | null
@@ -1266,7 +1266,7 @@ export type Database = {
           claimed: boolean
           coaching: Json | null
           completed_at: string | null
-          created_at: string
+          created_at: string | null
           curriculum_item_id: string | null
           date: string
           deleted_at: string | null
@@ -1322,7 +1322,7 @@ export type Database = {
           claimed: boolean
           coaching: Json | null
           completed_at: string | null
-          created_at: string
+          created_at: string | null
           curriculum_item_id: string | null
           date: string
           deleted_at: string | null
@@ -1424,7 +1424,7 @@ export type Database = {
           claimed: boolean
           coaching: Json | null
           completed_at: string | null
-          created_at: string
+          created_at: string | null
           curriculum_item_id: string | null
           date: string
           deleted_at: string | null
