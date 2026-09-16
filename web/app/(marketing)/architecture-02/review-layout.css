@@ -83,9 +83,6 @@
 .a02-year-grid-week i.is-today { outline:1.5px solid var(--acid); outline-offset:1px; box-shadow:0 0 6px rgba(215,255,82,.45); opacity:1; }
 .a02-year-grid-legend { display:flex; justify-content:end; align-items:center; gap:4px; margin-top:10px; color:var(--dim); font:8px "DM Mono",monospace; }
 .a02-year-grid-legend i { width:10px; height:10px; border-radius:2px; display:inline-block; }
-.a02-consistency-stats { display:flex; gap:32px; margin-top:20px; padding-top:16px; border-top:1px solid var(--line); }
-.a02-consistency-stats b { display:block; font-size:16px; }
-.a02-consistency-stats span { color:var(--dim); font-size:10px; }
 
 /* Effort Terrain -- real 3D grid (react-three-fiber), see
    review-effort-terrain-3d.tsx */

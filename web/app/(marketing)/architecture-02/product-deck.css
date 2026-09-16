@@ -158,6 +158,7 @@ button.a02-curriculum-select-all { flex:0 0 auto; align-self:center; box-sizing:
 .a02-trait-value { font:900 22px/1 "Archivo Black",Arial,sans-serif; letter-spacing:-.04em; }
 .a02-trait-empty { margin:2px 0 0; color:var(--dim); font-size:11px; }
 .a02-trait-empty--good { color:var(--acid); }
+.a02-trait-evidence { display:flex; flex-wrap:wrap; align-items:baseline; gap:3px; margin:2px 0 0; color:var(--dim); font-size:10px; line-height:1.45; }
 .a02-confidence { font:9px "DM Mono",monospace; font-style:normal; color:var(--dim); letter-spacing:.04em; }
 .a02-confidence--high { color:var(--acid); }
 .a02-confidence--medium { color:var(--aqua); }
