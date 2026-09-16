@@ -78,6 +78,49 @@ describe("parseGeneratedPlan", () => {
     );
   });
 
+  it("accepts an optional per-item topic, distinct from the category's topic_type", () => {
+    const category = generatedCategory({
+      curriculum: [
+        [{ task: "SQL Joins", topic: "Joins" }],
+        ["Review the API boundary and its trade-offs."],
+      ],
+    });
+    const plan = parseGeneratedPlan(generatedPlan([category]));
+    expect(plan.categories[0]?.curriculum[0]?.[0]).toMatchObject({ task: "SQL Joins", topic: "Joins" });
+    // The plain-string item picks up no topic at all -- never inferred.
+    expect(plan.categories[0]?.curriculum[1]?.[0]).toBe("Review the API boundary and its trade-offs.");
+  });
+
+  it("omitting topic on a rich item is fine -- it's genuinely optional", () => {
+    const category = generatedCategory({
+      curriculum: [[{ task: "No topic here" }], ["Review the API boundary and its trade-offs."]],
+    });
+    const plan = parseGeneratedPlan(generatedPlan([category]));
+    const item = plan.categories[0]?.curriculum[0]?.[0];
+    expect(item).toMatchObject({ task: "No topic here" });
+    expect((item as { topic?: string }).topic).toBeUndefined();
+  });
+
+  it("rejects a blank topic instead of silently accepting an empty label", () => {
+    const category = generatedCategory({
+      curriculum: [
+        [{ task: "SQL Joins", topic: "   " }],
+        ["Review the API boundary and its trade-offs."],
+      ],
+    });
+    expect(() => parseGeneratedPlan(generatedPlan([category]))).toThrow(
+      /"topic" must be a non-blank string when present/,
+    );
+  });
+
+  it("existing mtdo.plan.v1 files with no topic field at all still parse (backward compatibility)", () => {
+    // generatedCategory()'s default curriculum never sets "topic" -- this is
+    // exactly the shape of every file written before migrations/0034.
+    expect(() => parseGeneratedPlan(generatedPlan())).not.toThrow();
+    const plan = parseGeneratedPlan(generatedPlan());
+    expect((plan.categories[0]?.curriculum[0]?.[0] as { topic?: string }).topic).toBeUndefined();
+  });
+
   it("accepts a missing schema_version as mtdo.plan.v1", () => {
     expect(() => parseGeneratedPlan(generatedPlan())).not.toThrow();
   });

@@ -45,6 +45,18 @@ export interface GeneratedTask {
   tips?: string[];
   mental_models?: string[];
   related_topics?: string[];
+  /**
+   * !! NOT THE SAME FIELD AS `topic_type` BELOW, DESPITE THE SIMILAR NAME !!
+   * `topic` is this ONE item's fine-grained leaf subtopic within its category
+   * -- free text, e.g. "Joins", "Graphs", "BFS" (migrations/0034's `topics`
+   * table, curriculum_items.topic_id/blocks.topic_id). `topic_type` is a
+   * completely different, unrelated, category-wide CS tag (one of four fixed
+   * values -- see `TopicType` just below). A category can have both a
+   * `topic_type` AND items with a `topic` at the same time; neither reads or
+   * derives from the other. Optional; omitted means "no subtopic recorded"
+   * for this item, never inferred.
+   */
+  topic?: string;
 }
 
 /**
@@ -64,6 +76,11 @@ export interface GeneratedCoachingFramework {
   related_topics?: string[];
 }
 
+/** plan_categories.topic_type (migrations/0001) -- a coarse, fixed, CATEGORY-WIDE
+ * CS tag that selects a built-in coaching/soundtrack bucket. See the
+ * `topic` field on GeneratedTask above for the UNRELATED fine-grained,
+ * PER-ITEM taxonomy field (migrations/0034's `topics`) -- do not conflate
+ * the two; this migration/type is untouched by 0034. */
 export type TopicType = "dsa" | "backend" | "database" | "system_design";
 
 export interface GeneratedCategory {
