@@ -9,6 +9,40 @@ Add each session's PROGRESS.md entry to the same branch as the code it describes
 
 ---
 
+## [frontend] 2026-09-21 (PR pending) — Evidence Wave 2: capture controls
+
+Added the UI required to let the new evidence contracts start receiving real
+data. Manual setup now accepts an optional route target date, builds an
+optional nested fine-grained `topics` taxonomy, and assigns only leaf topics
+to curriculum items. Topic creation uses `create_topic()` exclusively; the
+existing category-wide `topic_type` selector remains separate and unchanged.
+The optional target date uses `set_plan_target_date()` after the new plan has
+its server id; Settings has the same RPC-backed save/clear control, where a
+blank date explicitly means an honest deadline-free route.
+
+Added `web/components/SessionCheckIn.tsx` as a presentational component with
+the locked props contract: it makes no Supabase calls and renders only for
+`offered_pending`. `session/page.tsx` now reads the state returned by each
+settle RPC, mounts the component only when the server offered it, and owns the
+answer/decline RPCs. The server, not the client, remains responsible for
+sampling eligibility. An expiry check-in returns to the task-outcome screen;
+a manually settled session returns to exit.
+
+Closed stale PR #173 (`feat/focus-calendar-wheel-controls`) rather than
+rebasing its 36-commit-old, 29-file diff through the evidence rewrites. Its
+independently valuable radial/goals ideas can be re-landed fresh in a scoped
+follow-up.
+
+**Verification:** fresh `npm install`; `npm run typecheck`, `npm run lint`,
+and `npm run test` clean (399 tests). The initial serialized full Playwright
+run reached four passing specs before one existing Settings locator became
+ambiguous because the new no-plan copy repeated “Set up a route first”; fixed
+that copy. The targeted `e2e/settings.spec.ts` rerun is 6/6 green. Did not
+repeat the entire suite immediately because each run creates anonymous users
+and the project rate-limits those contexts.
+
+---
+
 ## [frontend] 2026-09-13 (PR pending) — Task-tied soundtracks, PR B: Settings mapping UI
 
 Second of three PRs (plan: `~/.claude/plans/adaptive-sleeping-turing.md`), built on PR A's schema
