@@ -1,6 +1,6 @@
 "use client";
 
-import { DURATION_LABELS } from "./review-time-behavior";
+import { DURATION_LABELS } from "./review-time-formatters";
 import type { UseTimePatternsResult } from "./use-time-patterns";
 import { sessionQualityEligibility } from "@/lib/review/eligibility";
 

@@ -38,46 +38,11 @@ function monthLabelFor(week: (ConsistencyDay | null)[], previousMonth: number | 
   return month !== previousMonth ? month : null;
 }
 
-export function ReviewConsistencyHeatmap({ consistency, state, reload }: UseConsistencyResult) {
+export function ReviewConsistencyHeatmap({ consistency, state, reload, windowDays = 365 }: UseConsistencyResult & { windowDays?: number }) {
   const [view, setView] = useState<"heatmap" | "terrain">("heatmap");
 
   const days = useMemo(() => consistency?.days ?? [], [consistency]);
   const weeks = useMemo(() => buildWeeks(days), [days]);
-
-  const activeDayCount = days.filter((d) => d.level !== null && d.level > 0).length;
-  const activeDaysRate = days.length > 0 ? activeDayCount / days.length : 0;
-
-  const { longestStreak, currentStreak } = useMemo(() => {
-    let longest = 0;
-    let running = 0;
-    let current = 0;
-    for (const d of days) {
-      const active = d.level !== null && d.level > 0;
-      running = active ? running + 1 : 0;
-      longest = Math.max(longest, running);
-    }
-    for (let i = days.length - 1; i >= 0; i--) {
-      const d = days[i]!;
-      if (d.level !== null && d.level > 0) current += 1;
-      else break;
-    }
-    return { longestStreak: longest, currentStreak: current };
-  }, [days]);
-
-  // review_consistency()'s window always ends today -- see use-consistency.ts.
-  const todayDate = days.at(-1)?.date ?? null;
-
-  // Client-side only, from the SAME days[] the heatmap already renders --
-  // not a new RPC field. "—" (not a fabricated 0%) when there's no prior
-  // week to compare against yet.
-  const vsLastWeek = useMemo(() => {
-    if (days.length < 14) return null;
-    const countActive = (slice: ConsistencyDay[]) => slice.filter((d) => d.level !== null && d.level > 0).length;
-    const last7 = countActive(days.slice(-7));
-    const prior7 = countActive(days.slice(-14, -7));
-    if (prior7 === 0) return last7 === 0 ? null : 100;
-    return Math.round(((last7 - prior7) / prior7) * 100);
-  }, [days]);
 
   if (state === "error") {
     return (
@@ -89,10 +54,40 @@ export function ReviewConsistencyHeatmap({ consistency, state, reload }: UseCons
     );
   }
 
+  if (state === "loading") {
+    return (
+      <section className="a02-consistency" aria-busy="true" aria-label={`Consistency, last ${windowDays} days`}>
+        <header><b>CONSISTENCY — LAST {windowDays} DAYS</b></header>
+        <p className="a02-trait-empty">Reading your recorded consistency.</p>
+      </section>
+    );
+  }
+
+  if (!consistency || days.length === 0) {
+    return (
+      <section className="a02-product-state" aria-live="polite">
+        <b>No consistency days are available yet.</b>
+        <p>Your recorded activity will appear here once the server has a day to review.</p>
+      </section>
+    );
+  }
+
+  if (consistency.plan_id === null) {
+    return (
+      <section className="a02-product-state" aria-live="polite">
+        <b>No goal route was active in this period.</b>
+        <p>Set up your route first, then return here for its first useful consistency signal.</p>
+      </section>
+    );
+  }
+
+  // review_consistency()'s window always ends today -- see use-consistency.ts.
+  const todayDate = days.at(-1)?.date ?? null;
+
   return (
-    <section className="a02-consistency" aria-label="Consistency, last 365 days">
+    <section className="a02-consistency" aria-label={`Consistency, last ${windowDays} days`}>
       <header>
-        <b>CONSISTENCY — LAST 365 DAYS</b>
+        <b>CONSISTENCY — LAST {windowDays} DAYS</b>
         <div className="a02-view-toggle">
           <button type="button" aria-pressed={view === "heatmap"} className={view === "heatmap" ? "is-active" : undefined} onClick={() => setView("heatmap")}>Heatmap</button>
           <button type="button" aria-pressed={view === "terrain"} className={view === "terrain" ? "is-active" : undefined} onClick={() => setView("terrain")}>Terrain</button>
@@ -100,7 +95,7 @@ export function ReviewConsistencyHeatmap({ consistency, state, reload }: UseCons
       </header>
 
       {view === "heatmap" ? (
-        <div className="a02-year-grid" aria-busy={state === "loading"}>
+        <div className="a02-year-grid">
           <div className="a02-year-grid-months">
             {weeks.map((week, i) => {
               const label = monthLabelFor(week, i > 0 ? monthOfWeek(weeks[i - 1]!) : null);
@@ -149,13 +144,6 @@ export function ReviewConsistencyHeatmap({ consistency, state, reload }: UseCons
       ) : (
         <ReviewEffortTerrain3D days={days} />
       )}
-
-      <div className="a02-consistency-stats">
-        <div><b>{Math.round(activeDaysRate * 100)}%</b><span>Active days</span></div>
-        <div><b>{longestStreak} days</b><span>Longest streak</span></div>
-        <div><b>{currentStreak} days</b><span>Current streak</span></div>
-        <div><b>{vsLastWeek === null ? "—" : `${vsLastWeek >= 0 ? "+" : ""}${vsLastWeek}%`}</b><span>vs last week</span></div>
-      </div>
     </section>
   );
 }

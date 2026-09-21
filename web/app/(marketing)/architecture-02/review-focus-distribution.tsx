@@ -6,8 +6,7 @@ import type { UseTimePatternsResult } from "./use-time-patterns";
 // breakdown review_time_patterns() already returns (migrations/0028), over
 // the last 42 days (not literally "today" -- a single day's hourly spread
 // is too sparse to chart meaningfully; this is "when your focus time tends
-// to land", the same data ReviewTimeBehavior's "When you work best" already
-// reads, from the SAME shared fetch -- see use-time-patterns.ts).
+// to land", from the shared fetch -- see use-time-patterns.ts).
 
 export function ReviewFocusDistribution({ patterns, state, reload }: UseTimePatternsResult) {
   if (state === "error") {
