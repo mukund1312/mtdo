@@ -1,6 +1,9 @@
 # mtdo web — Learner Evidence Layer: the M / J split
 
-**Status:** Phase G merged/in review; H–I not started. **Created:** 2026-09-16
+**Status:** Phases G, H, I all merged (`0033`–`0035` live) and J's Wave 1 merged (#216), 2026-09-21.
+M's backend queue is intentionally empty — everything remaining is data-gated. The open work is J's
+Wave 2 (the UI for H's and I's contracts, which have no user-facing surface yet).
+**Created:** 2026-09-16
 **Owner:** Mukund (backend, Claude Code) + Janhwi (frontend, Codex)
 **Related:** `mtdo-web-dev-split-plan.md` (§1 ownership, §2 branches, §3 handoff — **this doc adds
 no new rules, it only maps an existing plan onto them**), `mtdo-web-review-study-profile-plan.md`
@@ -53,12 +56,23 @@ Per §3, serialization is **per wave, not global** — J is never idle waiting o
 
 | Wave | M (Claude Code) | J (Codex) |
 |---|---|---|
-| **1 — now** | Land **G**; then **H backend**: `topics` (+`parent_topic_id`), `curriculum_items.topic_id`/`blocks.topic_id`, `plans.target_date` + `plan_target_changed`, `category_target_changed`, `focus_sessions` attribution snapshots | **Review evidence-disclosure UI** — deliberately chosen to need **no new contract**: `study_profile()` already returns `sample_size`/`window_days`/`confidence` today |
-| **2** | **I backend**: `activity_events.client_event_id` + unique index, `record_session_check_in()`, `check_in_state`, server-minted check-in kinds + sampling provenance, `session_visibility_changed` | **H frontend**: goal target-date UI, topic entry in manual setup |
-| **3** | **J backend**: `evidence` + `coverage` objects on `study_profile()` (**changes a shipped contract** — flag as modifying a live surface) | **I frontend**: `SessionCheckIn` component |
+| **1** | ✅ **G, H, I all merged** — `0033`/`0034`/`0035` applied live, 750 SQL assertions | ✅ **Review evidence-disclosure UI** (#216) — removed three fabricated `confidence="medium"` values, surfaced real `sample_size`, implemented Month/Year ranges, deleted the dead `ReviewTimeBehavior` |
+| **2 — now** | **Nothing.** M's backend queue is deliberately empty: every remaining backend item is data-gated (see below) | **H + I frontend** — goal target-date UI, topic management, and the `SessionCheckIn` component against the contract locked in `api.md` §3r |
+| **3** | **Phase J backend**: `evidence` + `coverage` on `study_profile()` (**changes a shipped contract** — flag as modifying a live surface) | Consume `evidence`/`coverage` in the Wave-1 disclosure affordance |
 
-J's Wave-1 scope is designed so the disclosure affordance can absorb `evidence`/`coverage` in Wave 3
-**without a redesign** — that is the point of doing it first.
+**Why M's queue is empty at Wave 2, and that is correct.** Phases J–P are gated on *real accrued
+evidence*, not on effort. Planning calibration needs original-vs-actual estimates, start discipline
+needs `task_started` timestamps, friction needs real reschedule counts — capture only began
+2026-09-16. `study_profile_confidence()` returns `insufficient_data` below 5 samples, so building
+these now would ship functions that return `null`. **The gate enforces itself; that was the design.**
+
+**The live gap Wave 2 closes.** Phases H and I have *zero user-facing surface*: `plans.target_date`,
+`topics`/`create_topic()` and the check-in columns all exist and are live, but no screen lets a user
+set a deadline, create a topic, or answer a check-in. Until J's Wave 2 lands, that evidence has no
+way to start existing — which makes Wave 2, not more backend, the highest-value work available.
+
+J's Wave-1 disclosure affordance was built to absorb `evidence`/`coverage` in Wave 3 **without a
+redesign** — that is why it was sequenced first.
 
 ---
 
