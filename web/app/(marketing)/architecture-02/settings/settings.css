@@ -103,8 +103,9 @@
 .a02-settings-danger { margin:0; border-color:rgba(255,116,100,.4); background:transparent; color:var(--coral); }
 .a02-settings-action:disabled,.a02-settings-secondary:disabled,.a02-settings-danger:disabled { cursor:not-allowed; opacity:.55; }
 .a02-settings-select,.a02-settings-form label { display:grid; gap:8px; margin-top:18px; color:var(--dim); font-size:11px; }
-.a02-settings-select select,.a02-settings-form input { width:100%; box-sizing:border-box; min-height:39px; padding:0 11px; border:1px solid var(--line); border-radius:7px; background:rgba(9,11,30,.65); color:var(--ink); font:12px "DM Mono",monospace; }
-.a02-settings-select select:focus-visible,.a02-settings-form input:focus-visible { border-color:var(--aqua); outline:none; box-shadow:0 0 0 3px rgba(87,231,255,.1); }
+.a02-settings-select select,.a02-settings-select input,.a02-settings-form input { width:100%; box-sizing:border-box; min-height:39px; padding:0 11px; border:1px solid var(--line); border-radius:7px; background:rgba(9,11,30,.65); color:var(--ink); font:12px "DM Mono",monospace; }
+.a02-settings-select select:focus-visible,.a02-settings-select input:focus-visible,.a02-settings-form input:focus-visible { border-color:var(--aqua); outline:none; box-shadow:0 0 0 3px rgba(87,231,255,.1); }
+.a02-settings-target-date > div { display:flex; flex-wrap:wrap; gap:8px; margin-top:12px; }
 .a02-settings-form { display:grid; gap:4px; }
 .a02-settings-actions { display:flex; flex-wrap:wrap; gap:8px; margin-top:19px; }
 .a02-shortcuts { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:10px; margin-top:18px; }

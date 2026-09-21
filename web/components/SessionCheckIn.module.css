@@ -1,0 +1,17 @@
+.card { margin-top: 26px; padding: 20px; border: 1px solid var(--line); border-radius: 8px; background: rgba(255,255,255,.025); }
+.eyebrow { margin: 0; color: var(--aqua); font: 10px "DM Mono", monospace; letter-spacing: .1em; text-transform: uppercase; }
+.card h2 { margin: 7px 0; font-size: 23px; letter-spacing: -.03em; }
+.copy { margin: 0; color: var(--dim); font-size: 13px; line-height: 1.5; }
+.fieldset { display: grid; gap: 8px; margin: 17px 0 0; padding: 0; border: 0; }
+.fieldset legend, .helpLevel > span { color: var(--dim); font: 10px "DM Mono", monospace; letter-spacing: .08em; text-transform: uppercase; }
+.scale { display: flex; gap: 7px; }
+.scale button, .answer, .decline, .helpLevel select { min-height: 36px; border: 1px solid var(--line); border-radius: 5px; color: var(--ink); background: rgba(9,10,32,.55); font: inherit; cursor: pointer; }
+.scale button { width: 36px; }
+.scale button.selected, .answer { border-color: var(--aqua); background: rgba(87,231,255,.12); color: var(--aqua); }
+.helpLevel { display: grid; gap: 8px; margin-top: 17px; }
+.helpLevel select { padding: 0 10px; }
+.actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 20px; }
+.answer, .decline { padding: 0 12px; }
+.answer:disabled { cursor: not-allowed; opacity: .5; }
+.decline { background: transparent; color: var(--dim); }
+.scale button:focus-visible, .answer:focus-visible, .decline:focus-visible, .helpLevel select:focus-visible { outline: 2px solid var(--aqua); outline-offset: 2px; }
