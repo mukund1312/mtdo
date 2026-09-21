@@ -5,6 +5,7 @@ import { EmberMorph, type EmberMorphTrigger } from "@/components/EmberMorph";
 import { FocusBreakActivities } from "@/components/FocusBreakActivities";
 import { FocusCompletionConfetti } from "@/components/FocusCompletionConfetti";
 import { FocusListeningStudio } from "@/components/FocusListeningStudio";
+import { SessionCheckIn, type SessionCheckInAnswer, type SessionCheckInState } from "@/components/SessionCheckIn";
 import { useSignalDeckListen } from "@/app/(marketing)/architecture-02/listen-state";
 import { createClient } from "@/lib/supabase/client";
 import { recordEvent } from "@/lib/analytics/record-event";
@@ -36,7 +37,7 @@ type LinkedBlock = {
   text: string;
 };
 
-type SessionPhase = "ready" | "starting" | "active" | "outcome" | "celebrating" | "exiting";
+type SessionPhase = "ready" | "starting" | "active" | "checkin" | "outcome" | "celebrating" | "exiting";
 const EXTENSION_PROMPT_AT_S = 5 * 60;
 const BREAK_STORAGE_PREFIX = "mtdo:focus-breaks:";
 // Shown when a session was started without a linked block (Home's generic
@@ -121,6 +122,12 @@ function messageFrom(error: { code?: string; message?: string } | null) {
   return error.message ?? "Something interrupted the session. Try again.";
 }
 
+function asCheckInState(value: unknown): SessionCheckInState {
+  return value === "offered_pending" || value === "answered" || value === "declined" || value === "not_offered"
+    ? value
+    : "not_offered";
+}
+
 export default function SessionPage() {
   const listen = useSignalDeckListen();
   const [showFocusTimer, setShowFocusTimer] = useFocusTimerPreference();
@@ -142,6 +149,9 @@ export default function SessionPage() {
   const originRect = null;
   const [notice, setNotice] = useState<string | null>(null);
   const [isSettling, setIsSettling] = useState(false);
+  const [checkInState, setCheckInState] = useState<SessionCheckInState>("not_offered");
+  const [checkInReturnPhase, setCheckInReturnPhase] = useState<"outcome" | "exiting">("exiting");
+  const [checkInAttempt, setCheckInAttempt] = useState(0);
   const [linkedBlock, setLinkedBlock] = useState<LinkedBlock | null>(null);
   const [isLinkedBlockLoading, setIsLinkedBlockLoading] = useState(true);
   const [isRunningSessionLoading, setIsRunningSessionLoading] = useState(true);
@@ -406,7 +416,7 @@ export default function SessionPage() {
       setNotice(null);
 
       const supabase = createClient();
-      const { error } = await supabase.rpc(
+      const { data, error } = await supabase.rpc(
         kind === "complete" ? "complete_session" : "abandon_session",
         { p_id: session.id, ...(blockOutcome && linkedBlock ? { p_block_outcome: blockOutcome } : {}) },
       );
@@ -417,10 +427,40 @@ export default function SessionPage() {
         return;
       }
 
-      setPhase("exiting");
+      const nextCheckInState = asCheckInState(data?.check_in_state);
+      setCheckInState(nextCheckInState);
+      if (nextCheckInState === "offered_pending") {
+        setCheckInReturnPhase("exiting");
+        setPhase("checkin");
+      } else {
+        setPhase("exiting");
+      }
     },
     [isSettling, linkedBlock, phase, session],
   );
+
+  const answerCheckIn = useCallback(async (answer: SessionCheckInAnswer) => {
+    if (!session || isSettling || checkInState !== "offered_pending") return;
+    setIsSettling(true);
+    setNotice(null);
+    const supabase = createClient();
+    const result = answer.kind === "declined"
+      ? await supabase.rpc("decline_session_check_in", { p_id: session.id })
+      : await supabase.rpc("answer_session_check_in", {
+          p_id: session.id,
+          ...(answer.selfDifficulty !== undefined ? { p_self_difficulty: answer.selfDifficulty } : {}),
+          ...(answer.selfConfidence !== undefined ? { p_self_confidence: answer.selfConfidence } : {}),
+          ...(answer.selfHelpLevel !== undefined ? { p_self_help_level: answer.selfHelpLevel } : {}),
+        });
+    setIsSettling(false);
+    if (result.error || !result.data) {
+      setNotice(messageFrom(result.error));
+      setCheckInAttempt((value) => value + 1);
+      return;
+    }
+    setCheckInState(asCheckInState(result.data.check_in_state));
+    setPhase(checkInReturnPhase);
+  }, [checkInReturnPhase, checkInState, isSettling, session]);
 
   const updateSessionFromRpc = useCallback((data: unknown) => {
     const next = asFocusSession(data);
@@ -589,7 +629,7 @@ export default function SessionPage() {
     setIsSettling(true);
     setExtensionOpen(false);
     void (async () => {
-      const { error } = await createClient().rpc("complete_session", { p_id: session.id });
+      const { data, error } = await createClient().rpc("complete_session", { p_id: session.id });
       if (error) {
         expirySettling.current = null;
         setIsSettling(false);
@@ -597,7 +637,14 @@ export default function SessionPage() {
         return;
       }
       setIsSettling(false);
-      setPhase(linkedBlock ? "outcome" : "exiting");
+      const nextCheckInState = asCheckInState(data?.check_in_state);
+      setCheckInState(nextCheckInState);
+      if (nextCheckInState === "offered_pending") {
+        setCheckInReturnPhase(linkedBlock ? "outcome" : "exiting");
+        setPhase("checkin");
+      } else {
+        setPhase(linkedBlock ? "outcome" : "exiting");
+      }
     })();
   }, [elapsedS, linkedBlock, phase, session]);
 
@@ -605,6 +652,7 @@ export default function SessionPage() {
     setSession(null);
     setElapsedS(0);
     setIsSettling(false);
+    setCheckInState("not_offered");
     // Do not return to the retired pre-session surface after a session ends.
     // The settled session is already persisted by the RPC above.
     window.location.replace("/architecture-02?deck=work");
@@ -622,14 +670,14 @@ export default function SessionPage() {
           plannedDurationS: session.planned_duration_s,
           elapsedS,
         }
-      : (phase === "active" || phase === "outcome" || phase === "celebrating") && session
+      : (phase === "active" || phase === "checkin" || phase === "outcome" || phase === "celebrating") && session
         ? {
             phase: "active",
             sessionId: session.id,
             plannedDurationS: session.planned_duration_s,
             elapsedS,
             originRect,
-            status: phase === "outcome" || phase === "celebrating" ? "complete" : session.paused_at ? "paused" : "active",
+            status: phase === "checkin" || phase === "outcome" || phase === "celebrating" ? "complete" : session.paused_at ? "paused" : "active",
           }
         : { phase: "idle" };
 
@@ -671,7 +719,7 @@ export default function SessionPage() {
     );
   }
 
-  if (phase !== "active" && phase !== "outcome" && phase !== "celebrating" && phase !== "exiting") {
+  if (phase !== "active" && phase !== "checkin" && phase !== "outcome" && phase !== "celebrating" && phase !== "exiting") {
     return (
       <main className={styles.page} aria-live="polite">
         <div className={styles.preparing}>
@@ -740,7 +788,9 @@ export default function SessionPage() {
               })}
             </ol>
 
-            {phase === "celebrating" ? (
+            {phase === "checkin" && session ? (
+              <SessionCheckIn key={`${session.id}-${checkInAttempt}`} sessionId={session.id} checkInState={checkInState} onAnswer={(answer) => void answerCheckIn(answer)} />
+            ) : phase === "celebrating" ? (
               <div className={styles.outcomePanel} role="status" aria-live="polite">
                 <p className={styles.cardEyebrow}>Complete</p>
                 <h2>That moved.</h2>

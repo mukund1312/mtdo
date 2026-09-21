@@ -55,6 +55,31 @@
   box-shadow: 0 0 0 3px rgba(87, 231, 255, 0.1);
 }
 
+.a02-manual-field-note,
+.a02-manual-topics p {
+  display: block;
+  margin-top: 6px;
+  color: var(--dim);
+  font: 10px/1.5 "DM Mono", monospace;
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+.a02-manual-topics {
+  margin: 18px 0;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+}
+
+.a02-manual-topics legend { padding: 0 5px; }
+
+.a02-manual-topics .a02-chip-field { grid-template-columns: minmax(0, 1fr) minmax(130px, .7fr) auto; }
+
+.a02-manual-topics .a02-chip-field select { margin-top: 0; padding: 8px; }
+
+.a02-manual-topics-list { margin: 10px 0 0; padding-left: 18px; color: var(--dim); font-size: 11px; }
+
 .a02-manual-tasks {
   display: grid;
   gap: 6px;
@@ -79,6 +104,8 @@
   min-width: 0;
   overflow-wrap: anywhere;
 }
+
+.a02-manual-tasks li select { width: min(180px, 40%); margin-top: 0; padding: 6px 8px; font-size: 11px; }
 
 .a02-manual-tasks li button {
   flex-shrink: 0;
@@ -113,4 +140,7 @@
   .a02-manual-row {
     grid-template-columns: 1fr;
   }
+  .a02-manual-topics .a02-chip-field { grid-template-columns: 1fr; }
+  .a02-manual-tasks li { align-items: flex-start; flex-wrap: wrap; }
+  .a02-manual-tasks li select { width: calc(100% - 32px); }
 }

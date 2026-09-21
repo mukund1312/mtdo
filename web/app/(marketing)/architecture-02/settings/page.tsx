@@ -140,6 +140,9 @@ export default function SignalDeckSettingsPage() {
   // loading/saving/error state, not the selector itself.
   const [planId, setPlanId] = useState<string | null>(null);
   const [planningMode, setPlanningMode] = useState<PlanningMode | null>(null);
+  const [targetDate, setTargetDate] = useState<string | null>(null);
+  const [targetDateDraft, setTargetDateDraft] = useState("");
+  const [savingTargetDate, setSavingTargetDate] = useState(false);
   const [planState, setPlanState] = useState<PlanState>("loading");
   const [planSaveError, setPlanSaveError] = useState<string | null>(null);
 
@@ -157,7 +160,7 @@ export default function SignalDeckSettingsPage() {
     }
     const { data: plan, error } = await supabase
       .from("plans")
-      .select("id, planning_mode")
+      .select("id, planning_mode, target_date")
       .eq("user_id", user.id)
       .eq("is_active", true)
       .maybeSingle();
@@ -175,6 +178,8 @@ export default function SignalDeckSettingsPage() {
     }
     setPlanId(plan.id);
     setPlanningMode(plan.planning_mode);
+    setTargetDate(plan.target_date);
+    setTargetDateDraft(plan.target_date ?? "");
     setPlanState("ready");
   }, []);
 
@@ -199,6 +204,26 @@ export default function SignalDeckSettingsPage() {
     },
     [planId, planningMode],
   );
+
+  const saveTargetDate = useCallback(async (next: string | null) => {
+    if (!planId || savingTargetDate) return;
+    setSavingTargetDate(true);
+    setPlanSaveError(null);
+    const { data, error } = await createClient().rpc("set_plan_target_date", {
+      p_plan_id: planId,
+      // The live RPC accepts NULL to mean an intentionally deadline-free
+      // route; generated types lag that nullable SQL parameter.
+      p_target_date: next as never,
+    });
+    setSavingTargetDate(false);
+    if (error || !data) {
+      console.error("[settings] failed to save target date:", error);
+      setPlanSaveError("Couldn't save that target date -- try again.");
+      return;
+    }
+    setTargetDate(data.target_date);
+    setTargetDateDraft(data.target_date ?? "");
+  }, [planId, savingTargetDate]);
 
   // Settings -> Calendar (Phase 6, migrations/0019-0020). Read-only plus two
   // actions, deliberately: the Time deck's own scheduling UI is a separate
@@ -525,6 +550,27 @@ export default function SignalDeckSettingsPage() {
         <b id="route-tools-title">Route tools</b>
         <p className="a02-settings-note">Import an existing route or export the route you have. These tools use the same active plan as Signal Deck.</p>
         <Link href="/architecture-02/onboarding/import" className="a02-settings-action">Open import / export ↗</Link>
+      </section>
+      <section className="a02-product-state a02-settings-card" aria-labelledby="target-date-title">
+        <b id="target-date-title">Target date</b>
+        <p className="a02-settings-note">Optional. A route without a deadline is a real state, not a missing answer.</p>
+        {planState === "loading" && <p>Reading your route target…</p>}
+        {planState === "no-plan" && <p>Create a route first, then you can add a target date if you want one.</p>}
+        {planState === "error" && <p role="alert">Couldn&apos;t read your route target.</p>}
+        {planState === "ready" && planId && (
+          <div className="a02-settings-target-date">
+            <label className="a02-settings-select">
+              <span>Deadline</span>
+              <input type="date" value={targetDateDraft} onChange={(event) => setTargetDateDraft(event.target.value)} disabled={savingTargetDate} />
+            </label>
+            <div>
+              <button type="button" disabled={savingTargetDate || targetDateDraft === (targetDate ?? "")} onClick={() => void saveTargetDate(targetDateDraft || null)}>
+                {savingTargetDate ? "Saving…" : "Save target"}
+              </button>
+              {targetDate && <button type="button" disabled={savingTargetDate} onClick={() => void saveTargetDate(null)}>Clear deadline</button>}
+            </div>
+          </div>
+        )}
       </section>
           </>}
 
